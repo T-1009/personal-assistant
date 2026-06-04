@@ -250,12 +250,12 @@ result = sandbox.execute("print('hello')")
 |------|------|------|
 | **Web 框架** | FastAPI | 替代 AgentArtsRuntimeApp，统一管理所有路由 |
 | **Agent 编排** | LangGraph (Python) | 有状态图编排，支持条件路由和工具调用循环 |
-| **LLM** | DeepSeek-V3.2 (via MaaS) | OpenAI-compatible API |
+| **LLM** | DeepSeek-V4-Pro (via MaaS) | OpenAI-compatible API，华为云 MaaS 平台部署，模型可替换 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，三种抽取策略 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API → MCP Tool 自动转换 |
 | **Sandbox** | AgentArts Sandbox SDK | 安全隔离代码执行 |
-| **Container** | Docker (linux/arm64) | Python 3.10+ |
+| **Container** | Docker (linux/arm64) | Python 3.12+ |
 
 ---
 

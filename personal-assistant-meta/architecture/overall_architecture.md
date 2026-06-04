@@ -63,13 +63,13 @@ flowchart TB
 |------|------|------|
 | **Web 框架** | FastAPI | 统一管理所有路由，替代 AgentArtsRuntimeApp |
 | **Agent 编排** | LangGraph (Python) | 有状态图编排，支持条件路由和工具调用循环 |
-| **LLM** | DeepSeek-V3.2 (via MaaS) | OpenAI-compatible API，部署在华为云 |
+| **LLM** | DeepSeek-V4-Pro (via MaaS) | OpenAI-compatible API，华为云 MaaS 平台部署，模型可替换 |
 | **Runtime** | AgentArts Runtime | 容器化部署，ARM64 架构，cn-southwest-2 区域 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，语义/偏好/情景三种策略 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API 定义 → MCP Tool 自动转换 |
 | **可观测** | OTEL (AgentArts 内置) | Tracing + Logging + Metrics |
-| **Container** | Docker (linux/arm64) | Python 3.10+ |
+| **Container** | Docker (linux/arm64) | Python 3.12+ |
 
 ---
 
@@ -459,7 +459,7 @@ agents:
       dependency_file: requirements.txt
       platform: linux/arm64
       language: python3
-      base_image: python:3.10-slim
+      base_image: python:3.12-slim
       region: cn-southwest-2
 
     swr_config:
@@ -512,7 +512,7 @@ agents:
         - key: MODEL_API_KEY
           value: "<MaaS API Key>"
         - key: MODEL_NAME
-          value: "deepseek-v3.2"
+          value: "deepseek-v4-pro"
         - key: MODEL_URL
           value: "https://api.modelarts-maas.com/openai/v1"
         - key: MEMORY_SPACE_ID

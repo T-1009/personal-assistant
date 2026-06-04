@@ -328,7 +328,7 @@ agents:
       dependency_file: requirements.txt
       platform: linux/arm64        # 必须 ARM64
       language: python3
-      base_image: python:3.10-slim
+      base_image: python:3.12-slim
       region: cn-southwest-2
 
     swr_config:
@@ -363,7 +363,7 @@ agents:
         - key: MODEL_API_KEY
           value: "<MaaS API Key>"
         - key: MODEL_NAME
-          value: "deepseek-v3.2"
+          value: "deepseek-v4-pro"
         - key: MODEL_URL
           value: "https://api.modelarts-maas.com/openai/v1"
 ```
