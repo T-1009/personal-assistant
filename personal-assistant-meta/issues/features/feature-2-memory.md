@@ -2,7 +2,7 @@
 status: backlog
 ---
 
-# Epic 2: Memory 集成
+# Feature 2: Memory 集成
 
 本 Phase 集成 AgentArts Memory，实现跨 Session 的用户记忆。飞书渠道上验证：第一轮对话设定偏好，第二轮对话（新 Session）Agent 能记住。
 
@@ -51,7 +51,7 @@ status: backlog
 
 ## 依赖
 
-- Epic 1（Agent 骨架 + 飞书）
+- Feature 1（Agent 骨架 + 飞书）
 
 ## 参考
 

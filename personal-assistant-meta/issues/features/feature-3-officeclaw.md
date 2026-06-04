@@ -2,7 +2,7 @@
 status: backlog
 ---
 
-# Epic 3: OfficeClaw 渠道
+# Feature 3: OfficeClaw 渠道
 
 本 Phase 接入 OfficeClaw 桌面客户端，通过 AgentArts 转发调用后端 `/invocations`，使 Agent 同时支持飞书和微信渠道。
 
@@ -21,8 +21,8 @@ OfficeClaw 是运行在 Windows PC 上的桌面客户端，桥接飞书和微信
 
 ## 不涉及
 
-- 任何后端代码改动（`/invocations` 已在 Epic 1 实现）
-- 飞书直连模式（已在 Epic 1 实现，OfficeClaw 是另一种接入路径）
+- 任何后端代码改动（`/invocations` 已在 Feature 1 实现）
+- 飞书直连模式（已在 Feature 1 实现，OfficeClaw 是另一种接入路径）
 
 ## 任务拆解
 
@@ -36,12 +36,12 @@ OfficeClaw 是运行在 Windows PC 上的桌面客户端，桥接飞书和微信
 
 - [ ] 飞书客户端 @Agent → OfficeClaw 转发 → Agent 回复
 - [ ] 微信客户端发消息 → OfficeClaw 转发 → Agent 回复
-- [ ] 确认 Memory 跨渠道生效（Epic 2 的记忆在 OfficeClaw 渠道也能加载）
+- [ ] 确认 Memory 跨渠道生效（Feature 2 的记忆在 OfficeClaw 渠道也能加载）
 
 ## 依赖
 
-- Epic 1（Agent 骨架 + 飞书）
-- Epic 2（Memory）
+- Feature 1（Agent 骨架 + 飞书）
+- Feature 2（Memory）
 
 ## 参考
 

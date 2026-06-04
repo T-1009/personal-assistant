@@ -2,9 +2,9 @@
 status: backlog
 ---
 
-# Epic 5: Web Chat 渠道
+# Feature 5: Web Chat 渠道
 
-本 Phase 实现 Web Chat 前端 + SSE 流式对话，完成三种接入渠道的最后一块拼图。这是最重的渠道，放在最后因为依赖 OAuth（Epic 4），且飞书和 OfficeClaw 已经覆盖了日常使用场景。
+本 Phase 实现 Web Chat 前端 + SSE 流式对话，完成三种接入渠道的最后一块拼图。这是最重的渠道，放在最后因为依赖 OAuth（Feature 4），且飞书和 OfficeClaw 已经覆盖了日常使用场景。
 
 ---
 
@@ -56,8 +56,8 @@ status: backlog
 
 ## 依赖
 
-- Epic 1（Agent 骨架 + 飞书）
-- Epic 4（Inbound Identity）
+- Feature 1（Agent 骨架 + 飞书）
+- Feature 4（Inbound Identity）
 
 ## 参考
 

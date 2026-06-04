@@ -2,7 +2,7 @@
 status: backlog
 ---
 
-# Epic 9: 部署上线与全链路可观测
+# Feature 9: 部署上线与全链路可观测
 
 本 Phase 将 Personal Assistant 部署到 AgentArts Runtime 生产环境，配置全链路可观测，完成最终验证。
 
@@ -57,7 +57,7 @@ status: backlog
 
 ## 依赖
 
-- Epic 1-8 全部完成
+- Feature 1-8 全部完成
 
 ## 参考
 

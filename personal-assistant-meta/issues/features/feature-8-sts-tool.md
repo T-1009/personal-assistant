@@ -2,7 +2,7 @@
 status: backlog
 ---
 
-# Epic 8: Outbound STS (云资源 Tool)
+# Feature 8: Outbound STS (云资源 Tool)
 
 本 Phase 实现 Agent 获取华为云 STS 临时凭证，代表用户操作云资源（OBS、RDS 等）。
 
@@ -36,8 +36,8 @@ status: backlog
 
 ## 依赖
 
-- Epic 1（Agent 骨架 + 飞书）
-- Epic 4（Inbound Identity）
+- Feature 1（Agent 骨架 + 飞书）
+- Feature 4（Inbound Identity）
 
 ## 参考
 

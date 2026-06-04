@@ -2,7 +2,7 @@
 status: backlog
 ---
 
-# Epic 1: Agent 骨架 + 飞书渠道
+# Feature 1: Agent 骨架 + 飞书渠道
 
 本 Phase 搭建 Personal Assistant 的最小可运行骨架并接入飞书渠道。完成后可在飞书客户端 @Bot 完成一轮对话。
 
@@ -25,11 +25,11 @@ status: backlog
 
 ## 不涉及
 
-- Memory 集成（Epic 2）
-- OfficeClaw（Epic 3）
-- 用户认证 / OAuth（Epic 4）
-- Web Chat / SSE 流式（Epic 5）
-- 任何外部工具（Epic 6-8）
+- Memory 集成（Feature 2）
+- OfficeClaw（Feature 3）
+- 用户认证 / OAuth（Feature 4）
+- Web Chat / SSE 流式（Feature 5）
+- 任何外部工具（Feature 6-8）
 
 ## 任务拆解
 

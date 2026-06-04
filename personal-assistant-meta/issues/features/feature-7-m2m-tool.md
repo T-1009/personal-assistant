@@ -2,7 +2,7 @@
 status: backlog
 ---
 
-# Epic 7: Outbound M2M (内部 API Tool)
+# Feature 7: Outbound M2M (内部 API Tool)
 
 本 Phase 实现 Agent 以自身服务身份调用企业内部 API（M2M 模式）。Agent 使用预配置的 API Key 访问内部系统。
 
@@ -36,8 +36,8 @@ status: backlog
 
 ## 依赖
 
-- Epic 1（Agent 骨架 + 飞书）
-- Epic 4（Inbound Identity）
+- Feature 1（Agent 骨架 + 飞书）
+- Feature 4（Inbound Identity）
 
 ## 参考
 
