@@ -1,4 +1,11 @@
 
+# Personal Assistant
+
+基于 [AgentArts](https://www.huaweicloud.com/product/agentarts.html) 平台的对话式 AI 助手。通过自然语言管理日程、邮件、笔记和任务，具备跨 Session Memory 和用户委托能力。支持 Web Chat、飞书直连和 OfficeClaw 三种接入渠道。
+
+**Design hub**: 所有设计讨论、架构决策和变更规划在 [`personal-assistant-meta/`](./personal-assistant-meta/) 目录下进行。开始前先阅读 [`personal-assistant-meta/AGENTS.md`](./personal-assistant-meta/AGENTS.md) 了解设计规范和约束。
+
+---
 
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
