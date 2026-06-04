@@ -85,7 +85,7 @@ Identity 的三种 Outbound 模式依赖 AgentArts 控制台预创建的 Credent
 | Provider | 用途 | 认证模式 | 预配置内容 |
 |----------|------|----------|-----------|
 | `github-provider` | GitHub API | OAuth2 / USER_FEDERATION | GitHub OAuth App 的 client_id + client_secret |
-| `google-provider` | Google Calendar/Gmail | OAuth2 / USER_FEDERATION | Google OAuth 的 client_id + client_secret |
+| `m365-provider` | Microsoft 365 (Outlook/Calendar) | OAuth2 / USER_FEDERATION | Microsoft Entra ID 应用注册的 client_id + client_secret |
 | `internal-api-provider` | 企业内部 API | API Key / M2M | API Key |
 | `huaweicloud-sts-provider` | 华为云资源 | STS / M2M | Agency URN |
 

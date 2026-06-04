@@ -21,7 +21,7 @@ Inbound 认证（用户 → Agent）当前架构文档中默认使用 Google OAu
 | 优先级 | Provider | OIDC 兼容 | 国内可达 | 适用场景 |
 |--------|----------|-----------|----------|----------|
 | 1 | **Microsoft Entra ID**（Azure AD） | ✅ | ✅ | 企业员工（华为内部使用 Microsoft 365） |
-| 2 | **GitHub OAuth** | ⚠️ OpenID 非标准 | ✅（偶尔慢，不阻断） | 开发者用户 |
+| 2 | **GitHub OAuth** | ⚠️ OpenID 非标准 | ✅（偶尔慢，不阻断） | 开发者用户，同时用于 Outbound GitHub 工具 |
 | 3 | **飞书 / 阿里云 IDaaS / 自建 OIDC** | ✅ | ✅ | 国内用户、无 Microsoft 365 企业 |
 
 ### 首选：Microsoft Entra ID
@@ -33,7 +33,7 @@ Inbound 认证（用户 → Agent）当前架构文档中默认使用 Google OAu
 | **OIDC 标准** | ✅ 完整 OIDC 支持 | ✅ 完整 OIDC 支持 |
 | **国内可达** | ✅ login.microsoftonline.com 可达 | ❌ accounts.google.com 被阻断 |
 | **华为内网** | ✅ 可能是已使用的 IdP（Office 365 体系） | ❌ |
-| **个人用户** | ⚠️ 需要 Azure AD 租户 | ✅ 个人 Gmail 账号即可 |
+| **个人用户** | ⚠️ 需要 Azure AD 租户 | ✅ 个人 Outlook 账号即可 |
 
 OIDC Discovery URL：`https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration`
 

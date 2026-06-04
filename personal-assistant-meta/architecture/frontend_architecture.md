@@ -41,18 +41,18 @@ sequenceDiagram
     actor User as 用户
     participant Browser as 浏览器
     participant FastAPI as FastAPI :8080
-    participant Google as Google OAuth
+    participant Microsoft as Microsoft Entra ID
 
-    Note over User,Google: === 登录 ===
+    Note over User,Microsoft: === 登录 ===
     User->>Browser: 打开 /chat
     Browser->>FastAPI: GET /chat
-    FastAPI-->>Browser: 重定向 Google OAuth
-    Browser->>Google: 授权
-    Google-->>Browser: code → /auth/callback
+    FastAPI-->>Browser: 重定向 Microsoft Entra ID
+    Browser->>Microsoft: 授权
+    Microsoft-->>Browser: code → /auth/callback
     Browser->>FastAPI: GET /auth/callback?code=xxx
     FastAPI-->>Browser: Set-Cookie + Chat UI
 
-    Note over User,Google: === 对话 ===
+    Note over User,Microsoft: === 对话 ===
     User->>Browser: 输入消息
     Browser->>FastAPI: GET /chat/stream?q=...
     FastAPI-->>Browser: SSE: data: token...\n\n
@@ -62,7 +62,7 @@ sequenceDiagram
 | 维度 | 说明 |
 |------|------|
 | **协议** | SSE (Server-Sent Events) 流式推送 |
-| **认证** | Google OAuth → JWT Cookie |
+| **认证** | Microsoft Entra ID → JWT Cookie |
 | **路由** | `/chat/stream`, `/auth/callback` |
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
@@ -167,12 +167,12 @@ flowchart TD
 ```mermaid
 flowchart LR
     FS["飞书<br/>feishu_user_id=ou_abc"] -->|"映射"| UID["user_id<br/>= user@example.com"]
-    Web["Web Chat<br/>Google=user@example.com"] -->|"OAuth 身份"| UID
+    Web["Web Chat<br/>Microsoft=user@example.com"] -->|"OAuth 身份"| UID
     OC["OfficeClaw<br/>飞书=ou_abc"] -->|"映射"| UID
     UID --> Memory["AgentArts Memory Space<br/>偏好 / 事实 / 对话历史"]
 ```
 
-- **Web Chat**：OAuth 登录后直接获得 `user_id`（Google email）
+- **Web Chat**：OAuth 登录后直接获得 `user_id`（Microsoft account email）
 - **飞书直连**：`feishu_user_id` → 查绑定表映射到 `user_id`
 - **OfficeClaw**：同飞书直连，OfficeClaw 传递飞书用户身份
 

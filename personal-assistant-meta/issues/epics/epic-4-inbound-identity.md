@@ -4,7 +4,7 @@ status: backlog
 
 # Epic 4: Inbound Identity 认证
 
-本 Phase 配置 AgentArts Identity 的 Inbound 认证（Google OAuth Custom JWT + API Key），使用户身份在 Request Header 中自动注入。这是 Web Chat 和所有 Outbound 工具的前置条件。
+本 Phase 配置 AgentArts Identity 的 Inbound 认证（Microsoft Entra ID Custom JWT + API Key），使用户身份在 Request Header 中自动注入。这是 Web Chat 和所有 Outbound 工具的前置条件。
 
 ---
 
@@ -14,9 +14,9 @@ status: backlog
 
 ## 范围
 
-- Google OAuth 应用创建
+- Microsoft Entra ID 应用注册 + `agentarts_config.yaml` 配置（Custom JWT + API Key）
 - `agentarts_config.yaml` Identity 配置（Custom JWT + API Key）
-- `app/oauth.py` — OAuth 流程（code → id_token）
+- `app/oauth.py` — OAuth 流程（code → id_token，Microsoft Entra ID）
 - `GET /auth/callback` 路由
 - AgentHandler 从 Request Header 读取 `X-AgentArts-User-Id`
 
@@ -28,25 +28,25 @@ status: backlog
 
 ## 任务拆解
 
-### 4.1 Google OAuth 应用
+### 4.1 Microsoft Entra ID 应用注册
 
-- [ ] Google Cloud Console 创建 OAuth 2.0 应用
-- [ ] 配置 Authorized redirect URI
-- [ ] 获取 client_id / client_secret
+- [ ] Azure Portal → Microsoft Entra ID → 应用注册
+- [ ] 配置 Redirect URI
+- [ ] 获取 client_id / client_secret（即 Application (client) ID + Secret）
 
 ### 4.2 Identity 配置
 
 - [ ] 更新 `agentarts_config.yaml`
   - `authorizer_type: CUSTOM_JWT`
-  - `discovery_url` → Google OIDC
+  - `discovery_url` → Microsoft OIDC（`https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration`）
   - `allowed_audience` / `allowed_clients` / `allowed_scopes`
   - `key_auth`（开发调试用 API Key）
 
 ### 4.3 OAuth 模块
 
 - [ ] `app/oauth.py`
-  - `exchange_google_code(code)` → 用 code 换 id_token
-  - `verify_google_id_token(id_token)` → 验证并提取用户信息
+  - `exchange_oauth_code(code)` → 用 code 向 Microsoft 换 id_token
+  - `verify_id_token(id_token)` → 用 Microsoft 公钥验证并提取用户信息
 
 ### 4.4 路由
 

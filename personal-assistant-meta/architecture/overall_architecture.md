@@ -32,7 +32,7 @@ flowchart TB
     end
 
     subgraph External["外部服务"]
-        GoogleAPI["Google APIs"]
+        Microsoft365API["Microsoft 365 APIs"]
         GitHubAPI["GitHub API"]
         InternalAPI["企业内部 API"]
     end
@@ -154,7 +154,7 @@ runtime:
     authorizer_type: CUSTOM_JWT          # IAM | CUSTOM_JWT | KEY_AUTH
     authorizer_configuration:
       custom_jwt:
-        discovery_url: https://accounts.google.com/.well-known/openid-configuration
+        discovery_url: https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration
         allowed_audience:
           - "personal-assistant-client-id"
         allowed_clients:
@@ -171,10 +171,10 @@ runtime:
 | 认证方式 | 适用场景 | 配置 |
 |----------|----------|------|
 | **IAM** | 华为云内部用户（Console / CLI） | `authorizer_type: IAM` |
-| **Custom JWT** | 自有 IdP 用户登录（Google / Okta / Auth0） | `authorizer_type: CUSTOM_JWT` + `discovery_url` |
+| **Custom JWT** | 自有 IdP 用户登录（Microsoft Entra ID / Okta / Auth0） | `authorizer_type: CUSTOM_JWT` + `discovery_url` |
 | **API Key** | 开发调试 / 机器对机器调用 | `authorizer_type: KEY_AUTH` + `api_keys[]` |
 
-> 推荐生产环境使用 **Custom JWT** 方式，通过 Google OAuth 或自有 OIDC IdP 提供用户认证。
+> 推荐生产环境使用 **Custom JWT** 方式，通过 Microsoft Entra ID 或自有 OIDC IdP 提供用户认证。
 
 ### 4.2 Outbound — Agent 代表用户调用外部服务
 
@@ -182,7 +182,7 @@ AgentArts Identity SDK 提供三种 Outbound 认证模式：
 
 | 模式 | Auth Flow | 用途 | 典型场景 |
 |------|-----------|------|----------|
-| **User Federation** | `USER_FEDERATION` | Agent 以用户身份调用外部 API | 查 GitHub Issues、发 Gmail、读 Google Calendar |
+| **User Federation** | `USER_FEDERATION` | Agent 以用户身份调用外部 API | 查 GitHub Issues、读 Outlook Calendar、查 Microsoft 365 邮件 |
 | **M2M** | `M2M` | Agent 以自身服务身份调用 API | 调用企业内部 CRM、OA 系统 |
 | **STS Token** | — | Agent 获取云资源访问凭证 | 操作 OBS 对象存储、访问 RDS |
 
@@ -209,12 +209,12 @@ github_provider = client.create_oauth2_credential_provider(
     client_secret="your-github-oauth-app-client-secret"
 )
 
-# 3. OAuth2 Provider — Google（User Federation）
-google_provider = client.create_oauth2_credential_provider(
-    name="google-provider",
-    vendor="google",
-    client_id="your-google-oauth-client-id",
-    client_secret="your-google-oauth-client-secret"
+# 3. OAuth2 Provider — Microsoft 365（User Federation）
+m365_provider = client.create_oauth2_credential_provider(
+    name="m365-provider",
+    vendor="microsoft",
+    client_id="your-m365-client-id",
+    client_secret="your-m365-client-secret"
 )
 
 # 4. API Key Provider — 企业内部 API（M2M）
@@ -253,16 +253,16 @@ async def get_github_issues(owner: str, repo: str, access_token: Optional[str] =
         )
         return resp.json()
 
-# === User Federation: 以用户身份调用 Google Calendar ===
+# === User Federation: 以用户身份调用 Outlook Calendar ===
 @require_access_token(
-    provider_name="google-provider",
-    scopes=["https://www.googleapis.com/auth/calendar.readonly"],
+    provider_name="m365-provider",
+    scopes=["https://graph.microsoft.com/Calendars.Read"],
     auth_flow="USER_FEDERATION"
 )
-async def get_google_calendar_events(access_token: Optional[str] = None):
+async def get_outlook_calendar_events(access_token: Optional[str] = None):
     async with httpx.AsyncClient() as client:
         resp = await client.get(
-            "https://www.googleapis.com/calendar/v3/calendars/primary/events",
+            "https://graph.microsoft.com/v1.0/me/calendar/events",
             headers={"Authorization": f"Bearer {access_token}"}
         )
         return resp.json()
@@ -478,15 +478,15 @@ agents:
         # 如需 VPC 内访问，改为 PRIVATE 并配置 vpc_config
 
       identity_configuration:
-        # === Inbound: Custom JWT (Google OAuth) ===
+        # === Inbound: Custom JWT (Microsoft Entra ID) ===
         authorizer_type: CUSTOM_JWT
         authorizer_configuration:
           custom_jwt:
-            discovery_url: https://accounts.google.com/.well-known/openid-configuration
+            discovery_url: https://login.microsoftonline.com/{tenant}/v2.0/.well-known/openid-configuration
             allowed_audience:
-              - "<your-google-oauth-client-id>"
+              - "<your-entra-id-client-id>"
             allowed_clients:
-              - "<your-google-oauth-client-id>"
+              - "<your-entra-id-client-id>"
             allowed_scopes:
               - "openid"
               - "profile"
@@ -540,7 +540,7 @@ agentarts invoke '{"message": "帮我查一下我的 GitHub Issues"}'
 # 调用（JWT 模式，通过 HTTPS + Bearer Token）
 curl -X POST https://<runtime-domain>/invocations \
   -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <Google_ID_Token>" \
+  -H "Authorization: Bearer <Microsoft_ID_Token>" \
   -d '{"message": "查一下我的日程"}'
 ```
 
@@ -559,10 +559,10 @@ personal-assistant/
 │   ├── graph.py                     # LangGraph 编排定义
 │   ├── memory.py                    # Memory 集成
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
-│   ├── oauth.py                     # Google OAuth 流程
+│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
 │   └── tools/
 │       ├── github_tools.py          # GitHub 工具 (OAuth2 User Federation)
-│       ├── google_tools.py          # Google 工具 (OAuth2 User Federation)
+│       ├── m365_tools.py            # Microsoft 365 工具 (OAuth2 User Federation)
 │       ├── internal_tools.py        # 内部 API 工具 (API Key M2M)
 │       └── cloud_tools.py           # 云资源工具 (STS M2M)
 ├── web/                              # Web Chat 前端（独立项目）
@@ -578,8 +578,8 @@ personal-assistant/
 
 | 用户身份 | Inbound 方式 | Outbound 目标 | Outbound 方式 | Auth Flow |
 |----------|-------------|---------------|---------------|-----------|
-| Google 用户 | JWT (Google OAuth) | GitHub API | OAuth 2.0 | USER_FEDERATION |
-| Google 用户 | JWT (Google OAuth) | Google Calendar | OAuth 2.0 | USER_FEDERATION |
+| Microsoft 用户 | JWT (Microsoft Entra ID) | GitHub API | OAuth 2.0 | USER_FEDERATION |
+| Microsoft 用户 | JWT (Microsoft Entra ID) | Outlook Calendar | OAuth 2.0 | USER_FEDERATION |
 | 企业员工 | JWT (Okta/Entra ID) | 内部 CRM | API Key | M2M |
 | 运维人员 | JWT (Okta/Entra ID) | 云资源 | STS Token | M2M |
 | 开发者 | API Key | _(全部)_ | _(开发调试)_ | — |

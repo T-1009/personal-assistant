@@ -6,7 +6,7 @@
 
 ## 1. 项目概述
 
-Personal Assistant 是一个对话式 AI 助手应用，用户通过自然语言对话管理日程、邮件、笔记和任务。系统具备跨 Session 的 Memory 能力，能够记住用户偏好和历史上下文，并在用户授权下以用户身份访问外部服务（如 GitHub、Google Calendar、企业内部 API）。
+Personal Assistant 是一个对话式 AI 助手应用，用户通过自然语言对话管理日程、邮件、笔记和任务。系统具备跨 Session 的 Memory 能力，能够记住用户偏好和历史上下文，并在用户授权下以用户身份访问外部服务（如 GitHub、Outlook Calendar、企业内部 API）。
 
 ### 1.1 核心价值
 
@@ -115,7 +115,7 @@ flowchart LR
 
 | 认证方式 | 说明 | 适用场景 |
 |----------|------|----------|
-| **OAuth 2.0 (Custom JWT)** | 通过 Google、Okta、Auth0 等 OIDC IdP 登录 | 生产环境，面向终端用户 |
+| **OAuth 2.0 (Custom JWT)** | 通过 Microsoft Entra ID、Okta、Auth0 等 OIDC IdP 登录 | 生产环境，面向终端用户 |
 | **IAM** | 通过华为云 IAM 账号登录 | 华为云内部用户 |
 | **API Key** | 使用预配置的 API Key 访问 | 开发调试、机器对机器调用 |
 
@@ -125,7 +125,7 @@ flowchart LR
 
 | 委托模式 | 说明 | 典型场景 |
 |----------|------|----------|
-| **User Federation** | Agent 以用户身份调用外部 API | 查询 GitHub Issues、读取 Google Calendar、发送 Gmail |
+| **User Federation** | Agent 以用户身份调用外部 API | 查询 GitHub Issues、读取 Outlook Calendar、发送 Outlook |
 | **M2M (Agent 身份)** | Agent 以自身服务身份调用 API | 查询企业内部 CRM、OA 系统 |
 | **云资源访问** | Agent 获取临时凭证访问云资源 | 操作 OBS 对象存储、访问 RDS |
 
@@ -135,8 +135,8 @@ flowchart LR
 
 | 用户身份 | Inbound 方式 | Outbound 目标 | Outbound 方式 | Auth Flow |
 |----------|-------------|---------------|---------------|-----------|
-| Google 用户 | JWT (Google OAuth) | GitHub API | OAuth 2.0 | USER_FEDERATION |
-| Google 用户 | JWT (Google OAuth) | Google Calendar | OAuth 2.0 | USER_FEDERATION |
+| Microsoft 用户 | JWT (Microsoft Entra ID) | GitHub API | OAuth 2.0 | USER_FEDERATION |
+| Microsoft 用户 | JWT (Microsoft Entra ID) | Outlook Calendar | OAuth 2.0 | USER_FEDERATION |
 | 企业员工 | JWT (Okta/Entra ID) | 内部 CRM | API Key | M2M |
 | 企业员工 | JWT (Okta/Entra ID) | 华为云 OBS | STS Token | M2M |
 | 开发者 | API Key | _(全部)_ | _(开发调试)_ | — |
@@ -180,7 +180,7 @@ stateDiagram-v2
 ```
 用户: 我今天下午有什么安排？
 Agent: 你今天下午有 2 个安排：
-      1. 14:00-15:00 项目周会（Google Meet）
+      1. 14:00-15:00 项目周会（Microsoft Teams）
       2. 16:00-16:30 与张三的一对一沟通
       15:00-16:00 之间是空闲时间。
 ```
@@ -204,7 +204,7 @@ Agent: 你当前有 3 个 Open Issue：
 | 验证项 | 说明 |
 |--------|------|
 | **Inbound Auth** | 用户通过 OAuth 2.0 / API Key 认证后访问 Agent |
-| **Outbound Auth (User Federation)** | Agent 以用户委托身份调用 GitHub/Google 等外部 API |
+| **Outbound Auth (User Federation)** | Agent 以用户委托身份调用 GitHub/Microsoft 365 等外部 API |
 | **Outbound Auth (M2M)** | Agent 以自身身份调用企业内部 Service API |
 | **Outbound Auth (STS)** | Agent 获取云平台 STS Token 访问云资源 |
 | **Chat Loop** | 多轮对话 + 工具调用 + 流式响应 |

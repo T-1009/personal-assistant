@@ -41,7 +41,7 @@
 
 | 术语 | 定义 |
 |------|------|
-| **Inbound 认证** | 用户 → Agent 的身份验证。支持三种：Custom JWT（Google OAuth/Okta）、IAM（华为云账号）、API Key（开发调试） |
+| **Inbound 认证** | 用户 → Agent 的身份验证。支持三种：Custom JWT（Microsoft Entra ID / Okta）、IAM（华为云账号）、API Key（开发调试） |
 | **Outbound 认证** | Agent → 外部服务的身份验证。Agent 拿到凭据后代表用户（或自身）调用外部 API |
 | **User Federation** | Outbound 模式之一。Agent 以**用户身份**调用外部 API（如查 GitHub Issues）。底层走 OAuth2，用户需完成一次授权 |
 | **M2M (Machine-to-Machine)** | Outbound 模式之一。Agent 以**自身服务身份**调用 API（如企业内部 CRM）。底层走 API Key |
@@ -55,7 +55,7 @@
 
 | 术语 | 定义 |
 |------|------|
-| **Web Chat** | 浏览器直连的聊天界面。通过 SSE 实现流式对话，通过 Google OAuth 登录 |
+| **Web Chat** | 浏览器直连的聊天界面。通过 SSE 实现流式对话，通过 Microsoft Entra ID 登录 |
 | **飞书直连** | 自行创建飞书 Bot，飞书服务器通过 Webhook 回调到 PA 后端的 `/feishu/webhook` |
 | **OfficeClaw** | 运行在 Windows PC 上的桌面客户端，桥接飞书/微信。通过 AgentArts 平台转发调用 PA 的 `/invocations` |
 
@@ -87,7 +87,7 @@
 | 术语 | 定义 |
 |------|------|
 | **GitHub Tools** | Agent 以 User Federation 模式调用 GitHub API（查 Issues/PR） |
-| **Google Tools** | Agent 以 User Federation 模式调用 Google API（Calendar/Gmail） |
+| **Microsoft 365 Tools** | Agent 以 User Federation 模式调用 Microsoft 365 API（Outlook/Calendar） |
 | **Internal Tools** | Agent 以 M2M 模式调用企业内部 API（CRM/OA 等） |
 | **Cloud Tools** | Agent 以 STS 模式访问华为云资源（OBS/RDS 等） |
 | **Guard Check** | 敏感操作（如发送邮件）的二次确认机制，防止 Agent 误操作 |

@@ -98,8 +98,8 @@ async def feishu_webhook(request: Request):
 
 @app.get("/auth/callback")
 async def oauth_callback(code: str):
-    """Google OAuth 回调 — 用 code 换 JWT，设置 Cookie"""
-    token = await exchange_google_code(code)
+    """OAuth 回调 — 用 code 换 JWT，设置 Cookie"""
+    token = await exchange_oauth_code(code)
     response = RedirectResponse(url="/chat")
     response.set_cookie("session", token["id_token"])
     return response
@@ -119,7 +119,7 @@ async def chat_stream(q: str, request: Request):
 | `/ping` | GET | AgentArts 平台 | 健康检查 |
 | `/invocations` | POST | AgentArts / OfficeClaw | Agent 对话 |
 | `/feishu/webhook` | POST | 飞书服务器 | 飞书事件回调 |
-| `/auth/callback` | GET | 浏览器 | Google OAuth 回调 |
+| `/auth/callback` | GET | 浏览器 | OAuth 回调 (Microsoft Entra ID) |
 | `/chat/stream` | GET | 浏览器 | SSE 流式对话 |
 
 ---
@@ -166,7 +166,7 @@ stateDiagram-v2
 | 节点 | 职责 |
 |------|------|
 | **agent** | 注入 Memory 上下文 → LLM 推理 → 决定调用工具或直接回答 |
-| **tools** | ToolNode — 执行工具调用（GitHub/Google/内部API），返回结果 |
+| **tools** | ToolNode — 执行工具调用（GitHub/Microsoft 365/内部API），返回结果 |
 | **finalize** | 保存 Memory → 返回最终响应 |
 
 ---
@@ -229,7 +229,7 @@ async def list_github_issues(owner: str, repo: str, access_token: str = None):
 ```
 
 支持三种 Outbound 模式：
-- **USER_FEDERATION**：以用户身份调 GitHub/Google（OAuth2）
+- **USER_FEDERATION**：以用户身份调 GitHub/Microsoft 365（OAuth2）
 - **M2M**：以 Agent 自身身份调企业内部 API（API Key）
 - **STS**：获取云资源临时凭证（STS Token）
 
@@ -272,10 +272,10 @@ personal-assistant/
 │   ├── graph.py                     # LangGraph 编排定义
 │   ├── memory.py                    # Memory 集成
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
-│   ├── oauth.py                     # Google OAuth 流程
+│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
 │   └── tools/
 │       ├── github_tools.py          # GitHub 工具 (OAuth2)
-│       ├── google_tools.py          # Google 工具 (OAuth2)
+│       ├── m365_tools.py            # Microsoft 365 工具 (OAuth2)
 │       ├── internal_tools.py        # 内部 API 工具 (API Key)
 │       └── cloud_tools.py           # 云资源工具 (STS)
 ```
