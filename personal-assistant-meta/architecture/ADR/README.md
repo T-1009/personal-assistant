@@ -12,6 +12,7 @@ Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 
 | [ADR-004](ADR-004-fastapi-over-agentarts-runtime-app.md) | FastAPI 替代 AgentArtsRuntimeApp | Accepted | 标准 FastAPI 获取更多路由自由度 |
 | [ADR-005](ADR-005-maas-llm-platform.md) | 华为云 MaaS 作为 LLM 推理平台 | Accepted | MaaS 平台 + DeepSeek-V4-Pro，模型可替换 |
 | [ADR-006](ADR-006-iac-cdktf-typescript.md) | 基础设施即代码（IaC）工具选型 | Accepted | AgentArts 层用 agentarts_config.yaml，基础资源层用 CDKTF (TypeScript) |
+| [ADR-007](ADR-007-identity-provider.md) | Inbound Identity Provider 选型 | Accepted | Microsoft Entra ID 为主，GitHub / 国内 IdP 为备选，不用 Google |
 
 ## 决策原则
 
