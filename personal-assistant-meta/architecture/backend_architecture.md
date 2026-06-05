@@ -22,7 +22,7 @@ flowchart TB
         subgraph Handler["Agent 处理逻辑"]
             direction LR
             Parse["消息解析<br/>统一格式"]
-            Orchestrate["LangGraph 编排<br/>agent → tools → finalize"]
+            Orchestrate["deepagents 编排<br/>内置 ReAct loop"]
             Memory["Memory<br/>上下文注入 + 持久化"]
         end
 
@@ -129,45 +129,63 @@ async def chat_stream(q: str, request: Request):
 所有路由最终解析为统一消息格式，调用共享的 Agent 处理逻辑：
 
 ```python
+from langchain.chat_models import init_chat_model
+from deepagents import create_deep_agent
+
 class AgentHandler:
     """共享 Agent 处理逻辑 — 所有前端共用"""
 
+    def __init__(self):
+        model = init_chat_model(
+            model="openai:deepseek-v4-pro",
+            base_url=os.environ["MODEL_URL"],
+            api_key=os.environ["MODEL_API_KEY"],
+        )
+        self.agent = create_deep_agent(
+            model=model,
+            system_prompt="你是 Personal Assistant...",
+            tools=[...],  # Identity SDK 装饰的工具函数
+        )
+
     async def handle(self, message: str, user_id: str, session_id: str = None) -> str:
-        memory_ctx = await self.memory.get_context(user_id)
-        result = await self.graph.ainvoke({
-            "messages": [HumanMessage(content=message)],
-            "context": {"user_id": user_id, "memory": memory_ctx},
+        result = await self.agent.ainvoke({
+            "messages": [{"role": "user", "content": message}],
         })
-        await self.memory.save(user_id, message, result["response"])
-        return result["response"]
+        return result["messages"][-1].content
 
     async def handle_stream(self, message: str, user_id: str):
         """流式版本 — 逐 token yield"""
-        memory_ctx = await self.memory.get_context(user_id)
-        async for chunk in self.graph.astream({...}):
+        async for chunk in self.agent.astream({
+            "messages": [{"role": "user", "content": message}],
+        }):
             yield f"data: {json.dumps({'token': chunk})}\n\n"
 ```
 
 ---
 
-## 4. LangGraph 编排
+## 4. deepagents 编排
 
-Agent 推理使用 LangGraph StateGraph，核心三个节点：
+Agent 推理使用 deepagents，底层是 LangGraph，封装了标准 ReAct loop。无需手写 StateGraph：
 
-```mermaid
-stateDiagram-v2
-    [*] --> agent: 入口
-    agent --> tools: has tool_calls
-    agent --> finalize: no tool_calls
-    tools --> agent: tool results
-    finalize --> [*]
+```python
+from deepagents import create_deep_agent
+
+agent = create_deep_agent(
+    model=model,
+    system_prompt="你是 Personal Assistant...",
+    tools=[...],  # Identity SDK 装饰的工具
+)
 ```
 
-| 节点 | 职责 |
-|------|------|
-| **agent** | 注入 Memory 上下文 → LLM 推理 → 决定调用工具或直接回答 |
-| **tools** | ToolNode — 执行工具调用（GitHub/Microsoft 365/内部API），返回结果 |
-| **finalize** | 保存 Memory → 返回最终响应 |
+内置能力：
+
+- **ReAct loop** — agent 推理 → 工具调用 → 结果反馈 → 循环，由 deepagents 内置
+- **conversation summarization** — 长对话自动 compact，控制 token 消耗
+- **skills 系统** — SKILL.md 文件驱动，按需加载领域知识和工具使用指南
+- **planning tool** — 内置 write_todos，复杂任务自动拆解（可按需关闭）
+- **sub-agents** — 内置 task tool，上下文隔离执行子任务（本项目不依赖）
+
+deepagents 是 LangGraph 的 harness，不是替代品。需要自定义图编排时可直接 drop 到 LangGraph。
 
 ---
 
@@ -249,7 +267,7 @@ result = sandbox.execute("print('hello')")
 | 层级 | 选型 | 说明 |
 |------|------|------|
 | **Web 框架** | FastAPI | 替代 AgentArtsRuntimeApp，统一管理所有路由 |
-| **Agent 编排** | LangGraph (Python) | 有状态图编排，支持条件路由和工具调用循环 |
+| **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills |
 | **LLM** | DeepSeek-V4-Pro (via MaaS) | OpenAI-compatible API，华为云 MaaS 平台部署，模型可替换 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，三种抽取策略 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
@@ -268,9 +286,7 @@ personal-assistant/
 ├── requirements.txt                 # Python 依赖
 ├── app/
 │   ├── main.py                      # FastAPI 应用入口 + 路由定义
-│   ├── agent_handler.py             # 共享 Agent 处理逻辑
-│   ├── graph.py                     # LangGraph 编排定义
-│   ├── memory.py                    # Memory 集成
+│   ├── agent_handler.py             # Agent 处理逻辑（deepagents + Identity SDK）
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
 │   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
 │   └── tools/

@@ -1,6 +1,6 @@
 # ADR-002: LangGraph 作为 Agent 编排框架
 
-> 状态：Accepted | 日期：2026-06-03
+> 状态：Superseded by [ADR-009](ADR-009-deepagents.md) | 日期：2026-06-03
 
 ---
 

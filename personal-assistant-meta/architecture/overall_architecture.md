@@ -20,7 +20,7 @@ flowchart TB
     subgraph Backend["☁️ 后端 — FastAPI（详见 backend_architecture.md）"]
         direction LR
         Routes["路由层<br/>/ping /invocations<br/>/feishu/webhook<br/>/auth/callback<br/>/chat/stream"]
-        Handler["Agent 处理逻辑<br/>LangGraph 编排"]
+        Handler["Agent 处理逻辑<br/>deepagents 编排"]
         SDK["agentarts-sdk<br/>Memory / Identity / Sandbox"]
     end
 
@@ -62,7 +62,7 @@ flowchart TB
 | 层级 | 选型 | 说明 |
 |------|------|------|
 | **Web 框架** | FastAPI | 统一管理所有路由，替代 AgentArtsRuntimeApp |
-| **Agent 编排** | LangGraph (Python) | 有状态图编排，支持条件路由和工具调用循环 |
+| **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills |
 | **LLM** | DeepSeek-V4-Pro (via MaaS) | OpenAI-compatible API，华为云 MaaS 平台部署，模型可替换 |
 | **Runtime** | AgentArts Runtime | 容器化部署，ARM64 架构，cn-southwest-2 区域 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，语义/偏好/情景三种策略 |
@@ -299,24 +299,36 @@ async def access_obs_file(bucket: str, key: str, sts_credentials: Optional[StsCr
 
 > 详细实现见 `backend_architecture.md` #3、#4。
 
-### 5.1 LangGraph 编排
+### 5.1 deepagents 编排
 
-Agent 使用 LangGraph StateGraph 实现有状态的对话编排：
+Agent 使用 deepagents 封装标准 ReAct loop，无需手写 StateGraph：
+
+```python
+from deepagents import create_deep_agent
+
+agent = create_deep_agent(
+    model=model,
+    system_prompt="你是 Personal Assistant，负责管理日程、邮件、笔记和任务...",
+    tools=[github_tool, calendar_tool],
+)
+```
+
+deepagents 底层是 LangGraph，内置 ReAct 循环：
 
 ```mermaid
 stateDiagram-v2
-    [*] --> agent: entry_point
+    [*] --> agent: 入口
     agent --> tools: has tool_calls
     agent --> finalize: no tool_calls
     tools --> agent: tool results
     finalize --> [*]
 ```
 
-核心节点：
+核心能力：
 
-- **agent** — LLM 推理节点：决定是调用工具还是直接回答，注入 Memory 上下文
-- **tools** — ToolNode：执行工具调用，返回结果
-- **finalize** — 终止节点：保存 Memory，构建最终响应
+- **ReAct loop** — agent 推理 → 工具调用 → 结果反馈 → 继续推理，由 deepagents 内置
+- **conversation summarization** — 长对话自动 compact，控制 token 消耗
+- **skills 系统** — SKILL.md 文件驱动，按需加载领域知识和工具使用指南
 
 ### 5.2 FastAPI 入口（替代 AgentArtsRuntimeApp）
 
@@ -345,17 +357,37 @@ async def invoke(request: Request):
 
 不再使用 `AgentArtsRuntimeApp` 和 `@app.entrypoint`，改用标准 FastAPI 路由。平台层面完全兼容，只要容器在 8080 提供 `/ping` + `/invocations` 即可。
 
-### 5.3 Agent State 数据流
+### 5.3 Agent 数据流
 
 ```mermaid
 flowchart LR
-    Entry["entrypoint<br/>handler(payload, context)"] --> State["AgentState<br/>messages / query / response / context"]
-    State --> AgentNode["agent_node<br/>注入 Memory → LLM 推理"]
-    AgentNode -->|"tool_calls"| ToolNode["tool_node<br/>执行工具调用"]
-    AgentNode -->|"无 tool_calls"| Finalize["finalize_node<br/>保存 Memory → 返回"]
-    ToolNode -->|"tool results"| AgentNode
-    Finalize --> Response["Dict[str, Any]<br/>{response: '...'}"]
+    Entry["entrypoint<br/>handler(payload, context)"] --> Agent["deepagents Agent<br/>内置 ReAct loop"]
+    Agent -->|"tool_calls"| Tools["工具调用<br/>执行 Identity SDK 装饰的工具"]
+    Agent -->|"无 tool_calls"| Response["Dict[str, Any]<br/>{response: '...'}"]
+    Tools -->|"tool results"| Agent
 ```
+
+AgentHandler 直接调用 deepagents 的 `.invoke()` 或 `.astream()`：
+
+```python
+class AgentHandler:
+    def __init__(self):
+        model = init_chat_model(
+            model="openai:deepseek-v4-pro",
+            base_url=os.environ["MODEL_URL"],
+            api_key=os.environ["MODEL_API_KEY"],
+        )
+        self.agent = create_deep_agent(
+            model=model,
+            system_prompt="你是 Personal Assistant...",
+            tools=[...],  # Identity SDK 装饰的工具
+        )
+
+    async def handle(self, message: str, user_id: str) -> str:
+        result = await self.agent.ainvoke({
+            "messages": [{"role": "user", "content": message}],
+        })
+        return result["messages"][-1].content
 
 ---
 
@@ -555,8 +587,7 @@ personal-assistant/
 ├── requirements.txt                 # Python 依赖
 ├── app/
 │   ├── main.py                      # FastAPI 应用入口 + 路由定义
-│   ├── agent_handler.py             # 共享 Agent 处理逻辑
-│   ├── graph.py                     # LangGraph 编排定义
+│   ├── agent_handler.py             # Agent 处理逻辑（deepagents + Identity SDK）
 │   ├── memory.py                    # Memory 集成
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
 │   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
