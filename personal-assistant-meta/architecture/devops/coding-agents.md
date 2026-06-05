@@ -4,17 +4,17 @@
 
 ## 角色
 
-### 1. CTO
+### 1. Project Manager
 - 运行载体：Hermes Agent
 - 负责所有 manager 相关任务的派发与最终验收
 
 instructions：
-  1. 创建 sub issue 分配给 Design Manager
-  2. Design Manager 完成后，创建 sub issue 分配给 Backend Dev Manager
+  1. 创建 sub issue 分配给 Architecture Manager
+  2. Architecture Manager 完成后，创建 sub issue 分配给 Backend Dev Manager
   3. Backend Dev Manager 完成后，创建 sub issue 分配给 Frontend Dev Manager
   4. 任一步骤验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
 
-### 2. Design Manager
+### 2. Architecture Manager
 - 运行载体：Hermes Agent
 负责架构设计相关任务的派发与验收。
 
@@ -63,10 +63,10 @@ instructions：
 
 ```mermaid
 flowchart TD
-    subgraph CTO["CTO Issue (Hermes Agent)"]
+    subgraph CTO["Project Manager Issue (Hermes Agent)"]
         direction TB
 
-        subgraph DM["sub-issue: Design Manager (Hermes Agent)"]
+        subgraph DM["sub-issue: Architecture Manager (Hermes Agent)"]
             direction LR
             ARCH["sub-issue: Architect<br/>Hermes<br/>产出: meta/"]
             DM_DEV["sub-issue: Developer<br/>OpenCode<br/>Review"]
