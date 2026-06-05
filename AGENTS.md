@@ -15,11 +15,11 @@ personal-assistant/
 
 ### personal-assistant-client/ — 前端应用
 
-提供 Web Chat 对话界面，负责用户交互、消息渲染，以及飞书、OfficeClaw 等多接入渠道的客户端适配层。
+提供 Web Chat 对话界面，负责用户交互、消息渲染，以及飞书、OfficeClaw 等多接入渠道的客户端适配层。开始前先阅读 [`personal-assistant-client/AGENTS.md`](./personal-assistant-client/AGENTS.md) 了解该目录的详细规范。
 
 ### personal-assistant-service/ — 后端服务
 
-运行在 AgentArts Runtime 上的 AI Agent 服务，处理对话逻辑、日程/邮件/笔记/任务管理、跨 Session Memory、用户委托等核心能力。
+运行在 AgentArts Runtime 上的 AI Agent 服务，处理对话逻辑、日程/邮件/笔记/任务管理、跨 Session Memory、用户委托等核心能力。开始前先阅读 [`personal-assistant-service/AGENTS.md`](./personal-assistant-service/AGENTS.md) 了解该目录的详细规范。
 
 ### personal-assistant-meta/ — Design Hub
 
