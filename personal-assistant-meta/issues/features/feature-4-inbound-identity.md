@@ -10,7 +10,7 @@ status: backlog
 
 ## 背景
 
-飞书和 OfficeClaw 渠道自带用户身份（飞书 user_id）。但 Web Chat 和 User Federation 工具（GitHub/Google）需要用户通过 OAuth 登录，Agent 拿到用户身份后才能以用户身份调外部 API。本 Phase 搭建 OAuth 基础设施，Web Chat 渠道本身放到 Feature 5。
+飞书和 OfficeClaw 渠道自带用户身份（飞书 user_id）。但 Web Chat 和 User Federation 工具（GitHub/Microsoft 365）需要用户通过 OAuth 登录，Agent 拿到用户身份后才能以用户身份调外部 API。本 Phase 搭建 OAuth 基础设施。
 
 ## 范围
 
@@ -51,7 +51,7 @@ status: backlog
 ### 4.4 路由
 
 - [ ] `GET /auth/callback?code=xxx`
-  - 调 `exchange_google_code()` → 获取 id_token
+  - 调 `exchange_oauth_code()` → 获取 id_token
   - 302 重定向 + Set-Cookie
 
 ### 4.5 AgentHandler 身份读取
@@ -69,7 +69,7 @@ status: backlog
 
 ## 依赖
 
-- Feature 1（Agent 骨架 + 飞书）
+- Feature 1（Agent 骨架 + Web Chat）
 - Feature 2（Memory）— user_id 需关联 Memory
 
 ## 参考

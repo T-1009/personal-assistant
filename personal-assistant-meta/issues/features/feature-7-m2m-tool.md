@@ -36,7 +36,7 @@ status: backlog
 
 ## 依赖
 
-- Feature 1（Agent 骨架 + 飞书）
+- Feature 1（Agent 骨架 + Web Chat）
 - Feature 4（Inbound Identity）
 
 ## 参考

@@ -79,4 +79,4 @@ shadcn/ui                 — 组件库（Chat 模板，可选）
 - `architecture/frontend_architecture.md` — 前端架构设计
 - `ADR-004` — FastAPI 替代 AgentArtsRuntimeApp
 - `ADR-007` — Microsoft Entra ID 作为 Identity Provider
-- `issues/features/feature-5-web-chat.md` — Web Chat Feature Spec
+- `issues/features/feature-5-feishu-channel.md` — 飞书渠道 Feature Spec

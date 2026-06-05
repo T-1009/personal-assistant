@@ -51,7 +51,7 @@ status: backlog
 
 ## 依赖
 
-- Feature 1（Agent 骨架 + 飞书）
+- Feature 1（Agent 骨架 + Web Chat）
 
 ## 参考
 

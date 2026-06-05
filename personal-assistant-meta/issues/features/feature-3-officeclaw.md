@@ -22,7 +22,7 @@ OfficeClaw 是运行在 Windows PC 上的桌面客户端，桥接飞书和微信
 ## 不涉及
 
 - 任何后端代码改动（`/invocations` 已在 Feature 1 实现）
-- 飞书直连模式（已在 Feature 1 实现，OfficeClaw 是另一种接入路径）
+- 飞书直连模式（Feature 5，OfficeClaw 是另一种接入路径）
 
 ## 任务拆解
 
@@ -40,7 +40,7 @@ OfficeClaw 是运行在 Windows PC 上的桌面客户端，桥接飞书和微信
 
 ## 依赖
 
-- Feature 1（Agent 骨架 + 飞书）
+- Feature 1（Agent 骨架 + Web Chat）
 - Feature 2（Memory）
 
 ## 参考
