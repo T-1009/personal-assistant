@@ -273,6 +273,8 @@ result = sandbox.execute("print('hello')")
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API → MCP Tool 自动转换 |
 | **Sandbox** | AgentArts Sandbox SDK | 安全隔离代码执行 |
+| **包管理** | uv (Astral) | 替代 pip/virtualenv，Rust 实现，uv.lock 确定性构建 |
+| **Lint / Format** | ruff (Astral) | 替代 flake8 + black + isort，Rust 实现，单一配置 |
 | **Container** | Docker (linux/arm64) | Python 3.12+ |
 
 ---
@@ -283,7 +285,8 @@ result = sandbox.execute("print('hello')")
 personal-assistant/
 ├── .agentarts_config.yaml          # AgentArts 部署配置
 ├── Dockerfile                       # ARM64 镜像
-├── requirements.txt                 # Python 依赖
+├── pyproject.toml                   # Python 依赖 + ruff 配置
+├── uv.lock                           # 确定性锁文件
 ├── app/
 │   ├── main.py                      # FastAPI 应用入口 + 路由定义
 │   ├── agent_handler.py             # Agent 处理逻辑（deepagents + Identity SDK）

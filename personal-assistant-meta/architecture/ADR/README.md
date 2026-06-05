@@ -15,6 +15,7 @@ Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 
 | [ADR-007](ADR-007-identity-provider.md) | Inbound Identity Provider 选型 | Accepted | Microsoft Entra ID 为主，GitHub / 国内 IdP 为备选，不用 Google |
 | [ADR-008](ADR-008-web-chat-frontend-framework.md) | Web Chat 前端框架选型 | Accepted | Vite + React + TypeScript + Tailwind CSS，不用 Next.js |
 | [ADR-009](ADR-009-deepagents.md) | deepagents 替代 LangGraph 裸用 | Accepted | 用 deepagents harness 替代手写 StateGraph，底层仍是 LangGraph |
+| [ADR-010](ADR-010-astral-ecosystem-tooling.md) | Astral 生态工具链（uv + ruff） | Accepted | uv 管理包和虚拟环境，ruff 负责 linting 和 formatting |
 
 ## 决策原则
 
