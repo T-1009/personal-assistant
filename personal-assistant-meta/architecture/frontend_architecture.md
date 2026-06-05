@@ -67,6 +67,19 @@ sequenceDiagram
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
 
+**OAuth 前后端职责分离**：token 交换必须在后端，因为 client_secret 不能暴露在前端浏览器中。
+
+```
+前端（浏览器）                    后端（FastAPI）
+─────────────────                ─────────────────
+● 发起登录跳转                    ● 接收 code
+  (只需 client_id)               ● code + client_secret → access_token
+● 携带 Cookie 发请求              ● token → 用户信息 (Graph /me)
+● 无感知 token 细节               ● 设 Cookie，302 跳回 /chat
+```
+
+`/auth/callback` 路由实现约 30 行代码，不额外引入 BFF 或独立认证服务。
+
 ### 2.2 飞书直连
 
 **接入方式**：自行创建飞书 Bot，飞书事件回调到 FastAPI `/feishu/webhook`
