@@ -19,7 +19,7 @@ instructions：
 负责架构设计相关任务的派发与验收。
 
 instructions：
-1. 创建 sub issue 分配给 Architect，完成架构设计，产出落在 `personal-assistant-meta` 目录下
+1. 创建 sub issue 分配给 Architect，完成架构设计，产出落在 `personal-assistant-meta/issues` 目录下
 2. Architect 完成后，创建 sub issue 分配给 Developer 进行 review
 3. 验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
 
