@@ -1,4 +1,4 @@
-# DevOps — Coding Agent 最佳实践
+# DevOps — Coding Agent 最佳实践 （Paperclip 适配版本）
 
 本文档面向 Paperclip 的 CEO Agent，定义 Personal Assistant 项目所需的 coding agent 团队结构，以及每个角色的职责划分和管辖范围。
 
