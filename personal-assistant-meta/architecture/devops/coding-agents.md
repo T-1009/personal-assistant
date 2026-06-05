@@ -6,41 +6,50 @@
 
 ### 1. CTO
 - 负责所有 manager 相关任务的派发与最终验收
-- 按顺序调度各 manager：先派给 Design Manager，再派给 Backend Dev Manager，最后派给 Frontend Dev Manager
-- 验收不通过时，对未通过的环节发起下一轮迭代，直至通过
-
-### 2. Architect
-- 专职架构设计
-
-### 3. Developer
-- 专职代码开发
-
-### 4. QA
-- 专职代码测试
-
-### 5. Design Manager
-负责架构设计相关任务的派发与验收。  
 
 步骤：
-- 先由 Architect 完成架构设计，产出落在 `personal-assistant-meta` 目录下
-- 再由 Developer 进行 review
-- 验收不通过时，发起下一轮迭代，直至通过
+  1. 创建 sub issue 分配给 Design Manager
+  2. Design Manager 完成后，创建 sub issue 分配给 Backend Dev Manager
+  3. Backend Dev Manager 完成后，创建 sub issue 分配给 Frontend Dev Manager
+  4. 任一步骤验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
 
-### 6. Backend Dev Manager
+### 2. Design Manager
+负责架构设计相关任务的派发与验收。
+
+步骤：
+1. 创建 sub issue 分配给 Architect，完成架构设计，产出落在 `personal-assistant-meta` 目录下
+2. Architect 完成后，创建 sub issue 分配给 Developer 进行 review
+3. 验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
+
+### 3. Backend Dev Manager
 负责后端开发任务的派发与验收。
 
 步骤：
-- 先由 Developer 完成后端代码开发
-- 再由 QA 进行测试
-- 验收不通过时，发起下一轮迭代，直至通过
+1. 创建 sub issue 分配给 Developer，完成后端代码开发，产出落在 `personal-assistant-service` 目录下
+2. Developer 完成后，创建 sub issue 分配给 QA 进行测试
+3. 验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
 
-### 7. Frontend Dev Manager
+### 4. Frontend Dev Manager
 负责前端开发任务的派发与验收。
 
 步骤：
-- 先由 Developer 完成前端代码开发
-- 再由 QA 进行测试
-- 验收不通过时，发起下一轮迭代，直至通过
+1. 创建 sub issue 分配给 Developer，完成前端代码开发，产出落在 `personal-assistant-client` 目录下
+2. Developer 完成后，创建 sub issue 分配给 QA 进行测试
+3. 验收不通过时，重新按照上面的步骤顺序发起下一轮迭代，直至通过
 
-# Issue 结构
-任务派发与流转通过 sub issue 进行。
+### 5. Architect
+- 专职架构设计
+
+### 6. Developer
+- 专职代码开发
+
+### 7. QA
+- 专职代码测试
+
+## 工作流程理念
+
+本质上是多层嵌套的控制回路（control loop）：
+
+- 每一个 manager 都是一个独立的控制回路，不断循环重复，直至验收通过
+- 验收不通过 → 重新走一遍自己管辖的步骤 → 再次验收 → 重复，直到通过
+- CTO 是外层回路，调度 Design → Backend → Frontend 三个 manager 回路；任一 manager 最终未通过，外层回路重新开始
