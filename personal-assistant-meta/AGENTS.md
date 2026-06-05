@@ -95,9 +95,9 @@ personal-assistant-meta/
 - 代码注释推荐英文，但面向中文读者的说明性注释可使用中文。
 - README.md、CHANGELOG.md 等对外文档以中文为主，英文摘要可附在关键段落后方。
 
-## The Three-Question Gate
+## The Four-Question Gate
 
-在做任何设计决策时，必须通过以下三道闸门——用三个问题审视每一个选择：
+在做任何设计决策时，必须通过以下四道闸门——用四个问题审视每一个选择：
 
 1. **Is it best practice?**
    - 这个方案是否遵循了公认的软件工程最佳实践（如 SOLID 原则、Separation of Concerns、Defense in Depth）？
@@ -111,4 +111,8 @@ personal-assistant-meta/
    - 对于这类问题，这是否是最常见、最广为人知的解决方案？
    - 一个熟悉该技术栈的新成员是否能立即理解并预期这个方案？
 
-三个问题的答案都应当为 **Yes**。若任一答案为 No，需在文档中明确记录偏离原因及 trade-off 分析。
+4. **Is it modern?**
+   - 这个方案是否代表当前技术生态的前沿方向，而非即将被淘汰的遗留技术？
+   - 是否有明确的社区 momentum（增长中的采用率、活跃的维护、持续的创新）？
+
+四个问题的答案都应当为 **Yes**。若任一答案为 No，需在文档中明确记录偏离原因及 trade-off 分析。
