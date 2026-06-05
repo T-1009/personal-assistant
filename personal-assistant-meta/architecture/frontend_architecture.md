@@ -193,6 +193,8 @@ flowchart LR
 
 ## 6. 部署拓扑
 
+### 6.1 整体拓扑
+
 ```mermaid
 flowchart TB
     subgraph UserDevices["用户设备"]
@@ -208,13 +210,76 @@ flowchart TB
         OC["OfficeClaw"]
     end
 
-    subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
-        FastAPI["FastAPI 容器 :8080<br/>─────────────────<br/>/ping<br/>/invocations<br/>/feishu/webhook<br/>/auth/callback<br/>/chat/stream"]
+    subgraph HuaweiCloud["华为云 (cn-southwest-2)"]
+        CDN["CDN<br/>chat.personal-assistant.cn"]
+        OBS["OBS 静态托管<br/>Vite build 产物"]
+        subgraph AgentArts["AgentArts 平台"]
+            FastAPI["FastAPI 容器 :8080<br/>─────────────────<br/>/ping<br/>/invocations<br/>/feishu/webhook<br/>/auth/callback<br/>/chat/stream"]
+        end
     end
 
-    Browser -->|"SSE + OAuth"| FastAPI
+    Browser -->|"/ → 静态文件"| CDN
+    CDN -->|"回源"| OBS
+    Browser -->|"/api/* → SSE + OAuth"| CDN
+    CDN -->|"回源"| FastAPI
     FeishuApp --> FeishuCloud
     FeishuCloud -->|"Webhook 回调"| FastAPI
     FeishuCloud -->|"WebSocket"| OC
     OC -->|"AgentArts 调用"| FastAPI
 ```
+
+### 6.2 Web Chat 前端部署
+
+Web Chat 前端采用**两阶段部署策略**，最终目标为 OBS + CDN + 自定义域名，实现前后端同域零跨域。
+
+#### Phase 1：同容器 serve（起步方案）
+
+FastAPI 通过 `StaticFiles` mount Vite build 产物，前后端共享同一容器和端口。
+
+```
+FastAPI 容器 :8080
+  ├── /                    → StaticFiles mount dist/
+  ├── /api/auth/callback   → OAuth 回调
+  ├── /api/chat/stream     → SSE 流式对话
+  └── ...                  → 其他路由
+```
+
+| 维度 | 说明 |
+|------|------|
+| **跨域** | 无，前后端同 origin |
+| **Cookie** | 天然共享，OAuth 流程最简单 |
+| **适用** | 开发阶段、低流量验证 |
+| **代价** | 静态文件占用容器带宽，无法独立扩容 |
+
+#### Phase 2：OBS + CDN + 自定义域名（生产方案）
+
+前端静态文件部署到华为云 OBS，通过 CDN 回源并配置自定义域名（如 `chat.personal-assistant.cn`）。CDN 通过路径前缀分流请求：
+
+```
+https://chat.personal-assistant.cn/
+  ├── /api/*   → CDN 回源到 FastAPI 容器
+  └── /*       → CDN 回源到 OBS bucket
+```
+
+| 维度 | 说明 |
+|------|------|
+| **跨域** | 无，前后端同 origin（同一域名） |
+| **Cookie** | 天然共享，OAuth 流程零额外配置 |
+| **国内速度** | CDN 全国加速，首屏秒开 |
+| **扩容** | 静态资源 CDN 承载，后端容器只处理 API |
+| **额外工作** | OBS bucket + CDN 配置 + 域名备案 + HTTPS 证书 |
+
+#### 为什么不做跨域方案
+
+OAuth Cookie 跨域（前端 OBS 默认域名 → 后端 AgentArts 域名）需要：
+- FastAPI 配 CORS `Allow-Credentials: true`
+- Cookie 设 `SameSite=None; Secure`
+- 前端 SSE 请求带 `credentials: 'include'`
+
+多一层配置多一个故障点。自定义域名方案**从架构层面消除跨域问题**，而不是用配置修补，符合"简单够用"原则。
+
+#### 为什么不用 GitHub Pages
+
+- `github.io` 域名与 FastAPI 不同域，Cookie 跨域
+- 国内无 CDN 节点，首次加载慢
+- 无法绑 CDN 做路径分流（GitHub Pages 不支持回源到第三方 API）
