@@ -1,0 +1,308 @@
+# OpenCode Agent Workflow — Tree-Structured with Control Loops
+
+## Overview
+
+OpenCode sub-agent 工作流采用 **三层树状结构**。工作流是 **Issue 驱动的**——输入是 `personal-assistant-meta/issues/` 下的一个 Issue，输出是 Mono-Repo 内的完整实现。
+
+与 AnyWear 的关键区别：**单仓库**（无 Git Submodule）。三个领域对应三个目录：`personal-assistant-meta/`、`personal-assistant-service/`、`personal-assistant-client/`，共享同一个 Git 仓库和分支。
+
+核心设计：
+
+1. **引入领域 Manager 层**：Personal-Assistant-Manager（顶层）不再直接调度 worker，而是将任务分解给三个领域 Manager。
+2. **每个领域 Manager 跑独立的 Control Loop**：Manager 在自己的领域内调度 Dev → Reviewer → Tester，根据反馈决定通过还是重来。
+3. **层级化决策**：顶层 Manager 只管分解和集成验证，领域 Manager 管自己领域内的质量闭环。
+4. **领域 Committer 限定目录**：每个 Committer 只 `git add` 自己的目录，所有提交在同一分支上。
+
+## Agent 组织结构
+
+三个领域与目录一一对应：`personal-assistant-meta/`、`personal-assistant-service/`、`personal-assistant-client/`。
+
+```mermaid
+graph TD
+    AM["<b>Personal-Assistant-Manager</b><br/>顶层 Orchestrator<br/>任务分解 · 集成验证 · 合并"]
+    AM_E2E["<b>E2E-Tester</b><br/>端到端联调测试<br/>跨 Service + Client"]
+    HUMAN["👤 Human in the Loop<br/>Plan Approval Gate"]
+
+    subgraph META["<b>Meta 领域</b> — personal-assistant-meta/"]
+        MM["<b>Meta-Manager</b><br/>领域 Orchestrator<br/>Plan 闭环 · API 同步"]
+        MD["Meta-Dev<br/>撰写 Implementation Plan"]
+        MR["Meta-Reviewer<br/>审查 Implementation Plan"]
+        SD_API["Service-Dev<br/>API 接口更新"]
+        CD_API["Client-Dev<br/>API 类型同步"]
+        M_C["Committer<br/>git add personal-assistant-meta/"]
+    end
+
+    subgraph SERVICE["<b>Service 领域</b> — personal-assistant-service/"]
+        SM["<b>Service-Manager</b><br/>领域 Orchestrator"]
+        SD["Service-Dev<br/>后端功能实现"]
+        SR["Service-Reviewer<br/>后端代码审查"]
+        ST["Service-Tester<br/>单元测试 · 集成测试"]
+        S_C["Committer<br/>git add personal-assistant-service/"]
+    end
+
+    subgraph CLIENT["<b>Client 领域</b> — personal-assistant-client/"]
+        CM["<b>Client-Manager</b><br/>领域 Orchestrator"]
+        CD["Client-Dev<br/>前端功能实现"]
+        CR["Client-Reviewer<br/>前端代码审查"]
+        CT["Client-Tester<br/>单元测试 · 集成测试"]
+        C_C["Committer<br/>git add personal-assistant-client/"]
+    end
+
+    AM --> AM_E2E
+    AM --> MM
+    AM --> SM
+    AM --> CM
+    AM -.-> HUMAN
+
+    MM --> MD
+    MM --> MR
+    MM --> SD_API
+    MM --> CD_API
+    MM --> M_C
+
+    SM --> SD
+    SM --> SR
+    SM --> ST
+    SM --> S_C
+
+    CM --> CD
+    CM --> CR
+    CM --> CT
+    CM --> C_C
+
+    style AM fill:#e1f5fe,stroke:#0288d1
+    style MM fill:#fff3e0,stroke:#f57c00
+    style SM fill:#fff3e0,stroke:#f57c00
+    style CM fill:#fff3e0,stroke:#f57c00
+    style AM_E2E fill:#e3f2fd,stroke:#1565c0
+    style M_C fill:#e8f5e9,stroke:#2e7d32
+    style S_C fill:#e8f5e9,stroke:#2e7d32
+    style C_C fill:#e8f5e9,stroke:#2e7d32
+    style HUMAN fill:#fce4ec,stroke:#c62828,stroke-dasharray: 5 5
+```
+
+共 18 个 Agent。Meta 领域下的 Service-Dev / Client-Dev 与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。
+
+### 与 AnyWear 的结构差异
+
+| | AnyWear | personal-assistant |
+|---|---|---|
+| 仓库模型 | Root + 3 Submodule | 单仓库，3 个目录 |
+| Agent 总数 | 19 | 18（无 Root Committer） |
+| 分支管理 | 4 个 repo 需同步分支 | 1 个分支 |
+| Commit 方式 | 每个 submodule 独立 commit | 所有 Committer 在同一分支上，限定各自目录 |
+| API 同步 | Service 生成 spec → Client 拉 submodule | Service 生成 spec → Client 直接引用（同仓库） |
+| Merge | 递归 merge（submodule 先，root 后） | 单次 `git merge` |
+
+## 执行顺序（Happy Path）
+
+**相同序号 = 并行执行**。Service 和 Client 在 ⑨-⑫ 完全并行，两者都完成后才进入 E2E 测试。
+
+```mermaid
+flowchart TD
+    START(["Issue<br/>personal-assistant-meta/issues/"])
+
+    START --> S1["① Personal-Assistant-Manager<br/>读取 Issue → 下发 Meta-Manager"]
+
+    subgraph META_PHASE["<b>Meta 阶段</b>"]
+        S2["② Meta-Manager<br/>调度 Meta-Dev<br/>撰写 Implementation Plan"]
+        S3["③ Meta-Manager<br/>调度 Meta-Reviewer<br/>审查 Plan"]
+        S4["④ Meta-Manager<br/>调度 Service-Dev（API）"]
+        S5["⑤ Meta-Manager<br/>调度 Client-Dev（API）"]
+        S6["⑥ Meta-Manager<br/>调度 Meta-Committer"]
+    end
+
+    S1 --> S2
+    S2 --> S3 --> S4 --> S5 --> S6
+
+    S6 --> HUMAN_APPROVAL["👤 ⑦ Human<br/>Plan Approval"]
+
+    HUMAN_APPROVAL --> S7["⑧ Personal-Assistant-Manager<br/>并行下发"]
+
+    subgraph SVC_PHASE["<b>Service 领域</b> — personal-assistant-service/  ∥"]
+        S8A["⑨ Service-Manager<br/>调度 Service-Dev"]
+        S9A["⑩ Service-Manager<br/>调度 Service-Reviewer"]
+        S10A["⑪ Service-Manager<br/>调度 Service-Tester"]
+        S11A["⑫ Service-Manager<br/>调度 Service-Committer"]
+    end
+
+    subgraph CLIENT_PHASE["<b>Client 领域</b> — personal-assistant-client/  ∥"]
+        S8B["⑨ Client-Manager<br/>调度 Client-Dev"]
+        S9B["⑩ Client-Manager<br/>调度 Client-Reviewer"]
+        S10B["⑪ Client-Manager<br/>调度 Client-Tester"]
+        S11B["⑫ Client-Manager<br/>调度 Client-Committer"]
+    end
+
+    S7 --> S8A
+    S7 --> S8B
+
+    S8A --> S9A --> S10A --> S11A
+    S8B --> S9B --> S10B --> S11B
+
+    S11A --> JOIN{"⑬ 两者都完成"}
+    S11B --> JOIN
+
+    JOIN --> S12["⑭ Personal-Assistant-Manager<br/>下发 → E2E-Tester"]
+    S12 --> S13["⑮ Personal-Assistant-Manager<br/>请求 Merge Approval"]
+    S13 --> DONE(["Done"])
+
+    style START fill:#e1f5fe,stroke:#0288d1
+    style JOIN fill:#fce4ec,stroke:#c62828
+    style DONE fill:#e8f5e9,stroke:#2e7d32
+    style META_PHASE fill:#fff8e1,stroke:#f9a825
+    style SVC_PHASE fill:#e8eaf6,stroke:#3949ab
+    style CLIENT_PHASE fill:#e8eaf6,stroke:#3949ab
+    style HUMAN_APPROVAL fill:#fce4ec,stroke:#c62828
+```
+
+**与 AnyWear 执行顺序的差异**：
+
+- 步骤 ⑮ 不再有独立的 Root-Committer 节点。Merge Approval 由 Personal-Assistant-Manager 直接请求用户审批后执行单次 `git merge`。
+- 无 recursive merge：所有 Committer 已在自己领域 commit，Manager 只需在审批后 merge 到 main。
+
+## Control Loop
+
+每个领域 Manager 内部跑 control loop：Dev → Reviewer → Tester → Committer。Manager 不写代码，只做调度和决策。Tester 报告失败时，Manager 做三级决策：
+
+| 测试结果 | Manager 决策 | 动作 |
+|----------|-------------|------|
+| 实现 bug（空指针、类型错误等） | 可修复 | 带错误信息回退到 Dev |
+| 设计缺陷（API 语义不对等） | 需重新设计 | 上报 Personal-Assistant-Manager，等 Meta 侧调整 |
+| 非阻塞问题（覆盖率略低等） | 接受 | 记录 known issue，验收通过 |
+
+## Committer 规范（Mono-Repo 特化）
+
+所有 Committer 在同一 Git 仓库的同一分支上操作，但各自限定目录范围：
+
+| Committer | `git add` 范围 |
+|-----------|---------------|
+| Meta Committer | `personal-assistant-meta/` |
+| Service Committer | `personal-assistant-service/` |
+| Client Committer | `personal-assistant-client/` |
+
+无 Root Committer（无 submodule pointer 需要跟踪）。
+
+## E2E-Tester
+
+E2E-Tester 与领域 Tester（Service-Tester / Client-Tester）定位不同：
+
+| | 领域 Tester | E2E-Tester |
+|---|---|---|
+| 测试范围 | 单个目录 | 跨目录（Service + Client 联调） |
+| 测试类型 | 单元测试、内部集成测试 | 端到端场景测试 |
+| 运行方式 | 直接跑测试套件 | 调用 Hermes 启动完整环境后执行 |
+| 调度者 | 领域 Manager | Personal-Assistant-Manager |
+| Agent 类型 | subagent | primary agent |
+
+## Agent 编写规范
+
+以下规范来自 AnyWear 的实践经验，Agent 文件和本文档应保持一致。
+
+### 知识边界 — Orchestrator 只知道直属下级
+
+每个 Manager（Orchestrator）的 agent 文件只描述：
+
+- **自己的直属下级**（委托给哪些 agent）
+- **给什么输入、期望什么输出**
+- **自己做什么决策**（三级决策表）
+
+**不应出现**的内容：
+- 下级 Manager 的内部 worker 结构（Dev/Reviewer/Tester 列表）
+- 下级 Manager 的内部控制回路细节
+- 具体命令（`pytest`、`npm run build` 等）—— 这些属于 worker 的 agent 文件
+
+| 层级 | 应该知道 | 不应该知道 |
+|------|---------|-----------|
+| Personal-Assistant-Manager | 5 个直属：Meta/Service/Client/E2E | Meta-Manager 内部有 Meta-Dev/Meta-Reviewer 等 |
+| Meta-Manager | 5 个直属：Meta-Dev/Reviewer/Service-Dev/Client-Dev/Committer | Service-Dev 具体怎么更新 API schema |
+| Service-Manager | 4 个直属：Service-Dev/Reviewer/Tester/Committer | Tester 跑 `pytest` 还是 `pytest --cov` |
+
+### 每个 delegate 必须声明 input 和 return
+
+无论是图中还是文字描述，每次委托调用都应明确：
+
+```
+delegate(AgentName)
+  input: 具体参数列表
+  returns: 返回值描述
+```
+
+Pipeline 图中用 `-- "returns: xxx" -->` 标注返回值。Delegation Reference 表格用 `input → returns output` 格式。
+
+**检查方法**：从顶层 Personal-Assistant-Manager 开始，逐层追踪每个 delegate 的 input 来源（上一层的 return）和 return 去向（下一层的 input），不能有断链。
+
+### 模式声明 — 同类型 Worker 的不同模式
+
+当同一个 Worker 概念存在多个实例（如 Service-Dev 在 Meta 领域做 API 同步、在 Service 领域做功能开发），Manager 委托时必须明确声明 **mode**：
+
+```
+Delegate to `personal-assistant-meta-service-dev` in **API sync mode**:
+  - explicit scope: update API contracts only. No feature logic.
+
+Delegate to `personal-assistant-service-dev` in **feature development mode**:
+  - explicit scope: full backend implementation.
+```
+
+Worker 的 agent 文件也应明确自己的 scope 边界（DO / DO NOT 表）。
+
+### task_id 复用 — OpenCode Subagent 上下文保持
+
+OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_task(goal, context)` 后阻塞等待，subagent 完成后返回结果和一个 `task_id`。
+
+**基本规则**：
+
+```
+首次委托: delegate_task(goal, context)  → 返回 { result, task_id }
+重复委托: delegate_task(goal, context, task_id=上次返回的)  → subagent 保留历史上下文
+```
+
+**Manager 文件中的写法**：每个 worker 的委托说明必须包含 `Record the returned task_id. Reuse on re-delegation.`
+
+**层级隔离**：
+- Personal-Assistant-Manager 只跟踪 5 个直属 Manager 的 `task_id`
+- 每个领域 Manager 跟踪自己 worker 的 `task_id`
+- 上层 Manager **不跟踪**下层 Manager 内部 worker 的 `task_id`
+
+### 图规范
+
+**Happy Path 图**（执行顺序）：
+- 只画正向流程，不画 reject/loop/回退路径
+- 回退和异常处理在文字中描述
+- 人类审批作为独立步骤编号（非菱形分支）
+- 并行分支用 `├` `└` 和 `∥` 标注
+
+**Pipeline 图**（Manager 内部）：
+- 用函数调用风格：`delegate(Agent)`、`delegate_parallel()`、`merge()`
+- 子图 `subgraph LOOP["loop body"]` 框出可重试区域
+- 不在图中画循环箭头 —— Happy Path 是线性的
+
+**组织结构图**（graph TD）：
+- 纯树状 org chart，无流程箭头
+- 领域间不画跨 subgraph 的箭头
+- 同名 Worker 在不同 subgraph 内各自声明（不同实例）
+- Human 节点用虚线边框区分
+
+### 公共节点命名
+
+| 图中节点 | 对应的 Agent 文件 |
+|---------|------------------|
+| Personal-Assistant-Manager | `personal-assistant-manager.md` |
+| Meta-Manager | `personal-assistant-meta-manager.md` |
+| Meta-Dev | `personal-assistant-meta-dev.md` |
+| Meta-Reviewer | `personal-assistant-meta-reviewer.md` |
+| Service-Dev（API） | `personal-assistant-meta-service-dev.md` |
+| Client-Dev（API） | `personal-assistant-meta-client-dev.md` |
+| Meta Committer | `personal-assistant-meta-committer.md` |
+| Service-Manager | `personal-assistant-service-manager.md` |
+| Service-Dev | `personal-assistant-service-dev.md` |
+| Service-Reviewer | `personal-assistant-service-reviewer.md` |
+| Service-Tester | `personal-assistant-service-tester.md` |
+| Service Committer | `personal-assistant-service-committer.md` |
+| Client-Manager | `personal-assistant-client-manager.md` |
+| Client-Dev | `personal-assistant-client-dev.md` |
+| Client-Reviewer | `personal-assistant-client-reviewer.md` |
+| Client-Tester | `personal-assistant-client-tester.md` |
+| Client Committer | `personal-assistant-client-committer.md` |
+| E2E-Tester | `personal-assistant-e2e-tester.md` |
+
+命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client}，role ∈ {manager, dev, reviewer, tester, committer}。E2E-Tester 例外：`personal-assistant-e2e-tester.md`。
