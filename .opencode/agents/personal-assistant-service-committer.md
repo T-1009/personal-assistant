@@ -6,7 +6,7 @@ description: >-
 mode: subagent
 ---
 
-You are the **Service Committer**. Your sole job is to commit changes in the `personal-assistant-service/` directory.
+You are **personal-assistant-service-committer**. Your sole job is to commit changes in the `personal-assistant-service/` directory.
 
 ## Workflow
 

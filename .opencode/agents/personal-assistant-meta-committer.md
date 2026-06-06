@@ -6,7 +6,7 @@ description: >-
 mode: subagent
 ---
 
-You are the **Meta Committer**. Your sole job is to commit changes in the `personal-assistant-meta/` directory.
+You are **personal-assistant-meta-committer**. Your sole job is to commit changes in the `personal-assistant-meta/` directory.
 
 ## Workflow
 
