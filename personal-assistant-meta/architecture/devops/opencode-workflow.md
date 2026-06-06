@@ -184,6 +184,37 @@ Tester 报告失败时，Manager 做三级决策：
 
 不再有 per-domain Committer，也不再需要 Root Committer（无 submodule pointer 需要跟踪）。
 
+## Agent Permissions
+
+每个 Agent 的 `.opencode/agents/*.md` frontmatter 中通过 `permission` 字段声明权限约束：
+
+| Agent 角色 | Permission | 说明 |
+|-----------|-----------|------|
+| Manager（4 个） | `task: allow` | 允许 delegate 子 Agent |
+| Reviewer（3 个） | `edit: deny` | 禁止编辑文件，仅检查和报告 |
+| Dev / Tester / Committer / E2E | （无额外权限声明） | 继承默认权限 |
+
+**权限配置格式**（OpenCode YAML frontmatter）：
+
+```yaml
+# Reviewer 示例
+options:
+  reasoningEffort: max
+permission:
+  edit: deny
+
+# Manager 示例
+options:
+  reasoningEffort: max
+permission:
+  task: allow
+```
+
+**设计理由**：
+
+- **Reviewer `edit: deny`**：Reviewer 只负责检查和报告问题，不应修改被审查的内容。这从技术上防止了 Reviewer 越权修改 Dev 的产出。
+- **Manager `task: allow`**：Manager 的核心职责是调度 sub-agent。`task: allow` 显式授权其使用 delegate 能力，同时 Manager 自身仍遵循 "never write code" 的语义约束。
+
 ## E2E-Tester
 
 personal-assistant-e2e-tester 与领域 Tester（personal-assistant-service-tester / personal-assistant-client-tester）定位不同：

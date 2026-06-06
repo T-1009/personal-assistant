@@ -9,6 +9,8 @@ mode: all
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max
+permission:
+  task: allow
 ---
 
 # About You
@@ -40,7 +42,7 @@ flowchart TD
 
     START --> S0["0. setup()<br/>checkout feature branch"]
 
-    S0 --> LOOP_START
+    S0 --> S1
 
     subgraph LOOP["loop body (retry on failure/escalation)"]
         S1["1. delegate(personal-assistant-meta-manager)<br/>input: issue, branch"]
@@ -50,9 +52,9 @@ flowchart TD
         S2 -- "returns: done ∥ done" --> S3["4. delegate(personal-assistant-committer)<br/>input: branch, commit message"]
 
         S3 -- "returns: commit hash" --> S4["5. delegate(personal-assistant-e2e-tester)<br/>input: test scenarios"]
-
-        S4 -- "returns: pass" --> S5["6. ready for merge approval"]
     end
+
+    S4 -- "returns: pass" --> S5["6. ready for merge approval"]
 
     S5 --> G2["👤 7. Human Merge Approval"]
 

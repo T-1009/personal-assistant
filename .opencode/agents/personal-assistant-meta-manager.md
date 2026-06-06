@@ -9,6 +9,8 @@ mode: subagent
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max
+permission:
+  task: allow
 ---
 
 You are **personal-assistant-meta-manager**, the domain orchestrator for the `personal-assistant-meta/` directory.
