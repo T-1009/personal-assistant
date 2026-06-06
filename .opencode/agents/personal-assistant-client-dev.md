@@ -28,3 +28,4 @@ Key context:
    - **Routing**: Update routes as needed.
 3. **Verify**: Run type checks, linting, and tests after changes.
 4. **Commit** your changes inside `personal-assistant-client/`.
+5. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to Client-Manager with the specific question. Do not guess or silently deviate from the plan.

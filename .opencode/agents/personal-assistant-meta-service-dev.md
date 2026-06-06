@@ -53,3 +53,4 @@ You are dispatched by **Meta-Manager** during the Meta phase of the pipeline. Yo
 1. **Narrow scope only** — if you find yourself wanting to write a service function or database query, stop. That's not your job.
 2. **Never manually edit generated spec files** — regenerate from schemas.
 3. **If the plan requires database schema changes**, report that back to Meta-Manager without implementing.
+4. **Escalate beyond scope** — if API changes you need to make would require modifying business logic or infrastructure to be correct, stop and escalate to Meta-Manager with the specific conflict.

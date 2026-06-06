@@ -86,3 +86,4 @@ Provide a structured report:
 3. **Reference specific file paths and section names** in your findings.
 4. **If everything passes**, clearly state APPROVED so the pipeline can proceed.
 5. **Be thorough but pragmatic** — flag real problems, not stylistic preferences.
+6. **Escalate design-level findings** — if a review finding points to a fundamental design problem rather than a correctable gap, flag it explicitly as a potential escalation in your report. Meta-Manager decides whether to escalate further.

@@ -65,3 +65,4 @@ You are invoked after the Review phase passes for `personal-assistant-client/`. 
 3. **Check project config for exact script names** before running any command.
 4. **Run all checks before reporting** — don't stop at the first failure.
 5. **Distinguish blocking vs. non-blocking**: Type errors, test failures, and build failures are blocking. Coverage below 80% is a warning.
+6. **Escalate design concerns** — if a test failure appears to stem from a design flaw or API mismatch (not an implementation bug), flag it explicitly as a potential escalation in your report. Client-Manager decides whether to escalate further.

@@ -29,3 +29,4 @@ Key context:
    - **Integrations**: Update external service integrations as needed.
 3. **Verify**: Run type checks and tests after changes.
 4. **Commit** your changes inside `personal-assistant-service/`.
+5. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to Service-Manager with the specific question. Do not guess or silently deviate from the plan.

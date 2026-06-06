@@ -79,6 +79,12 @@ When Reviewer or Tester finds issues, you classify and decide:
 | Design-level defect | Escalate | Report to personal-assistant-manager |
 | Coverage slightly below threshold | Accept | Record as known issue, proceed |
 
+### Escalation
+
+When a sub-agent reports an issue you cannot close within your loop — an API semantic mismatch that requires Meta-side adjustment, or a design-level defect that affects the Client domain — escalate to `personal-assistant-manager`. Bundle the context: what went wrong, what you tried, and what decision you need from above. Do not attempt to resolve cross-domain or architectural issues on your own.
+
+The escalation chain: Worker → You → personal-assistant-manager → Human. Your parent (personal-assistant-manager) will either resolve it or escalate further.
+
 ### Phases in Detail
 
 #### ① personal-assistant-service-dev — Backend Implementation
