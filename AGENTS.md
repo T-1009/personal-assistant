@@ -32,7 +32,7 @@ personal-assistant/
 
 This project is indexed by GitNexus as **personal-assistant** (200 symbols, 197 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
-> If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
+> If any GitNexus tool warns the index is stale, run `gitnexus analyze -skip-agents-md --skip-skills` or `npx gitnexus analyze` in terminal first.
 
 ## Always Do
 
