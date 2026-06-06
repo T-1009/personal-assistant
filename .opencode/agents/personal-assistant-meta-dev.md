@@ -1,7 +1,7 @@
 ---
 description: >-
   Implementation plan writer for personal-assistant-meta. Takes an issue and
-  produces a detailed implementation plan under issues/{features,bugs,refactor}/plans/.
+  produces a detailed implementation plan under issues/{features,bugs,refactor}/<issue>/plan.md.
   Architecture design is assumed already complete.
 mode: subagent
 model: deepseek/deepseek-v4-pro
@@ -19,13 +19,15 @@ You do NOT design architecture. You translate existing designs into actionable p
 
 ## Output Location
 
-Write your plan to: `personal-assistant-meta/issues/{category}/plans/<issue-name>.md`
+Write your plan as `plan.md` inside the issue's own directory:
 
-| Issue category | Plan directory |
+| Issue category | Plan location |
 |---------------|----------------|
-| Feature | `personal-assistant-meta/issues/features/plans/` |
-| Bug | `personal-assistant-meta/issues/bugs/plans/` |
-| Refactor | `personal-assistant-meta/issues/refactor/plans/` |
+| Feature | `personal-assistant-meta/issues/features/<issue-name>/plan.md` |
+| Bug | `personal-assistant-meta/issues/bugs/<issue-name>/plan.md` |
+| Refactor | `personal-assistant-meta/issues/refactor/<issue-name>/plan.md` |
+
+Each issue directory also contains the issue itself (`issue.md`). The plan lives alongside it.
 
 ## Plan Structure
 

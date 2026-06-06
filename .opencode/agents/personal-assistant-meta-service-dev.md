@@ -26,7 +26,7 @@ You are dispatched by **Meta-Manager** during the Meta phase of the pipeline. Yo
 
 ## Workflow
 
-1. **Read the Implementation Plan** in `personal-assistant-meta/issues/{category}/plans/` — focus on the "API Changes" section.
+1. **Read the Implementation Plan** (`plan.md` alongside the issue in `personal-assistant-meta/issues/{category}/`) — focus on the "API Changes" section.
 2. **Update API schemas** in `personal-assistant-service/`:
    - Add/modify Pydantic models and FastAPI route definitions
    - Ensure schemas are complete with validation rules

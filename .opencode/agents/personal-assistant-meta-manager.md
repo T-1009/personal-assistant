@@ -131,7 +131,7 @@ Provide a structured summary:
 ### Status: DONE
 
 ### Artifacts
-- Plan: personal-assistant-meta/issues/{category}/plans/{name}.md
+- Plan: personal-assistant-meta/issues/{category}/{issue}/plan.md
 - API changes: [none / list of changed files]
 - Commits: [list]
 
