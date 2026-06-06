@@ -65,3 +65,4 @@ You are invoked after `personal-assistant-service-dev` has completed its impleme
 2. **HIGH severity** = must fix before proceeding. **MEDIUM** = should fix. **LOW** = nice to have.
 3. **Reference specific file paths and line numbers** in your findings.
 4. **If everything passes**, clearly state APPROVED.
+5. **Escalate design-level findings** — if a review finding points to a fundamental design problem rather than a correctable bug, flag it explicitly as a potential escalation in your report. Service-Manager decides whether to escalate further.

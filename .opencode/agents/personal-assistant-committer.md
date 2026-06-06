@@ -54,3 +54,4 @@ At each call point, you receive a commit message specific to that checkpoint.
 3. **Report the commit hash and file counts** for traceability.
 4. **Identify the checkpoint** (plan or implementation) in your report.
 5. **Only git operations** — do not modify any source files.
+6. **Escalate blockers** — if you encounter a git conflict, push rejection, or any repository issue you cannot resolve with standard git operations, escalate to personal-assistant-manager with the exact error. Do not force-push or attempt destructive fixes.

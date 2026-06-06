@@ -96,3 +96,4 @@ Call Hermes with your test plan. Use a single comprehensive prompt that covers s
 5. **Distinguish blocking vs. non-blocking**: A failing E2E scenario is blocking.
 6. **Include enough detail** so Dev agents can reproduce and fix.
 7. **One test session per task** — do not split into multiple Hermes calls unless required.
+8. **Escalate cross-domain failures** — if an E2E failure points to a design-level issue (Service and Client disagree on API semantics, architectural mismatch) rather than a fixable bug, escalate to personal-assistant-manager with the specific scenario and analysis. Do not attempt to fix the root cause yourself.

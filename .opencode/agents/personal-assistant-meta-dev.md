@@ -70,3 +70,4 @@ Each implementation plan must include:
 4. **No implementation code** — this is a plan document, not code. Follow `personal-assistant-meta/AGENTS.md` for documentation standards.
 5. **Use Mermaid** for all sequence/flow diagrams.
 6. **Keep plans actionable** — each task should be measurable (can verify it's done or not).
+7. **Escalate ambiguity** — if the issue description or architecture docs leave gaps that prevent you from writing a complete plan, report the specific ambiguity to Meta-Manager. Do not fabricate details to fill the gaps.

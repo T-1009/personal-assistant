@@ -171,6 +171,36 @@ Tester 报告失败时，Manager 做三级决策：
 | 设计缺陷（API 语义不对等） | 需重新设计 | 上报 personal-assistant-manager，等 Meta 侧调整 |
 | 非阻塞问题（覆盖率略低等） | 接受 | 记录 known issue，验收通过 |
 
+## Exceptional Control Flow
+
+所有 Agent（包括 Worker 和 Manager）在遇到超出自身决策权限的异常时，都应上报而非自行处理。上报链路逐级向上，**Human 是整条链的根节点**——任何一层无法解决的异常最终都会到达 Human。
+
+```
+Worker (Dev / Reviewer / Tester / Committer / E2E-Tester)
+  → Domain Manager (Meta / Service / Client)
+    → personal-assistant-manager
+      → 👤 Human (root)
+```
+
+**Worker 是第一道防线**——他们是实际执行者，最先接触异常。Worker 不判断是否"值得上报"，只要遇到 scope 之外的问题就上报给直属 Manager。Manager 再根据自身决策权限决定闭环还是继续上报。
+
+### 各级处置权限
+
+| 层级 | 可自行处理 | 需上报 |
+|------|-----------|--------|
+| Worker | 自身职责范围内的实现/审查/测试 | 任何超出 scope 的异常、不确定项、或需要跨 Agent 协调的问题 |
+| Domain Manager | 领域内的三级决策：回退 Dev 修复、接受 known issue | 跨领域影响、设计缺陷、API 语义错误、自身 loop 内无法闭合的问题 |
+| personal-assistant-manager | 跨领域的协调和重新分配、根据反馈调整 plan | 需要 Human 输入或裁决的事项（需求模糊、约束冲突、合并决策） |
+
+### 上报规范
+
+Manager 收到子 Agent 的异常报告后，先判断是否在自身决策权限内：
+
+1. **可处理**：在自己的 control loop 内闭环（回退 Dev 修复、接受 non-blocking issue、重新分配任务等），无需上报。
+2. **超出权限**：整理上下文后上报给直属上级。上报内容应包含：原始异常、已尝试的处理步骤、以及需要上级决策的具体问题。
+
+各级 Manager 的 agent 文件中"Decision Authority"表格的 `Escalate` 行即对应各自的上报触发条件。
+
 ## Committer 规范（Mono-Repo 两检查点提交）
 
 `personal-assistant-committer` 是**唯一的提交 Agent**，由 personal-assistant-manager 在两个检查点调用：
