@@ -22,8 +22,8 @@ status: backlog
 
 ## 不涉及
 
-- SSE 流式对话（Feature 5）
-- Web Chat 前端页面（Feature 5）
+- SSE 流式对话（已在 Feature 1 实现）
+- Web Chat 前端页面（Feature 1.1 负责）
 - Outbound 工具（Feature 6-8）
 
 ## 任务拆解
@@ -71,6 +71,7 @@ status: backlog
 
 - Feature 1（Agent 骨架 + Web Chat）
 - Feature 2（Memory）— user_id 需关联 Memory
+- Feature 1.2（PostgreSQL）— 需要 `user_channel_mapping` + `oauth_tokens` 表
 
 ## 参考
 

@@ -4,7 +4,7 @@ status: backlog
 
 # Feature 1.2: PostgreSQL 数据库集成
 
-为 Personal Assistant 建立持久化数据库基础设施。本 Feature 独立于 Feature 1-9 之外，是 Feature 4（Inbound Identity）和 Feature 6-8（Tools）的前置依赖。
+本 Feature 承接 Feature 1，建立持久化数据库基础设施。是 Feature 4（Inbound Identity）和 Feature 6-8（Tools）的前置依赖。
 
 ---
 

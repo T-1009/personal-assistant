@@ -57,7 +57,7 @@ status: backlog
 
 ## 依赖
 
-- Feature 1-8 全部完成
+- Feature 1-8、1.1、1.2 全部完成
 
 ## 参考
 
