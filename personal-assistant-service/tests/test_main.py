@@ -487,6 +487,26 @@ class TestChainlitPlaygroundMount:
             assert response.status_code == 200
             assert response.json() == {"status": "ok"}
 
+    @pytest.mark.asyncio
+    async def test_playground_redirect_trailing_slash(self):
+        """GET /playground (no trailing slash) returns 307 redirect to /playground/."""
+        import httpx
+
+        from app.main import app
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test", follow_redirects=False
+        ) as ac:
+            response = await ac.get("/playground")
+            assert response.status_code == 307, (
+                f"Expected 307 Temporary Redirect, got {response.status_code}"
+            )
+            location = response.headers.get("location")
+            assert location == "/playground/", (
+                f"Expected location=/playground/, got location={location!r}"
+            )
+
 
 # ---------------------------------------------------------------------------
 # Agent handler singleton shared with Chainlit (Feature 1.4)
