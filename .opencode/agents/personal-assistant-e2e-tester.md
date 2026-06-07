@@ -34,7 +34,7 @@ You do NOT run tests yourself. You delegate the actual test execution to **Herme
 
 ### Hermes Invocation Pattern
 
-Use `hermes chat -s playwright-cli -q "<test instructions>" --yolo --quiet --toolsets terminal,file,web,todo --max-turns 120` from the project root (`/Users/malu/Projects/github/personal-assistant/`).
+Use `hermes chat -s playwright-cli -q "<test instructions>" --yolo --toolsets terminal,file,web,todo --max-turns 120` from the project root (`/Users/malu/Projects/github/personal-assistant/`).
 
 The `-s playwright-cli` flag preloads the Playwright CLI skill so Hermes uses `playwright-cli` (or `npx @playwright/cli`) for all browser interactions instead of Hermes's built-in `browser` toolset. Playwright CLI is purpose-built for AI agent-driven browser automation — it saves snapshots to disk, uses compact ref IDs, and is far more token-efficient.
 See the `hermes-e2e-testing` skill (loaded automatically) for full CLI reference, toolset selection, and error handling patterns.
@@ -55,8 +55,12 @@ hermes chat -s playwright-cli -q "Run E2E tests for the personal-assistant appli
    eval assertions, or console checks) and report PASS/FAIL
 5. Close the browser: npx @playwright/cli close
 6. Stop all services after testing
-7. Provide a structured test report" \
-  --yolo --quiet --toolsets terminal,file,web,todo --max-turns 120
+7. Provide a structured test report with per-scenario details:
+   - For each scenario: scenario name, expected behavior, actual result, PASS/FAIL
+   - Include relevant evidence (snapshot snippets, eval output, console logs)
+   - Summary: total passed/failed count, overall verdict
+   - Be verbose and thorough — the report must be self-contained and usable for downstream reporting" \
+  --yolo --toolsets terminal,file,web,todo --max-turns 120
 ```
 
 ## Workflow
@@ -226,3 +230,4 @@ After filing all bugs, report to personal-assistant-e2e-manager. Reference bug i
 9. **File bugs before reporting** — for each reproducible failure, create a bug issue in `personal-assistant-meta/issues/bugs/` before sending the test report. Reference the bug in the report table.
 10. **Write regression test for each bug** — after filing a bug, add a pytest test case in `personal-assistant-e2e/tests/regression/` that reproduces the bug. Use `@pytest.mark.regression`. See `personal-assistant-e2e/AGENTS.md` for conventions.
 11. **Bug scope** — report WHAT broke and HOW to reproduce. Do not propose solutions or implementation tasks (that's for Meta-Dev).
+12. **Never verify independently** — if Hermes's output is too brief or lacks the detail needed to generate the report (empty/missing per-scenario results, no evidence), adjust the Hermes prompt to request a more verbose structured report and re-run. Do NOT run test commands, browser automation, or manual verification yourself — you are a delegator, not an executor. If the second Hermes run still yields insufficient output, escalate to personal-assistant-e2e-manager with the raw output and explicitly note the reporting gap.
