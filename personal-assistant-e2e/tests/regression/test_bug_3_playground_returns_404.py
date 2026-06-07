@@ -1,0 +1,80 @@
+"""Regression test for bug-3: /playground Endpoint Returns 404.
+
+Related: personal-assistant-meta/issues/bugs/bug-3-playground-returns-404/
+
+The /playground endpoint is not mounted and returns 404. The implementation
+plan states Chainlit /playground should coexist with the web chat frontend.
+
+When fixed: GET /playground should return 200 or 302 (valid response, not 404).
+"""
+
+import httpx
+import pytest
+
+from conftest import ServiceProcess
+
+
+@pytest.mark.regression
+@pytest.mark.slow
+class TestBug3_PlaygroundReturns404:
+    """Verify /playground endpoint availability.
+
+    Currently FAILING (returns 404): no Chainlit mount is registered in main.py,
+    and the SPA fallback is also broken (see bug-2).
+    """
+
+    PORT = 18722
+
+    @pytest.fixture
+    def service_url(self):
+        """Start the service via ServiceProcess and return its base URL."""
+        import subprocess
+        from pathlib import Path
+
+        # Ensure dist exists before starting the service
+        dist_dir = (
+            Path(__file__).resolve().parent.parent.parent.parent
+            / "personal-assistant-client" / "dist"
+        )
+        if not (dist_dir / "index.html").exists():
+            subprocess.run(
+                ["npm", "run", "build"],
+                cwd=str(dist_dir.parent),
+                check=True,
+                timeout=120,
+            )
+
+        sp = ServiceProcess(port=self.PORT)
+        sp.start(env={"MAAS_API_KEY": "dummy-e2e-test-key"})
+        yield sp.url
+        sp.stop()
+
+    @pytest.mark.xfail(
+        reason="BUG-3: /playground returns 404 — Chainlit mount not registered. "
+               "See personal-assistant-meta/issues/bugs/bug-3-playground-returns-404/"
+    )
+    def test_playground_returns_valid_response(self, service_url):
+        """GET /playground should return 200 or 302 (not 404). Currently FAILS."""
+        resp = httpx.get(f"{service_url}/playground", follow_redirects=False)
+        assert resp.status_code != 404, (
+            f"/playground should not return 404. Got: {resp.status_code}"
+        )
+        assert resp.status_code < 500, (
+            f"/playground should not cause server error: {resp.status_code}"
+        )
+
+    def test_playground_does_not_crash_service(self, service_url):
+        """Even though /playground returns 404, the service should stay healthy."""
+        for _ in range(3):
+            httpx.get(f"{service_url}/playground", follow_redirects=False)
+        # After /playground calls, ping should still work
+        resp = httpx.get(f"{service_url}/api/ping")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "ok"}
+
+    def test_root_still_serves_index_html(self, service_url):
+        """Baseline: GET / should still serve the assistant-ui chat interface."""
+        resp = httpx.get(f"{service_url}/")
+        assert resp.status_code == 200
+        assert "text/html" in resp.headers.get("content-type", "")
+        assert "Personal Assistant" in resp.text
