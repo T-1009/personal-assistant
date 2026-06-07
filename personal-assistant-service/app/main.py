@@ -89,15 +89,34 @@ async def chat_stream(request: Request, q: str = ""):
     )
 
 
-# Static file serving for the web chat UI — MUST be mounted after all API routes
-# Try monorepo relative path first (local dev), fall back to Docker container path
+# ---------------------------------------------------------------------------
+# Static file serving for the Web Chat UI
+# ---------------------------------------------------------------------------
+# Strategy:
+#   - Monorepo dev: serves personal-assistant-client/dist/ (npm run build output)
+#   - Docker prod: serves /app/dist/ (copied from client build in Dockerfile)
+#   - Pure API mode: when neither dir exists, no mount is registered;
+#     /api/* endpoints remain functional; frontend runs independently via vite dev server
+#
+# Mount priority: explicit API routes (/api/*) are registered before this catch-all
+# mount, so FastAPI matches them first. This also guarantees future mounts like
+# Chainlit /playground will not be shadowed — just register them before this line.
+#
+# html=True: enables SPA fallback — any path not matching a physical file serves
+# index.html, allowing React Router (or equivalent) to handle client-side routing.
+# This is required for assistant-ui's client-side navigation (e.g. /chat, /settings).
+# ---------------------------------------------------------------------------
 _proj_root = Path(__file__).resolve().parent.parent.parent
 STATIC_DIR = _proj_root / "personal-assistant-client" / "dist"
 if not STATIC_DIR.is_dir():
     STATIC_DIR = Path("dist")  # Docker: /app/dist/
 
 if STATIC_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(STATIC_DIR), html=True), name="web")
+    app.mount(
+        "/",
+        StaticFiles(directory=str(STATIC_DIR), html=True),
+        name="web-chat",  # distinct from future Chainlit mount name to avoid collision
+    )
 else:
     logger.warning(
         f"前端构建产物目录不存在（已尝试: {_proj_root / 'personal-assistant-client' / 'dist'}, dist/）。"

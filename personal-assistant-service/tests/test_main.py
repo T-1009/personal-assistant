@@ -265,11 +265,11 @@ class TestStaticFileDualPathDiscovery:
         )
 
     def test_static_files_route_is_mounted(self):
-        """The StaticFiles route 'web' should be mounted at root when dist exists."""
+        """The StaticFiles route 'web-chat' should be mounted at root when dist exists."""
         from app.main import app
 
-        web_routes = [r for r in app.routes if getattr(r, "name", "") == "web"]
-        assert len(web_routes) == 1, f"Expected 1 'web' route, got {len(web_routes)}"
+        web_routes = [r for r in app.routes if getattr(r, "name", "") == "web-chat"]
+        assert len(web_routes) == 1, f"Expected 1 'web-chat' route, got {len(web_routes)}"
         # Starlette represents root-mounted StaticFiles path as empty string
         assert web_routes[0].path == "", (
             f"Expected root path '', got {web_routes[0].path!r}"
@@ -281,7 +281,7 @@ class TestStaticFileDualPathDiscovery:
 
         # Routes are ordered by registration; name attribute identifies each route
         route_names = [getattr(r, "name", "") for r in app.routes]
-        web_idx = route_names.index("web")
+        web_idx = route_names.index("web-chat")
         ping_idx = route_names.index("ping")
 
         # API routes must precede static mount (lower index = registered first)
@@ -295,7 +295,7 @@ class TestStaticFileDualPathDiscovery:
         from app.main import app
 
         route_names = [getattr(r, "name", "") for r in app.routes]
-        web_idx = route_names.index("web")
+        web_idx = route_names.index("web-chat")
         invocations_idx = route_names.index("invocations")
 
         assert invocations_idx < web_idx, (
@@ -335,12 +335,12 @@ class TestStaticFileDualPathDiscovery:
                 f"App should not crash when no static directory exists. Got: {e}"
             ) from e
 
-        # After reload: verify no StaticFiles mount for "web"
+        # After reload: verify no StaticFiles mount for "web-chat"
         web_routes = [
-            r for r in app.main.app.routes if getattr(r, "name", "") == "web"
+            r for r in app.main.app.routes if getattr(r, "name", "") == "web-chat"
         ]
         assert len(web_routes) == 0, (
-            "StaticFiles 'web' route should NOT be mounted when no dist exists"
+            "StaticFiles 'web-chat' route should NOT be mounted when no dist exists"
         )
 
         # Cleanup: restore original behavior for subsequent tests
