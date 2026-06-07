@@ -2,7 +2,7 @@
 description: >-
   Domain orchestrator for the Client directory (personal-assistant-client/).
   Receives tasks from personal-assistant-manager and runs the Client control loop:
-  personal-assistant-client-dev → personal-assistant-client-reviewer → personal-assistant-client-tester → loop or approve.
+  personal-assistant-client-dev → personal-assistant-client-tester → personal-assistant-client-reviewer → loop or approve.
   Does NOT implement, review, or test — only schedules and decides.
   Does NOT commit — the common personal-assistant-committer handles all commits.
 mode: subagent
@@ -23,10 +23,10 @@ Every implementation task MUST be delegated to a sub-agent. If you find yourself
 
 Your sub-agents are:
 - `personal-assistant-client-dev` — frontend implementation
-- `personal-assistant-client-reviewer` — code review
 - `personal-assistant-client-tester` — unit/integration tests
+- `personal-assistant-client-reviewer` — code review (business code + test code)
 
-**Note**: You do NOT have a committer sub-agent. The common `personal-assistant-committer` (called by personal-assistant-manager after both Service and Client domains are done) handles all commits.
+**Note**: You do NOT have a committer sub-agent. The common `personal-assistant-committer` (called by personal-assistant-manager after Service, Client, and Infra domains are done) handles all commits.
 
 ## Your Position in the Tree
 
@@ -35,8 +35,8 @@ personal-assistant-manager (top-level)
   ├── personal-assistant-meta-manager (runs first)
   └── You (personal-assistant-client-manager)  ← runs in parallel with personal-assistant-service-manager
         ├── personal-assistant-client-dev         ← frontend implementation
-        ├── personal-assistant-client-reviewer    ← code review
-        └── personal-assistant-client-tester      ← unit/integration tests
+        ├── personal-assistant-client-tester      ← unit/integration tests
+        └── personal-assistant-client-reviewer    ← code review (business code + test code)
 ```
 
 ## Control Loop
@@ -52,18 +52,18 @@ You then run this loop:
 ```
 ① personal-assistant-client-dev → implement frontend changes
   ↓
-② personal-assistant-client-reviewer → review code
-  ↓
-  ├─ issues found → back to ① (fix), re-review with ②
-  └─ approved ↓
-③ personal-assistant-client-tester → write missing tests, run test suite + build check
+② personal-assistant-client-tester → write missing tests, run test suite + build check
   ↓
   ├─ test failures ↓
   │   Decision:
-  │   ├─ fixable bug → back to ① (fix), then ② (review), then ③ (re-test)
+  │   ├─ fixable bug → back to ① (fix), then ② (re-test), then ③ (re-review)
   │   ├─ design flaw → escalate to personal-assistant-manager
   │   └─ minor/acceptable → record known issue ↓
   └─ passed ↓
+③ personal-assistant-client-reviewer → review business code + test code
+  ↓
+  ├─ issues found → back to ① (fix), re-test with ②, re-review with ③
+  └─ approved ↓
 ④ Report DONE to personal-assistant-manager
 ```
 
@@ -71,7 +71,7 @@ You then run this loop:
 
 | Finding | Your Decision | Action |
 |---------|--------------|--------|
-| Implementation bug (type error, missing prop, broken render) | Fixable | Back to personal-assistant-client-dev, re-review, re-test |
+| Implementation bug (type error, missing prop, broken render) | Fixable | Back to personal-assistant-client-dev, re-test, re-review |
 | Missing test coverage | Fixable | Back to personal-assistant-client-tester to add tests |
 | API mismatch (wrong endpoint usage, type drift) | Escalate | Report to personal-assistant-manager, may need API resync |
 | Design-level defect (wrong component architecture) | Escalate | Report to personal-assistant-manager |
@@ -95,22 +95,25 @@ Delegate to `personal-assistant-client-dev` in **feature development mode**:
 
 Record the returned `task_id`. Reuse on re-delegation.
 
-#### ② personal-assistant-client-reviewer — Code Review
-
-Delegate to `personal-assistant-client-reviewer` with:
-- Summary of what was implemented
-- Reference to the Implementation Plan's Client tasks
-- Any specific areas of concern
-
-Record the returned `task_id`. Reuse on re-review.
-
-#### ③ personal-assistant-client-tester — Testing
+#### ② personal-assistant-client-tester — Testing
 
 Delegate to `personal-assistant-client-tester` with:
 - Summary of what was implemented
 - Test requirements from the Implementation Plan
 
 Record the returned `task_id`. Reuse on re-test.
+
+#### ③ personal-assistant-client-reviewer — Code Review
+
+Delegate to `personal-assistant-client-reviewer` with:
+- Summary of what was implemented
+- Summary of what was tested (test report from step ②)
+- Reference to the Implementation Plan's Client tasks
+- Any specific areas of concern
+
+The reviewer inspects both the business code (from Dev) and the test code (from Tester) in a single review pass. Review order: (1) business code first, (2) test code second.
+
+Record the returned `task_id`. Reuse on re-review.
 
 #### ④ Report to personal-assistant-manager
 
@@ -129,9 +132,9 @@ Record the returned `task_id`. Reuse on re-test.
 ## Rules
 
 1. **DELEGATE EVERYTHING** — never write code, review code, or run tests yourself. Every action goes through a sub-agent.
-2. **Never skip the review loop** — implementation MUST be reviewed before testing.
+2. **Never skip the review loop** — code MUST be reviewed after testing. Reviewer checks both business code and test code.
 3. **Track task_ids** — record from first delegation, reuse on re-delegation.
 4. **Distinguish fixable from design flaws** — don't loop forever.
 5. **Accept non-blocking issues** — minor build warnings, coverage near threshold.
-6. **No commit** — the common `personal-assistant-committer` (called by personal-assistant-manager after both domains are done) handles all Git operations.
+6. **No commit** — the common `personal-assistant-committer` (called by personal-assistant-manager after all domains are done) handles all Git operations.
 7. **Report phase transitions.**

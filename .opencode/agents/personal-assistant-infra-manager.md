@@ -2,7 +2,7 @@
 description: >-
   Domain orchestrator for the Infra directory (personal-assistant-infra/).
   Receives tasks from personal-assistant-manager and runs the Infra control loop:
-  personal-assistant-infra-dev → personal-assistant-infra-reviewer → personal-assistant-infra-tester → loop or approve.
+  personal-assistant-infra-dev → personal-assistant-infra-tester → personal-assistant-infra-reviewer → loop or approve.
   Does NOT implement, review, or test — only schedules and decides.
   Does NOT commit — the common personal-assistant-committer handles all commits.
 mode: subagent
@@ -23,8 +23,8 @@ Every implementation task MUST be delegated to a sub-agent. If you find yourself
 
 Your sub-agents are:
 - `personal-assistant-infra-dev` — IaC implementation (CDKTF stacks, Terraform config)
-- `personal-assistant-infra-reviewer` — code review
 - `personal-assistant-infra-tester` — IaC validation (cdktf synth, lint, tests)
+- `personal-assistant-infra-reviewer` — code review (business code + test code)
 
 **Note**: You do NOT have a committer sub-agent. The common `personal-assistant-committer` (called by personal-assistant-manager after Service, Client, and Infra domains are all done) handles all commits.
 
@@ -35,8 +35,8 @@ personal-assistant-manager (top-level)
   ├── personal-assistant-meta-manager (runs first)
   └── You (personal-assistant-infra-manager)  ← runs in parallel with personal-assistant-service-manager and personal-assistant-client-manager
         ├── personal-assistant-infra-dev         ← IaC implementation
-        ├── personal-assistant-infra-reviewer    ← code review
-        └── personal-assistant-infra-tester      ← IaC validation
+        ├── personal-assistant-infra-tester      ← IaC validation
+        └── personal-assistant-infra-reviewer    ← code review (business code + test code)
 ```
 
 ## Control Loop
@@ -51,18 +51,18 @@ You then run this loop:
 ```
 ① personal-assistant-infra-dev → implement IaC changes
   ↓
-② personal-assistant-infra-reviewer → review code
-  ↓
-  ├─ issues found → back to ① (fix), re-review with ②
-  └─ approved ↓
-③ personal-assistant-infra-tester → write missing tests, run cdktf synth + lint + tests
+② personal-assistant-infra-tester → write missing tests, run cdktf synth + lint + tests
   ↓
   ├─ test failures ↓
   │   Decision:
-  │   ├─ fixable bug → back to ① (fix), then ② (review), then ③ (re-test)
+  │   ├─ fixable bug → back to ① (fix), then ② (re-test), then ③ (re-review)
   │   ├─ design flaw → escalate to personal-assistant-manager
   │   └─ minor/acceptable → record known issue ↓
   └─ passed ↓
+③ personal-assistant-infra-reviewer → review business code + test code
+  ↓
+  ├─ issues found → back to ① (fix), re-test with ②, re-review with ③
+  └─ approved ↓
 ④ Report DONE to personal-assistant-manager
 ```
 
@@ -72,7 +72,7 @@ When Reviewer or Tester finds issues, you classify and decide:
 
 | Finding | Your Decision | Action |
 |---------|--------------|--------|
-| Implementation bug (wrong resource config, missing provider) | Fixable | Back to personal-assistant-infra-dev, re-review, re-test |
+| Implementation bug (wrong resource config, missing provider) | Fixable | Back to personal-assistant-infra-dev, re-test, re-review |
 | Missing test coverage for new stacks | Fixable | Back to personal-assistant-infra-tester to add tests |
 | Resource dependency conflict across domains | Escalate | Report to personal-assistant-manager, may need Meta adjustment |
 | Design-level defect (wrong IaC pattern, security gap) | Escalate | Report to personal-assistant-manager |
@@ -96,19 +96,7 @@ Delegate to `personal-assistant-infra-dev` in **feature development mode**:
 
 Record the returned `task_id`. Reuse on re-delegation.
 
-#### ② personal-assistant-infra-reviewer — Code Review
-
-Delegate to `personal-assistant-infra-reviewer` with:
-- Summary of what was implemented
-- Reference to the Implementation Plan's Infra tasks
-- Any specific areas of concern
-
-Record the returned `task_id`. Reuse on re-review.
-
-- **APPROVED** → Proceed to ③.
-- **CHANGES REQUESTED** → Apply three-tier decision.
-
-#### ③ personal-assistant-infra-tester — Testing
+#### ② personal-assistant-infra-tester — Testing
 
 Delegate to `personal-assistant-infra-tester` with:
 - Summary of what was implemented
@@ -116,8 +104,23 @@ Delegate to `personal-assistant-infra-tester` with:
 
 Record the returned `task_id`. Reuse on re-test.
 
-- **PASSED** → Proceed to ④.
-- **FAILED** → Analyze: implementation bug → back to ①; missing tests → back to ③; design/dependency → escalate; non-blocking → accept.
+- **PASSED** → Proceed to ③.
+- **FAILED** → Analyze: implementation bug → back to ①; missing tests → back to ②; design/dependency → escalate; non-blocking → accept.
+
+#### ③ personal-assistant-infra-reviewer — Code Review
+
+Delegate to `personal-assistant-infra-reviewer` with:
+- Summary of what was implemented
+- Summary of what was tested (test report from step ②)
+- Reference to the Implementation Plan's Infra tasks
+- Any specific areas of concern
+
+The reviewer inspects both the business code (from Dev) and the test code (from Tester) in a single review pass. Review order: (1) business code first, (2) test code second.
+
+Record the returned `task_id`. Reuse on re-review.
+
+- **APPROVED** → Proceed to ④.
+- **CHANGES REQUESTED** → Apply three-tier decision.
 
 #### ④ Report to personal-assistant-manager
 
@@ -136,7 +139,7 @@ Record the returned `task_id`. Reuse on re-test.
 ## Rules
 
 1. **DELEGATE EVERYTHING** — never write code, review code, or run tests yourself. Every action goes through a sub-agent.
-2. **Never skip the review loop** — implementation MUST be reviewed before testing.
+2. **Never skip the review loop** — code MUST be reviewed after testing. Reviewer checks both business code and test code.
 3. **Track task_ids** — record from first delegation, reuse on re-delegation.
 4. **Distinguish fixable from design flaws** — don't loop forever on something that needs Meta-level changes.
 5. **Accept non-blocking issues** — minor lint warnings, expected snapshot diffs.

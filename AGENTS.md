@@ -10,6 +10,7 @@ personal-assistant/
 ├── personal-assistant-client/   # 前端应用，Web Chat 界面及飞书/OfficeClaw 客户端适配
 ├── personal-assistant-service/  # 后端服务，AgentArts Runtime 上的 AI Agent 服务
 ├── personal-assistant-meta/     # Design hub，所有设计讨论、架构决策和变更规划
+├── personal-assistant-infra/    # 基础设施即代码（IaC），CDKTF + TypeScript，管理华为云资源
 ├── personal-assistant-e2e/      # E2E 测试脚本，pytest，覆盖 Service+Client 联调
 └── .gitnexus/                   # GitNexus 索引配置
 ```
@@ -25,6 +26,10 @@ personal-assistant/
 ### personal-assistant-meta/ — Design Hub
 
 所有设计讨论、架构决策和变更规划在此目录下进行。开始前先阅读 [`personal-assistant-meta/AGENTS.md`](./personal-assistant-meta/AGENTS.md) 了解设计规范和约束。
+
+### personal-assistant-infra/ — 基础设施即代码
+
+管理华为云基础资源（OBS、RDS、IAM、VPC、EIP、CDN 等）的 IaC 目录，使用 CDKTF + TypeScript 编写。`agentarts_config.yaml` 管 AgentArts 层（容器/认证/可观测），本目录管华为云基础资源层。开始前先阅读 [`personal-assistant-infra/AGENTS.md`](./personal-assistant-infra/AGENTS.md) 了解 IaC 规范、目录结构和常用命令。
 
 ### personal-assistant-e2e/ — E2E 测试
 
