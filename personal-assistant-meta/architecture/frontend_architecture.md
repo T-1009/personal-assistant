@@ -66,6 +66,7 @@ sequenceDiagram
 | **路由** | `/chat/stream`, `/auth/callback` |
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
+| **技术栈** | Vite + React + TypeScript + Tailwind CSS，shadcn/ui Chat 模板，Vercel AI SDK（`useChat`）。详见 [ADR-008](../ADR/ADR-008-web-chat-frontend-framework.md) |
 
 **OAuth 前后端职责分离**：token 交换必须在后端，因为 client_secret 不能暴露在前端浏览器中。
 

@@ -31,6 +31,13 @@ personal-assistant-meta/
 - 以组件图、模块划分、数据流和接口定义为主线组织
 - **入口文件**：`architecture/overall_architecture.md` 是该目录的根入口，目录内所有其他文件都必须被该文件引用（直接或间接）
 
+**ADR → Architecture 同步规则**：`architecture/ADR/` 中记录的决策，其结论必须体现到 `architecture/` 下的对应文档中。方式二选一：
+
+1. **直接写入**：将 ADR 的决策结论（如技术选型结果、架构约束）直接写入对应的 architecture 文档
+2. **引用链接**：在 architecture 文档中引用 ADR 文件，如 "技术选型见 [ADR-008](../ADR/ADR-008-web-chat-frontend-framework.md)"
+
+禁止 ADR Accepted 后结论只存在于 ADR 中而不体现在 architecture 文档里。ADR 记录的是**决策过程**（背景、方案对比、取舍），architecture 文档承载的是**系统的当前事实**——新成员应该读 architecture 了解系统长什么样，而不是翻 ADR 去拼凑。
+
 ### issues/ — 变更任务
 
 `issues/` 是**增量修改**的描述——每一份 issue 代表一个相对于 baseline 的变更请求。
