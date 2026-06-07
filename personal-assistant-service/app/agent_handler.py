@@ -5,6 +5,21 @@ from deepagents import create_deep_agent
 
 from app.llm_config import get_model
 
+_handler_instance: "AgentHandler | None" = None
+
+
+def get_agent_handler() -> "AgentHandler":
+    """获取模块级 AgentHandler 单例。
+
+    在 FastAPI lifespan（main.py）和 Chainlit app（playground.py）间共享同一实例。
+    首次调用时初始化，后续调用返回缓存实例。
+    """
+    global _handler_instance
+    if _handler_instance is None:
+        _handler_instance = AgentHandler()
+    return _handler_instance
+
+
 SYSTEM_PROMPT = """\
 你是 Personal Assistant，一个智能个人助手。
 帮助用户管理日程、邮件、笔记和任务。
