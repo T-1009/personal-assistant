@@ -50,8 +50,9 @@ You receive a task from personal-assistant-manager containing:
 You then run this loop:
 
 ```
-① personal-assistant-meta-dev → write Implementation Plan
-  ↓
+① personal-assistant-meta-dev → Issue Evaluation → if ACCEPT: write Implementation Plan
+                                               → if REJECT: escalate to personal-assistant-manager
+  ↓ (only if accepted)
 ② personal-assistant-meta-reviewer → review the plan
   ↓
   ├─ issues found → back to ① (fix), re-review with ②
@@ -63,16 +64,21 @@ You then run this loop:
 ⑤ Report DONE to personal-assistant-manager
 ```
 
+> **① 包含 Issue Evaluation gate**：personal-assistant-meta-dev 在写 plan 之前会评估 issue 的时效性和可行性。如果 issue 已 stale、不可行、或与 ADR 冲突，meta-dev 直接返回 REJECT。此时跳过 ②③④，直接 escalate 到 personal-assistant-manager。
+
 ### Decision Authority (Three-Tier)
 
 When Review reports issues, you classify them and decide:
 
-| Review Finding | Your Decision | Action |
-|---------------|--------------|--------|
+| Review Finding / Event | Your Decision | Action |
+|------------------------|--------------|--------|
+| Issue rejected by meta-dev (stale / infeasible) | Escalate | Forward rejection report to personal-assistant-manager. Do NOT re-delegate to meta-dev |
 | Minor gaps (missing section, unclear wording) | Fixable | Back to personal-assistant-meta-dev, re-review |
 | Design contradiction with architecture docs | Fixable | Back to personal-assistant-meta-dev, re-review |
 | Fundamental design flaw (wrong abstraction, broken flow) | Escalate | Report to personal-assistant-manager, wait for direction |
 | Low-severity warnings | Accept | Record as known issue, proceed |
+
+**Note**: "Issue rejected" is the first decision point — it comes from meta-dev's Phase 0 evaluation, before any plan is written. If rejected, the loop never reaches reviewer or API steps.
 
 **Key principle**: You decide whether to loop or escalate. Escalation goes to personal-assistant-manager — not to personal-assistant-meta-dev.
 
@@ -84,7 +90,7 @@ The escalation chain: Worker → You → personal-assistant-manager → Human. Y
 
 ### Phases in Detail
 
-#### ① personal-assistant-meta-dev — Write Implementation Plan
+#### ① personal-assistant-meta-dev — Issue Evaluation → Implementation Plan
 
 Delegate to `personal-assistant-meta-dev` with:
 - The issue description and requirements
@@ -93,7 +99,12 @@ Delegate to `personal-assistant-meta-dev` with:
 
 **Record the returned `task_id`** for this agent. On re-delegation (after review feedback), pass the recorded `task_id` to preserve context.
 
-Wait for completion. Report: `Plan drafted`.
+**Two possible outcomes**:
+
+- **ACCEPT**: meta-dev writes an Implementation Plan and returns its path. Proceed to ②.
+- **REJECT**: meta-dev returns an evaluation report explaining why the issue is stale/infeasible. **Forward the rejection to personal-assistant-manager immediately.** Do NOT re-delegate to meta-dev or proceed to reviewer.
+
+Wait for completion. Report: `Issue accepted — Plan drafted` or `Issue rejected — escalated to Manager`.
 
 #### ② personal-assistant-meta-reviewer — Review Plan
 
