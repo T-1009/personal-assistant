@@ -176,6 +176,11 @@
             return div;
         }
 
+        function setInputEnabled(enabled) {
+            inputEl.disabled = !enabled;
+            sendBtn.disabled = !enabled;
+        }
+
         function closeConnection() {
             if (currentEventSource) {
                 currentEventSource.close();
