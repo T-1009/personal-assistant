@@ -68,7 +68,118 @@ Before running, review the task and create a clear test plan.
 
 Call Hermes with your test plan. Use a single comprehensive prompt that covers setup, execution, and teardown.
 
-### 4. Report Results
+### 4. File Bugs
+
+**When to file**: For every FAILED test scenario that represents a reproducible bug (not a flaky environment issue or Hermes invocation error), create a bug issue **before** reporting to personal-assistant-manager. This ensures the report can reference concrete bug numbers.
+
+Skip bug filing when the failure is:
+- A design-level mismatch (Service ↔ Client API semantics, architectural conflict) — escalate these to personal-assistant-manager directly
+- A transient infrastructure failure (service didn't start, network timeout) — retry first, flag in report if persistent
+
+**Directory structure** (mirrors features):
+
+```
+personal-assistant-meta/issues/bugs/<bug-slug>/issue.md
+```
+
+- `<bug-slug>` format: `bug-<N>-<short-kebab-name>`. Example: `bug-2-chat-stream-sse-parse-error`
+- Determine `<N>` by listing existing `personal-assistant-meta/issues/bugs/` directories and incrementing the highest number
+
+**Bug issue template**:
+
+```markdown
+---
+status: backlog
+related: <feature-slug or commit reference>
+discovered_by: personal-assistant-e2e-tester
+discovered_at: <timestamp or E2E test session reference>
+---
+
+# Bug N: <Descriptive Title>
+
+## 现象 (Symptoms)
+
+<What went wrong. Include exact error messages, HTTP status codes, console output, or screenshots. Be precise — copy-paste from Hermes test output.>
+
+## 复现步骤 (Reproduction Steps)
+
+1. <Step 1 — include exact commands, URLs, or inputs>
+2. <Step 2>
+3. ...
+
+## 预期 vs 实际 (Expected vs Actual)
+
+| 场景 | 预期行为 | 实际行为 |
+|------|---------|---------|
+| <scenario> | <expected> | <actual> |
+
+## 环境 (Environment)
+
+- Feature branch: <name>
+- Service commit: <sha>
+- Client commit: <sha>
+- E2E test Hermes session reference: <hermes session id or log path>
+
+## 影响 (Impact)
+
+- **Blocking**: <yes/no — does this prevent the feature from being considered complete?>
+- **Affected flows**: <which user journeys are broken?>
+```
+
+#### 4a. Add Regression Test
+
+For each bug filed, create a pytest test case in `personal-assistant-e2e/tests/regression/` that reproduces the bug.
+
+**Purpose**:
+- **Reproduction**: Encodes the exact reproduction steps in executable code
+- **Verification**: When the bug is fixed, re-run the test to confirm the fix
+- **Regression guard**: Prevents the same bug from recurring in future changes
+
+**Test file naming**: `test_<bug-slug>.py` — matches the bug issue directory name.
+Example: `test_bug_2_chat_stream_sse_parse_error.py`
+
+**Test structure**:
+
+```python
+"""Regression test for bug-2: SSE parse error in chat stream.
+
+Related: personal-assistant-meta/issues/bugs/bug-2-chat-stream-sse-parse-error/
+"""
+
+import pytest
+import httpx
+
+
+@pytest.mark.regression
+@pytest.mark.asyncio
+async def test_bug_2_sse_parse_error(service_url, client_url):
+    """Verify SSE stream handles multi-byte UTF-8 without parse errors.
+
+    Bug link: personal-assistant-meta/issues/bugs/bug-2-.../issue.md
+    """
+    # Reproduce the exact scenario from the bug report
+    async with httpx.AsyncClient(base_url=client_url) as client:
+        response = await client.get(
+            "/chat/stream",
+            params={"q": "你好世界"},
+            timeout=30,
+        )
+        # Assert expected behavior (the bug: SSE framing corrupts on Chinese)
+        ...
+```
+
+**Key conventions**:
+- Use `@pytest.mark.regression` marker so tests can be run in isolation (`pytest -m regression`)
+- Use shared fixtures from `personal-assistant-e2e/conftest.py` (`service_url`, `client_url`, etc.) — do not inline service startup logic
+- Reference the bug issue path in the module docstring and test docstring
+- Test the **exact** scenario that failed, not a generalization
+- Tests should FAIL while the bug exists and PASS after the fix
+
+See `personal-assistant-e2e/AGENTS.md` for full directory conventions and fixture definitions.
+
+### 5. Report Results
+
+After filing all bugs, report to personal-assistant-manager. Reference bug issue paths in the report.
 
 ```
 ## E2E Test Report
@@ -76,16 +187,16 @@ Call Hermes with your test plan. Use a single comprehensive prompt that covers s
 ### Status: PASSED / FAILED
 
 ### Test Scenarios
-| # | Scenario | Expected | Actual | Result |
-|---|----------|----------|--------|--------|
-| 1 | [description] | [expected] | [actual] | ✅/❌ |
+| # | Scenario | Expected | Actual | Result | Bug |
+|---|----------|----------|--------|--------|-----|
+| 1 | [description] | [expected] | [actual] | ✅/❌ | [#bug-N](path) |
 
 ### Environment
 - Service: [running / failed to start]
 - Client: [running / failed to start]
 
 ### Failures Summary
-- [Concise list of failures with details]
+- [Concise list of failures with bug issue links]
 
 ### Blocking Issues
 - [Issues that prevent the feature from being considered complete]
@@ -93,7 +204,7 @@ Call Hermes with your test plan. Use a single comprehensive prompt that covers s
 
 ## Rules
 
-1. **Never modify implementation code** — you only test and report.
+1. **Never modify implementation code** — you only test, file bugs, and report.
 2. **Always test the full stack** — Service + Client running together.
 3. **Always use Hermes** for test execution — do not run test commands directly.
 4. **Test realistic user flows** — think about what a real user would do.
@@ -101,3 +212,6 @@ Call Hermes with your test plan. Use a single comprehensive prompt that covers s
 6. **Include enough detail** so Dev agents can reproduce and fix.
 7. **One test session per task** — do not split into multiple Hermes calls unless required.
 8. **Escalate cross-domain failures** — if an E2E failure points to a design-level issue (Service and Client disagree on API semantics, architectural mismatch) rather than a fixable bug, escalate to personal-assistant-manager with the specific scenario and analysis. Do not attempt to fix the root cause yourself.
+9. **File bugs before reporting** — for each reproducible failure, create a bug issue in `personal-assistant-meta/issues/bugs/` before sending the test report. Reference the bug in the report table.
+10. **Write regression test for each bug** — after filing a bug, add a pytest test case in `personal-assistant-e2e/tests/regression/` that reproduces the bug. Use `@pytest.mark.regression`. See `personal-assistant-e2e/AGENTS.md` for conventions.
+11. **Bug scope** — report WHAT broke and HOW to reproduce. Do not propose solutions or implementation tasks (that's for Meta-Dev).

@@ -10,6 +10,7 @@ personal-assistant/
 ├── personal-assistant-client/   # 前端应用，Web Chat 界面及飞书/OfficeClaw 客户端适配
 ├── personal-assistant-service/  # 后端服务，AgentArts Runtime 上的 AI Agent 服务
 ├── personal-assistant-meta/     # Design hub，所有设计讨论、架构决策和变更规划
+├── personal-assistant-e2e/      # E2E 测试脚本，pytest，覆盖 Service+Client 联调
 └── .gitnexus/                   # GitNexus 索引配置
 ```
 
@@ -24,6 +25,10 @@ personal-assistant/
 ### personal-assistant-meta/ — Design Hub
 
 所有设计讨论、架构决策和变更规划在此目录下进行。开始前先阅读 [`personal-assistant-meta/AGENTS.md`](./personal-assistant-meta/AGENTS.md) 了解设计规范和约束。
+
+### personal-assistant-e2e/ — E2E 测试
+
+端到端测试脚本目录，使用 pytest 框架，覆盖 Service + Client 联调场景。包含回归测试（按 bug 组织，用于复现和验证修复）和功能测试（按 feature 组织）。开始前先阅读 [`personal-assistant-e2e/AGENTS.md`](./personal-assistant-e2e/AGENTS.md) 了解测试编写和运行规范。
 
 ---
 
