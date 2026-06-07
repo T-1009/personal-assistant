@@ -1,11 +1,11 @@
-"""Unit tests for app.agent_handler.AgentHandler."""
+"""Unit tests for app.agent_handler.AgentHandler and get_agent_handler singleton."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agent_handler import SYSTEM_PROMPT, AgentHandler
+from app.agent_handler import SYSTEM_PROMPT, AgentHandler, get_agent_handler
 
 
 @pytest.fixture
@@ -248,3 +248,54 @@ class TestHandleStream:
         parsed = json.loads(events[0][6:])
         assert parsed["done"] is True
         assert "token" not in parsed or parsed["token"] == ""
+
+
+# ---------------------------------------------------------------------------
+# get_agent_handler() — Singleton behavior (Feature 1.4)
+# ---------------------------------------------------------------------------
+
+
+class TestGetAgentHandlerSingleton:
+    """Tests for get_agent_handler() module-level singleton (Feature 1.4)."""
+
+    def test_get_agent_handler_returns_same_instance(self, mock_deps):
+        """Calling get_agent_handler() twice returns the same object (is check)."""
+        # Reset the module-level singleton to ensure a clean test state
+        import app.agent_handler
+
+        app.agent_handler._handler_instance = None
+
+        try:
+            h1 = get_agent_handler()
+            h2 = get_agent_handler()
+
+            assert h1 is h2, (
+                f"Expected same instance, but got different objects: "
+                f"{id(h1)} vs {id(h2)}"
+            )
+            assert isinstance(h1, AgentHandler), (
+                f"Expected AgentHandler instance, got {type(h1)}"
+            )
+        finally:
+            # Clean up: reset the singleton so other tests are not affected
+            app.agent_handler._handler_instance = None
+
+    def test_get_agent_handler_creates_only_one_instance(self, mock_deps):
+        """get_agent_handler() creates AgentHandler only once across multiple calls."""
+        import app.agent_handler
+
+        app.agent_handler._handler_instance = None
+
+        try:
+            with patch.object(AgentHandler, "__init__", return_value=None) as mock_init:
+                get_agent_handler()
+                get_agent_handler()
+                get_agent_handler()
+
+                # __init__ should be called exactly once, not three times
+                assert mock_init.call_count == 1, (
+                    f"Expected AgentHandler.__init__ to be called once, "
+                    f"got {mock_init.call_count}"
+                )
+        finally:
+            app.agent_handler._handler_instance = None

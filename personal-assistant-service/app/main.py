@@ -8,11 +8,12 @@ load_dotenv()
 
 logger = logging.getLogger("uvicorn")
 
+from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
-from fastapi.responses import StreamingResponse  # noqa: E402
+from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-from app.agent_handler import AgentHandler  # noqa: E402
+from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 
 
 @asynccontextmanager
@@ -27,7 +28,7 @@ async def lifespan(app: FastAPI):
         raise RuntimeError(f"LLM 配置错误: {e}") from e
 
     # Initialize agent handler
-    app.state.agent_handler = AgentHandler()
+    app.state.agent_handler = get_agent_handler()
 
     yield
 
@@ -88,6 +89,18 @@ async def chat_stream(request: Request, q: str = ""):
         },
     )
 
+
+# === Chainlit Playground（Agent 调试 UI）===
+# Mount 在 API routes 之后、StaticFiles 之前，确保路径优先级正确
+
+
+@app.get("/playground", include_in_schema=False)
+async def playground_redirect():
+    """Redirect /playground to /playground/ (Chainlit mount requires trailing slash)."""
+    return RedirectResponse(url="/playground/")
+
+
+mount_chainlit(app=app, target="app/playground.py", path="/playground")
 
 # Static file serving for the web chat UI — MUST be mounted after all API routes
 # Try monorepo relative path first (local dev), fall back to Docker container path
