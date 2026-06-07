@@ -26,6 +26,10 @@ agents:
         network_mode: PUBLIC
 
       environment_variables:
+        - key: MAAS_API_KEY
+          value: "<MaaS API Key>"
+        - key: DEEPSEEK_API_KEY
+          value: "<DeepSeek 官方 API Key>"
         - key: MODEL_API_KEY
           value: "<your-maas-api-key>"
         - key: MODEL_NAME

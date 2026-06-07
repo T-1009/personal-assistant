@@ -12,6 +12,7 @@ RUN uv sync --frozen --no-dev
 COPY app/ ./app/
 COPY web/ ./web/
 COPY .agentarts_config.yaml ./
+COPY config.yaml ./
 
 EXPOSE 8080
 

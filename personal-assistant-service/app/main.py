@@ -1,4 +1,3 @@
-import os
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -15,9 +14,13 @@ from app.agent_handler import AgentHandler  # noqa: E402
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle for the FastAPI application."""
-    # Check required environment variables
-    if not os.environ.get("MODEL_API_KEY"):
-        raise RuntimeError("MODEL_API_KEY environment variable is required but not set")
+    # Validate LLM configuration per config.yaml, with fallback to legacy env vars.
+    from app.llm_config import get_model
+
+    try:
+        get_model()  # validates provider config + api key availability
+    except ValueError as e:
+        raise RuntimeError(f"LLM 配置错误: {e}") from e
 
     # Initialize agent handler
     app.state.agent_handler = AgentHandler()

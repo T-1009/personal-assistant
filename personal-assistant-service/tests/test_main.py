@@ -141,15 +141,16 @@ async def test_missing_model_api_key_causes_startup_error(monkeypatch):
     # Temporarily remove MODEL_API_KEY from the environment
     monkeypatch.delenv("MODEL_API_KEY", raising=False)
 
-    from fastapi import FastAPI
+    # Ensure config.yaml absence is simulated (avoid picking up real config.yaml)
+    with patch("pathlib.Path.exists", return_value=False):
+        from fastapi import FastAPI
 
-    from app.main import lifespan
+        from app.main import lifespan
 
-    test_app = FastAPI()
-
-    with pytest.raises(RuntimeError, match="MODEL_API_KEY"):
-        async with lifespan(test_app):
-            pass
+        test_app = FastAPI()
+        with pytest.raises(RuntimeError, match="MODEL_API_KEY"):
+            async with lifespan(test_app):
+                pass
 
 
 @pytest.mark.asyncio
@@ -160,9 +161,9 @@ async def test_lifespan_sets_agent_handler(fake_handler):
     from app.main import lifespan
 
     test_app = FastAPI()
-
-    async with lifespan(test_app):
-        assert test_app.state.agent_handler is fake_handler
+    with patch("pathlib.Path.exists", return_value=False):
+        async with lifespan(test_app):
+            assert test_app.state.agent_handler is fake_handler
 
 
 # ---------------------------------------------------------------------------

@@ -129,7 +129,6 @@ async def chat_stream(q: str, request: Request):
 所有路由最终解析为统一消息格式，调用共享的 Agent 处理逻辑：
 
 ```python
-from langchain.chat_models import init_chat_model
 from deepagents import create_deep_agent
 
 class AgentHandler:

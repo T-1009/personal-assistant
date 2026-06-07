@@ -1,46 +1,39 @@
 """Unit tests for app.agent_handler.AgentHandler."""
 
 import json
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-# Ensure MODEL_API_KEY is available for AgentHandler.__init__
-os.environ["MODEL_API_KEY"] = "test-key"
 
 from app.agent_handler import SYSTEM_PROMPT, AgentHandler
 
 
 @pytest.fixture
 def mock_deps():
-    """Mock init_chat_model and create_deep_agent to avoid real API calls."""
+    """Mock get_model and create_deep_agent to avoid real API calls."""
     with (
-        patch("app.agent_handler.init_chat_model") as mock_init_chat,
+        patch("app.agent_handler.get_model") as mock_get_model,
         patch("app.agent_handler.create_deep_agent") as mock_create_agent,
     ):
         mock_model = MagicMock()
-        mock_init_chat.return_value = mock_model
+        mock_get_model.return_value = mock_model
 
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
 
-        yield mock_init_chat, mock_create_agent, mock_model, mock_agent
+        yield mock_get_model, mock_create_agent, mock_model, mock_agent
 
 
 class TestAgentHandlerInit:
     """Tests for AgentHandler.__init__."""
 
     def test_initializes_with_correct_model_config(self, mock_deps):
-        mock_init_chat, mock_create_agent, mock_model, mock_agent = mock_deps
+        mock_get_model, mock_create_agent, mock_model, mock_agent = mock_deps
 
         handler = AgentHandler()
 
-        # Verify init_chat_model was called with OpenAI-compatible prefix
-        mock_init_chat.assert_called_once()
-        call_args = mock_init_chat.call_args[0]
-        assert call_args[0].startswith("openai:")
-        assert "deepseek-v4-pro" in call_args[0]
+        # Verify get_model was called (no args, using default provider)
+        mock_get_model.assert_called_once()
 
         # Verify create_deep_agent was called with model and system prompt
         mock_create_agent.assert_called_once()
@@ -53,25 +46,16 @@ class TestAgentHandlerInit:
         assert handler.model is mock_model
         assert handler.agent is mock_agent
 
-    def test_uses_custom_model_name_from_env(self, mock_deps):
-        mock_init_chat, _, _, _ = mock_deps
+    def test_agent_handler_uses_get_model(self, mock_deps):
+        mock_get_model, mock_create_agent, mock_model, mock_agent = mock_deps
 
-        with patch.dict(os.environ, {"MODEL_NAME": "custom-model"}, clear=False):
-            AgentHandler()
+        AgentHandler()
 
-        call_args = mock_init_chat.call_args[0]
-        assert "custom-model" in call_args[0]
-
-    def test_uses_custom_model_url_from_env(self, mock_deps):
-        mock_init_chat, _, _, _ = mock_deps
-
-        with patch.dict(
-            os.environ, {"MODEL_URL": "https://custom.api.com/v1"}, clear=False
-        ):
-            AgentHandler()
-
-        kwargs = mock_init_chat.call_args[1]
-        assert kwargs["base_url"] == "https://custom.api.com/v1"
+        # Verify get_model was called to obtain the model
+        mock_get_model.assert_called_once()
+        # Verify the returned model was passed to create_deep_agent
+        mock_create_agent.assert_called_once()
+        assert mock_create_agent.call_args[1]["model"] is mock_model
 
 
 class TestHandle:
