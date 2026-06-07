@@ -32,22 +32,29 @@ You do NOT run tests yourself. You delegate the actual test execution to **Herme
 
 ### Hermes Invocation Pattern
 
-Use `hermes chat -q "<test instructions>" --yolo --quiet --toolsets terminal,file,web,browser,todo --max-turns 120` from the project root (`/Users/malu/Projects/github/personal-assistant/`).
+Use `hermes chat -s playwright-cli -q "<test instructions>" --yolo --quiet --toolsets terminal,file,web,todo --max-turns 120` from the project root (`/Users/malu/Projects/github/personal-assistant/`).
+
+The `-s playwright-cli` flag preloads the Playwright CLI skill so Hermes uses `playwright-cli` (or `npx @playwright/cli`) for all browser interactions instead of Hermes's built-in `browser` toolset. Playwright CLI is purpose-built for AI agent-driven browser automation — it saves snapshots to disk, uses compact ref IDs, and is far more token-efficient.
 See the `hermes-e2e-testing` skill (loaded automatically) for full CLI reference, toolset selection, and error handling patterns.
 
 **Standard test command:**
 
 ```bash
 cd /Users/malu/Projects/github/personal-assistant && \
-hermes chat -q "Run E2E tests for the personal-assistant application:
+hermes chat -s playwright-cli -q "Run E2E tests for the personal-assistant application:
 1. Start the backend service (personal-assistant-service/) — wait for health check
 2. Start the frontend client (personal-assistant-client/) — wait for it to be ready
-3. Execute the following test scenarios against the running app:
-   <insert specific scenarios from the task>
-4. For each scenario, verify the expected behavior and report PASS/FAIL
-5. Stop all services after testing
-6. Provide a structured test report" \
-  --yolo --quiet --toolsets terminal,file,web,browser,todo --max-turns 120
+3. Use playwright-cli to execute the following test scenarios against the running app:
+   - Open the app: npx @playwright/cli open http://localhost:<client-port>
+   - Get initial snapshot: npx @playwright/cli snapshot
+   - <insert specific scenarios from the task, each using playwright-cli
+    commands like click, type, fill, snapshot, eval, console>
+4. For each scenario, verify the expected behavior (via snapshot diffs,
+   eval assertions, or console checks) and report PASS/FAIL
+5. Close the browser: npx @playwright/cli close
+6. Stop all services after testing
+7. Provide a structured test report" \
+  --yolo --quiet --toolsets terminal,file,web,todo --max-turns 120
 ```
 
 ## Workflow
@@ -207,6 +214,8 @@ After filing all bugs, report to personal-assistant-manager. Reference bug issue
 1. **Never modify implementation code** — you only test, file bugs, and report.
 2. **Always test the full stack** — Service + Client running together.
 3. **Always use Hermes** for test execution — do not run test commands directly.
+   **Hermes MUST use Playwright CLI** (via `-s playwright-cli`) for all browser interactions.
+   Do NOT use Hermes's built-in `browser` toolset for E2E testing — Playwright CLI is the designated browser automation tool.
 4. **Test realistic user flows** — think about what a real user would do.
 5. **Distinguish blocking vs. non-blocking**: A failing E2E scenario is blocking.
 6. **Include enough detail** so Dev agents can reproduce and fix.
