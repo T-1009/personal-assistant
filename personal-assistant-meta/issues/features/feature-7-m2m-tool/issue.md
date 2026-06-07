@@ -38,6 +38,7 @@ status: backlog
 
 - Feature 1（Agent 骨架 + Web Chat）
 - Feature 4（Inbound Identity）
+- Feature 1.2（PostgreSQL）— 需要 `tool_configs` 表
 
 ## 参考
 

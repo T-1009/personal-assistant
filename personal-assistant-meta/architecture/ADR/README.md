@@ -17,6 +17,7 @@ Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 
 | [ADR-009](ADR-009-deepagents.md) | deepagents 替代 LangGraph 裸用 | Accepted | 用 deepagents harness 替代手写 StateGraph，底层仍是 LangGraph |
 | [ADR-010](ADR-010-astral-ecosystem-tooling.md) | Astral 生态工具链（uv + ruff） | Accepted | uv 管理包和虚拟环境，ruff 负责 linting 和 formatting |
 | [ADR-011](ADR-011-multi-llm-provider.md) | 多 LLM Provider 可配置架构 | Accepted | `config.yaml` 管理多个 OpenAI-compatible provider，MaaS 默认，DeepSeek 官方备选 |
+| [ADR-012](ADR-012-database-postgresql.md) | 持久化数据库选型 | Accepted | PostgreSQL 16，本地 Docker Compose，生产华为云 RDS，SQLAlchemy 2.0 async + asyncpg |
 
 ## 决策原则
 
