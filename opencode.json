@@ -7,6 +7,9 @@
     "personal-assistant-client/AGENTS.md"
   ],
   "permission": {
-    "task": "allow"
+    "task": "allow",
+    "read": {
+      ".env": "allow"
+    }
   }
 }

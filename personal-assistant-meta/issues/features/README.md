@@ -1,6 +1,6 @@
 # Features
 
-Personal Assistant 开发计划，11 个 Feature（含 1 个基础设施前置 Feature + 10 个 Phase Feature）。
+Personal Assistant 开发计划，12 个 Feature（含 1 个基础设施前置 Feature + 11 个 Phase Feature）。
 
 渠道策略：Web Chat → 飞书 → OfficeClaw。用浏览器快速验证 Agent 核心能力，再接入企业内部 IM 和微信。
 
@@ -12,6 +12,7 @@ Personal Assistant 开发计划，11 个 Feature（含 1 个基础设施前置 F
 | [1.1](feature-1.1-web-chat-frontend/issue.md) | Web Chat 前端工程化 | Vite + React + TypeScript + Tailwind（替换单 HTML） | Feature 1 | backlog |
 | [1.2](feature-1.2-database-setup/issue.md) | PostgreSQL 数据库集成 | 持久化基础设施（Docker Compose + SQLAlchemy + 表结构） | Feature 1 | backlog |
 | [1.3](feature-1.3-multi-llm-provider/issue.md) | 多 LLM Provider 可配置 | `config.yaml` + `llm_config.py` | Feature 1 | backlog |
+| [1.4](feature-1.4-chainlit-playground/issue.md) | Chainlit Playground 调试工具 | 同容器 `/playground` Chainlit UI，挂接 agent_handler | Feature 1 | backlog |
 | [2](feature-2-memory.md) | Memory 集成 | 跨 Session 记忆（Web Chat 验证） | Feature 1 | backlog |
 | [3](feature-3-officeclaw.md) | OfficeClaw 渠道 | 飞书/微信多渠道覆盖（零代码） | Feature 1, 2 | backlog |
 | [4](feature-4-inbound-identity.md) | Inbound Identity (OAuth) | Microsoft Entra ID OAuth + JWT + API Key | Feature 1, 2, 1.2 | backlog |
@@ -28,6 +29,7 @@ flowchart TD
     F1["Feature 1: Agent + Web Chat"] --> F1_1["Feature 1.1: 前端工程化"]
     F1 --> F1_2["Feature 1.2: PostgreSQL"]
     F1 --> F1_3["Feature 1.3: 多 LLM Provider"]
+    F1 --> F1_4["Feature 1.4: Chainlit Playground"]
     F1_2 --> F4["Feature 4: Inbound Identity"]
     F1 --> F2["Feature 2: Memory"]
     F1 --> F3["Feature 3: OfficeClaw"]
@@ -70,6 +72,7 @@ gantt
     F1.1  前端工程化 (Vite+React)    :f1_1, after f1, 10d
     F1.2  PostgreSQL 数据库          :f1_2, after f1, 7d
     F1.3  多 LLM Provider            :f1_3, after f1, 3d
+    F1.4  Chainlit Playground         :f1_4, after f1, 2d
     F2    Memory 集成                :f2, after f1, 7d
 
     section 渠道接入

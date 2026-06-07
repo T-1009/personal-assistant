@@ -13,10 +13,11 @@ flowchart TB
     subgraph Container["AgentArts 容器 :8080"]
         subgraph Routes["路由层"]
             Ping["GET /ping<br/>健康检查"]
+            Chat_Stream["GET /chat/stream<br/>SSE 流式对话"]
+            Playground["GET /playground<br/>Chainlit 调试 UI"]
             Invoke["POST /invocations<br/>AgentArts / OfficeClaw 调用"]
             FS_Webhook["POST /feishu/webhook<br/>飞书事件回调"]
             Auth_CB["GET /auth/callback<br/>OAuth 回调"]
-            Chat_Stream["GET /chat/stream<br/>SSE 流式对话"]
         end
 
         subgraph Handler["Agent 处理逻辑"]
