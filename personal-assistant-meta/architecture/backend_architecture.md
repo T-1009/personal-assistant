@@ -262,16 +262,17 @@ result = sandbox.execute("print('hello')")
 
 | 层级 | 选型 | 说明 |
 |------|------|------|
-| **Web 框架** | FastAPI | 替代 AgentArtsRuntimeApp，统一管理所有路由 |
-| **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills |
+| **Web 框架** | FastAPI | 替代 AgentArtsRuntimeApp，统一管理所有路由。详见 [ADR-004](ADR/ADR-004-fastapi-over-agentarts-runtime-app.md) |
+| **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills。详见 [ADR-009](ADR/ADR-009-deepagents.md) |
 | **LLM** | 多 Provider 可配置（MaaS / DeepSeek 官方） | `config.yaml` 声明 provider，`init_chat_model()` 统一调用。默认 MaaS，可按需切换。详见 ADR-005 + ADR-011 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，三种抽取策略 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API → MCP Tool 自动转换 |
 | **Sandbox** | AgentArts Sandbox SDK | 安全隔离代码执行 |
-| **包管理** | uv (Astral) | 替代 pip/virtualenv，Rust 实现，uv.lock 确定性构建 |
-| **Lint / Format** | ruff (Astral) | 替代 flake8 + black + isort，Rust 实现，单一配置 |
-| **Container** | Docker (linux/arm64) | Python 3.12+ |
+| **包管理** | uv (Astral) | 替代 pip/virtualenv，Rust 实现，uv.lock 确定性构建。详见 [ADR-010](ADR/ADR-010-astral-ecosystem-tooling.md) |
+| **Lint / Format** | ruff (Astral) | 替代 flake8 + black + isort，Rust 实现，单一配置。详见 [ADR-010](ADR/ADR-010-astral-ecosystem-tooling.md) |
+| **Container** | Docker (linux/arm64) | Python 3.12+。详见 [ADR-001](ADR/ADR-001-python-3.12.md) |
+| **数据库** | PostgreSQL 16 | SQLAlchemy 2.0 async + asyncpg，本地 Docker Compose，生产华为云 RDS。详见 [ADR-012](ADR/ADR-012-database-postgresql.md) |
 
 ---
 

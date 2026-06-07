@@ -62,7 +62,7 @@ sequenceDiagram
 | 维度 | 说明 |
 |------|------|
 | **协议** | SSE (Server-Sent Events) 流式推送 |
-| **认证** | Microsoft Entra ID → JWT Cookie |
+| **认证** | Microsoft Entra ID → JWT Cookie。详见 [ADR-007](../ADR/ADR-007-identity-provider.md) |
 | **路由** | `/chat/stream`, `/auth/callback` |
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
