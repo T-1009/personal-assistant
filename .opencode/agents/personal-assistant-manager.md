@@ -194,12 +194,23 @@ Summarize all changes. Report: `Awaiting approval to merge into main`.
 
 ### 8. MERGE (AFTER user approval)
 
-Since this is a single repo, merge is straightforward:
+Since this is a single repo, merge is straightforward — but `main` is always checked out in another git worktree, so `git checkout main` never works here.
 
-1. `git checkout main && git pull origin main`
-2. `git merge <branch> --no-edit`
-3. `git push origin main`
-4. Report: `Merged <branch> → main`
+**Correct approach** — run the merge from the worktree where `main` lives:
+
+```bash
+cd <main-worktree-path>
+git pull origin main
+git merge <feature-branch> --no-edit
+git push origin main
+```
+
+Report: `Merged <feature-branch> → main`
+
+**Never do**:
+- `gh pr create` + `gh pr merge` — the user explicitly wants a **local merge**, not a GitHub PR merge.
+- Creating a temporary worktree to work around the lock — unnecessary complexity.
+- `git push origin <branch>:main` — this replaces main without a merge commit, potentially losing commits.
 
 ### 9. DONE
 
