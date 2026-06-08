@@ -91,11 +91,19 @@ The full chain: Worker → Domain Manager → You → Human. If a domain Manager
 
 ### 0. REPO SETUP
 
-This is a **single Git repository**. No submodules to sync.
+This is a **single Git repository**. No submodules to sync. Always start from the latest `main`.
 
 1. **Identify the feature branch name.** Derive from the issue (e.g., `feat/user-auth`).
-2. **Checkout.** Stash unrelated changes, switch to or create the feature branch.
-3. Report: `Repo setup complete — on branch <branch>`.
+2. **Fetch latest main.** (Works in both regular repos and git worktrees — does not switch branches.)
+   ```bash
+   git fetch origin main
+   ```
+   If there are unrelated local changes, stash them first (`git stash`).
+3. **Create the feature branch from origin/main.**
+   ```bash
+   git checkout -b <feature-branch> origin/main
+   ```
+4. Report: `Repo setup complete — on branch <feature-branch> (from main @ <latest-commit-short-hash>)`.
 
 ### 1. META PHASE — Delegate to personal-assistant-meta-manager
 
