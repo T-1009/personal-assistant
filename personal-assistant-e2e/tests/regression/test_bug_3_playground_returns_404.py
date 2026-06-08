@@ -1,11 +1,9 @@
 """Regression test for bug-3: /playground Endpoint Returns 404.
 
-Related: personal-assistant-meta/issues/bugs/bug-3-playground-returns-404/
+Related: personal-assistant-meta/issues/bugs/bug-3-playground-returns-404/ (RESOLVED)
 
-The /playground endpoint is not mounted and returns 404. The implementation
-plan states Chainlit /playground should coexist with the web chat frontend.
-
-When fixed: GET /playground should return 200 or 302 (valid response, not 404).
+BUG-3 was fixed by merging main (f51c0f7). The /playground endpoint now
+serves Chainlit content. These tests verify the fix remains in place.
 """
 
 import httpx
@@ -19,8 +17,8 @@ from conftest import ServiceProcess
 class TestBug3_PlaygroundReturns404:
     """Verify /playground endpoint availability.
 
-    Currently FAILING (returns 404): no Chainlit mount is registered in main.py,
-    and the SPA fallback is also broken (see bug-2).
+    BUG-3 is now fixed — the Chainlit Playground code from main was merged,
+    so /playground should return a valid response (200 or 302, not 404).
     """
 
     PORT = 18722
@@ -49,12 +47,8 @@ class TestBug3_PlaygroundReturns404:
         yield sp.url
         sp.stop()
 
-    @pytest.mark.xfail(
-        reason="BUG-3: /playground returns 404 — Chainlit mount not registered. "
-               "See personal-assistant-meta/issues/bugs/bug-3-playground-returns-404/"
-    )
     def test_playground_returns_valid_response(self, service_url):
-        """GET /playground should return 200 or 302 (not 404). Currently FAILS."""
+        """GET /playground should return 200 or 302 (not 404). BUG-3 is now fixed."""
         resp = httpx.get(f"{service_url}/playground", follow_redirects=False)
         assert resp.status_code != 404, (
             f"/playground should not return 404. Got: {resp.status_code}"
@@ -64,7 +58,7 @@ class TestBug3_PlaygroundReturns404:
         )
 
     def test_playground_does_not_crash_service(self, service_url):
-        """Even though /playground returns 404, the service should stay healthy."""
+        """Multiple /playground requests should not degrade service health."""
         for _ in range(3):
             httpx.get(f"{service_url}/playground", follow_redirects=False)
         # After /playground calls, ping should still work
