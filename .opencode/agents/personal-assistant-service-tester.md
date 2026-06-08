@@ -4,7 +4,6 @@ description: >-
   tests, type checks, linting, and coverage. Reports failures but does not modify
   implementation code.
 mode: subagent
-color: #92400E
 permission:
   edit: allow
   bash: allow

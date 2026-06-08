@@ -10,6 +10,8 @@ import pytest
 # Must be set BEFORE importing app.main (the lifespan checks this)
 os.environ["MODEL_API_KEY"] = "test-key"
 
+from starlette.routing import Mount  # noqa: E402
+
 from app.main import app  # noqa: E402
 
 
@@ -36,9 +38,13 @@ class FakeAgentHandler:
 
 @pytest.fixture
 def fake_handler():
-    """Create a FakeAgentHandler and patch AgentHandler to use it."""
+    """Create a FakeAgentHandler and patch get_agent_handler to use it.
+
+    Feature 1.4: lifespan calls get_agent_handler() for singleton sharing
+    with Chainlit playground, so we must patch the singleton function.
+    """
     handler = FakeAgentHandler()
-    with patch("app.main.AgentHandler", return_value=handler):
+    with patch("app.main.get_agent_handler", return_value=handler):
         yield handler
 
 
@@ -413,4 +419,144 @@ class TestStaticFileDualPathDiscovery:
         ]
         assert len(static_warnings) == 0, (
             f"No static-file warning expected when dist exists, got: {warnings}"
+        )
+
+
+# ---------------------------------------------------------------------------
+# Chainlit Playground mount (Feature 1.4)
+# ---------------------------------------------------------------------------
+
+
+class TestChainlitPlaygroundMount:
+    """Tests for the Chainlit /playground mount (Feature 1.4)."""
+
+    def test_playground_mount_exists(self):
+        """FastAPI app includes a Mount at path /playground for Chainlit."""
+        from app.main import app
+
+        mounts = [r for r in app.routes if isinstance(r, Mount)]
+        playground_routes = [m for m in mounts if m.path == "/playground"]
+        assert len(playground_routes) == 1, (
+            f"Expected 1 Mount at /playground, got {len(playground_routes)}. "
+            f"All mounts: {[(m.path, m.name) for m in mounts]}"
+        )
+
+    def test_playground_mount_is_chainlit_app(self):
+        """The /playground Mount wraps a Chainlit FastAPI sub-application."""
+        from fastapi import FastAPI
+
+        from app.main import app
+
+        mounts = [r for r in app.routes if isinstance(r, Mount)]
+        playground_routes = [m for m in mounts if m.path == "/playground"]
+        playground_mount = playground_routes[0]
+
+        assert isinstance(playground_mount.app, FastAPI), (
+            f"Expected FastAPI sub-app, got {type(playground_mount.app).__name__}"
+        )
+
+    def test_playground_mount_precedes_static_mount(self):
+        """Chainlit /playground mount must be registered before the static catch-all."""
+        from app.main import app
+
+        route_infos = [(r.path, getattr(r, "name", ""), type(r).__name__)
+                       for r in app.routes]
+
+        playground_idx = next(
+            i for i, info in enumerate(route_infos) if info[0] == "/playground"
+        )
+        web_idx = next(
+            i for i, info in enumerate(route_infos) if info[1] == "web"
+        )
+
+        assert playground_idx < web_idx, (
+            f"Chainlit /playground (idx={playground_idx}) must be registered "
+            f"before static mount web (idx={web_idx})"
+        )
+
+    @pytest.mark.asyncio
+    async def test_ping_works_with_chainlit_mount(self):
+        """GET /api/ping returns 200 OK when Chainlit is mounted."""
+        import httpx
+
+        from app.main import app
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            response = await ac.get("/api/ping")
+            assert response.status_code == 200
+            assert response.json() == {"status": "ok"}
+
+    @pytest.mark.asyncio
+    async def test_playground_redirect_trailing_slash(self):
+        """GET /playground (no trailing slash) returns 307 redirect to /playground/."""
+        import httpx
+
+        from app.main import app
+
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test", follow_redirects=False
+        ) as ac:
+            response = await ac.get("/playground")
+            assert response.status_code == 307, (
+                f"Expected 307 Temporary Redirect, got {response.status_code}"
+            )
+            location = response.headers.get("location")
+            assert location == "/playground/", (
+                f"Expected location=/playground/, got location={location!r}"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Agent handler singleton shared with Chainlit (Feature 1.4)
+# ---------------------------------------------------------------------------
+
+
+class TestAgentHandlerSingletonIntegration:
+    """Integration tests verifying agent_handler singleton shared between
+    FastAPI lifespan and Chainlit playground (Feature 1.4)."""
+
+    def test_lifespan_sets_agent_handler_same_as_get_agent_handler(self):
+        """After lifespan, app.state.agent_handler IS get_agent_handler()."""
+        from fastapi import FastAPI
+
+        import app.agent_handler
+        from app.main import lifespan
+
+        # Reset the singleton for a clean test
+        app.agent_handler._handler_instance = None
+
+        try:
+            test_app = FastAPI()
+            with patch("pathlib.Path.exists", return_value=False):
+                async def _run():
+                    async with lifespan(test_app):
+                        stored = test_app.state.agent_handler
+                        from_singleton = app.agent_handler.get_agent_handler()
+                        assert stored is from_singleton, (
+                            "app.state.agent_handler must be the same object as "
+                            "get_agent_handler() return value"
+                        )
+
+                import asyncio
+                asyncio.run(_run())
+        finally:
+            # Clean up
+            app.agent_handler._handler_instance = None
+
+    def test_main_app_state_agent_handler_is_singleton(self):
+        """app.state.agent_handler (if set) is the same as get_agent_handler()."""
+        import app.agent_handler
+        from app.main import app
+
+        # The module-level app may have agent_handler set from module import
+        # Skip if not set (e.g. when lifespan hasn't run)
+        if not hasattr(app.state, "agent_handler"):
+            pytest.skip("app.state.agent_handler not set (lifespan not triggered)")
+
+        stored = app.state.agent_handler
+        from_singleton = app.agent_handler.get_agent_handler()
+        assert stored is from_singleton, (
+            "app.state.agent_handler must be the singleton instance"
         )

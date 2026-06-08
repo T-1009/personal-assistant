@@ -4,7 +4,6 @@ description: >-
   resource definitions, and provider configs. Works in personal-assistant-infra/
   directory only.
 mode: subagent
-color: #065F46
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max

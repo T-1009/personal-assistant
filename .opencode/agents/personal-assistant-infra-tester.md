@@ -4,7 +4,6 @@ description: >-
   synth, linting, type checks, and snapshot validation. Reports failures but
   does not modify implementation code.
 mode: subagent
-color: #92400E
 permission:
   edit: allow
   bash: allow
