@@ -64,28 +64,28 @@ async def client(fake_handler):
 
 
 # ---------------------------------------------------------------------------
-# GET /api/ping
+# GET /ping
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_ping_returns_status_ok(client):
-    """GET /api/ping should return {"status": "ok"} with 200."""
-    response = await client.get("/api/ping")
+    """GET /ping should return {"status": "ok"} with 200."""
+    response = await client.get("/ping")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
 
 
 # ---------------------------------------------------------------------------
-# POST /api/invocations
+# POST /invocations
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_invocations_returns_response(client, fake_handler):
-    """POST /api/invocations with valid payload returns 200 and response."""
+    """POST /invocations with valid payload returns 200 and response."""
     response = await client.post(
-        "/api/invocations",
+        "/invocations",
         json={"message": "Hello, assistant!"},
         headers={
             "X-AgentArts-User-Id": "user-1",
@@ -104,23 +104,23 @@ async def test_invocations_returns_response(client, fake_handler):
 
 @pytest.mark.asyncio
 async def test_invocations_defaults_to_anonymous_user(client, fake_handler):
-    """POST /api/invocations without X-AgentArts-User-Id defaults to 'anonymous'."""
-    await client.post("/api/invocations", json={"message": "Hi"})
+    """POST /invocations without X-AgentArts-User-Id defaults to 'anonymous'."""
+    await client.post("/invocations", json={"message": "Hi"})
     assert fake_handler.handle_calls[0][1] == "anonymous"
 
 
 @pytest.mark.asyncio
 async def test_invocations_empty_message_returns_400(client):
-    """POST /api/invocations with empty message returns 400."""
-    response = await client.post("/api/invocations", json={"message": ""})
+    """POST /invocations with empty message returns 400."""
+    response = await client.post("/invocations", json={"message": ""})
     assert response.status_code == 400
     assert response.json()["detail"] == "message is required"
 
 
 @pytest.mark.asyncio
 async def test_invocations_missing_message_returns_400(client):
-    """POST /api/invocations without 'message' field returns 400."""
-    response = await client.post("/api/invocations", json={})
+    """POST /invocations without 'message' field returns 400."""
+    response = await client.post("/invocations", json={})
     assert response.status_code == 400
     assert response.json()["detail"] == "message is required"
 
@@ -131,7 +131,7 @@ async def test_invocations_whitespace_only_passes_through(client, fake_handler):
     which treats whitespace as truthy. This is an inconsistency with
     /api/chat/stream which uses `q.strip()`. Should be fixed upstream.
     """
-    response = await client.post("/api/invocations", json={"message": "   "})
+    response = await client.post("/invocations", json={"message": "   "})
     # Currently passes through; should be 400 after fix
     assert response.status_code == 200
     assert len(fake_handler.handle_calls) == 1
@@ -293,12 +293,12 @@ class TestStaticFileDualPathDiscovery:
 
         # API routes must precede static mount (lower index = registered first)
         assert ping_idx < web_idx, (
-            f"/api/ping should be registered before static mount, "
+            f"/ping should be registered before static mount, "
             f"but ping={ping_idx}, web={web_idx}"
         )
 
     def test_invocations_route_precedes_static(self):
-        """POST /api/invocations should precede the catch-all static mount."""
+        """POST /invocations should precede the catch-all static mount."""
         from app.main import app
 
         route_names = [getattr(r, "name", "") for r in app.routes]
@@ -306,7 +306,7 @@ class TestStaticFileDualPathDiscovery:
         invocations_idx = route_names.index("invocations")
 
         assert invocations_idx < web_idx, (
-            f"/api/invocations should be registered before static mount, "
+            f"/invocations should be registered before static mount, "
             f"but invocations={invocations_idx}, web={web_idx}"
         )
 
@@ -477,14 +477,14 @@ class TestChainlitPlaygroundMount:
 
     @pytest.mark.asyncio
     async def test_ping_works_with_chainlit_mount(self):
-        """GET /api/ping returns 200 OK when Chainlit is mounted."""
+        """GET /ping returns 200 OK when Chainlit is mounted."""
         import httpx
 
         from app.main import app
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
-            response = await ac.get("/api/ping")
+            response = await ac.get("/ping")
             assert response.status_code == 200
             assert response.json() == {"status": "ok"}
 
@@ -582,8 +582,8 @@ class TestSPAFallbackMiddleware:
 
     @pytest.mark.asyncio
     async def test_api_routes_bypass_fallback(self, client):
-        """GET /api/ping should return normal JSON, not index.html."""
-        response = await client.get("/api/ping")
+        """GET /ping should return normal JSON, not index.html."""
+        response = await client.get("/ping")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
         assert "Personal Assistant" not in response.text
