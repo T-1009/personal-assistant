@@ -466,12 +466,12 @@ class TestChainlitPlaygroundMount:
             i for i, info in enumerate(route_infos) if info[0] == "/playground"
         )
         web_idx = next(
-            i for i, info in enumerate(route_infos) if info[1] == "web"
+            i for i, info in enumerate(route_infos) if info[1] == "web-chat"
         )
 
         assert playground_idx < web_idx, (
             f"Chainlit /playground (idx={playground_idx}) must be registered "
-            f"before static mount web (idx={web_idx})"
+            f"before static mount web-chat (idx={web_idx})"
         )
 
     @pytest.mark.asyncio

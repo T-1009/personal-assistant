@@ -1,8 +1,11 @@
 ---
-status: backlog
+status: resolved
 related: feat/web-chat-frontend
 discovered_by: personal-assistant-e2e-tester
 discovered_at: 2026-06-08 E2E test session for Feature 1.1
+resolved_by: personal-assistant-manager
+resolved_at: 2026-06-08
+resolution: merged_chainlit_code_from_main
 ---
 
 # Bug 3: /playground Endpoint Returns 404 — Chainlit Not Mounted
@@ -63,3 +66,22 @@ This may be a design gap rather than an implementation bug. The `/playground` pa
 3. The comment implies it should be registered "before this line" (before the StaticFiles mount)
 
 If Chainlit integration is planned for a future feature, this bug can be resolved by that feature. If `/playground` was expected to work now, the Chainlit mount needs to be added.
+
+---
+
+## 解决 (Resolution)
+
+**原因**：Feature 1.1 开发分支 `feat/web-chat-frontend` 基于 main 创建时不包含此前已合入 main 的 Chainlit Playground 代码（`feat/chainlit-playground` 分支在 Feature 1.1 分支创建后被合入 main）。
+
+**修复方式**：将 main 分支合入 `feat/web-chat-frontend`（`git merge main`），带入完整的 Chainlit 代码：
+- `personal-assistant-service/app/playground.py` — Chainlit app
+- `personal-assistant-service/app/main.py` — Chainlit mount + `/playground`→`/playground/` redirect
+- `personal-assistant-service/app/agent_handler.py` — `get_agent_handler()` 单例
+- `personal-assistant-service/pyproject.toml` — `chainlit>=2.11.1` 依赖
+- 相关测试文件和 bug issue 归档
+
+**合并冲突**：仅 `main.py` 中 StaticFiles mount 注释区域有一处冲突，已手动解决（保留 Feature 1.1 的详细注释 + Chainlit mount 代码）。
+
+**测试结果**：`33 passed, 1 skipped`（含 Chainlit Playground mount、playground.py、agent_handler 单例测试全部通过）。
+
+**额外修复**：`test_main.py::test_playground_mount_precedes_static_mount` 中 mount name 从 `"web"` 更新为 `"web-chat"`（与 Feature 1.1 的 mount name 重构保持一致）。
