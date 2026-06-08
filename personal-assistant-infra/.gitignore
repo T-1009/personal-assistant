@@ -1,0 +1,8 @@
+cdktf.out/
+.gen/
+coverage/
+node_modules/
+dist/
+*.tfstate
+*.tfstate.*
+terraform.*.tfstate
