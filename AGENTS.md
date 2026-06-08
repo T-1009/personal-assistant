@@ -3,6 +3,16 @@
 
 基于 [AgentArts](https://www.huaweicloud.com/product/agentarts.html) 平台的对话式 AI 助手。通过自然语言管理日程、邮件、笔记和任务，具备跨 Session Memory 和用户委托能力。支持 Web Chat、飞书直连和 OfficeClaw 三种接入渠道。
 
+## Development Workflow
+
+系统开发遵循 5 步流水线流程，详细流程见各目录下的 AGENTS.md：
+
+1. **Issue 创建**：在 `personal-assistant-meta/issues/` 下创建 issue，描述变更动机和预期结果
+2. **Meta 阶段**：meta-manager 编排 meta-dev、meta-reviewer，生成 Implementation Plan
+3. **Implementation**：service-manager、client-manager、infra-manager 并行执行实现
+4. **E2E 验证**：e2e-manager 执行端到端测试，验证 Service + Client 联调
+5. **Merge**：所有检查通过后合并到 main 分支
+
 ## Directory Guide
 
 ```
@@ -34,6 +44,46 @@ personal-assistant/
 ### personal-assistant-e2e/ — E2E 测试
 
 端到端测试脚本目录，使用 pytest 框架，覆盖 Service + Client 联调场景。包含回归测试（按 bug 组织，用于复现和验证修复）和功能测试（按 feature 组织）。开始前先阅读 [`personal-assistant-e2e/AGENTS.md`](./personal-assistant-e2e/AGENTS.md) 了解测试编写和运行规范。
+
+## How to Run Locally
+
+### Backend（`personal-assistant-service/`）
+
+```bash
+cd personal-assistant-service
+uv sync
+cp .env.example .env
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+```
+
+验证：
+
+```bash
+curl http://localhost:8080/ping
+curl -X POST http://localhost:8080/invocations -H "Content-Type: application/json" -d '{"message": "你好"}'
+curl -N http://localhost:8080/api/chat/stream?q=你好 -H "Accept: text/event-stream"
+# Playground: http://localhost:8080/playground/
+```
+
+### Frontend（`personal-assistant-client/`）
+
+```bash
+cd personal-assistant-client
+npm install
+npm run dev
+```
+
+> Vite proxy 在 dev 模式下自动将 `/api` 请求转发到 `localhost:8080`。
+
+## Deployment
+
+| 组件 | 部署平台 | 技术栈 | 说明 |
+|------|----------|--------|------|
+| Backend | AgentArts Runtime（cn-southwest-2） | FastAPI, ARM64 容器, port 8080 | 部署 runbook 见 [`chore-1-agentarts-deploy/plan.md`](./personal-assistant-meta/issues/chores/chore-1-agentarts-deploy/plan.md) |
+| Frontend | OBS 静态网站托管（cn-southwest-2） | Vite + React | 构建产物通过 obsutil 上传至 OBS bucket |
+| Infrastructure | CDKTF（`personal-assistant-infra/`） | TypeScript | 管理 OBS bucket 及华为云基础资源 |
+
+**部署流程**：Docker build ARM64 镜像 → SWR push → agentarts launch 启动后端；`VITE_API_BASE_URL` 构建前端 → obsutil cp 上传至 OBS。
 
 ---
 

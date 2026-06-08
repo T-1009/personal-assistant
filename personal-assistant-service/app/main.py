@@ -11,6 +11,7 @@ logger = logging.getLogger("uvicorn")
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import RedirectResponse, StreamingResponse  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 
@@ -36,6 +37,14 @@ app = FastAPI(
     title="Personal Assistant",
     version="0.1.0",
     lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 
