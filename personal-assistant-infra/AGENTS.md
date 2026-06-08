@@ -41,14 +41,22 @@ personal-assistant-infra/**/*.ts                    → 华为云基础资源层
 
 ```
 personal-assistant-infra/
-├── AGENTS.md               # 本文件
-├── README.md               # 快速开始与运维手册
 ├── main.ts                 # CDKTF 入口（App + Stack 注册）
 ├── stacks/
-│   └── pa-stack.ts         # PersonalAssistantStack — 主 Stack
-├── constructs/             # 可复用 Construct（可选，复杂资源抽取）
-├── package.json            # cdktf + provider 依赖
-└── tsconfig.json           # TypeScript 配置
+│   ├── pa-stack.ts         # PersonalAssistantStack — 主 Stack（OBS bucket + provider）
+│   └── __tests__/
+│       └── pa-stack.test.ts # Unit tests (Jest + cdktf snapshot)
+├── constructs/
+│   └── .gitkeep            # 可复用 Construct（当前为占位符）
+├── package.json            # cdktf + constructs + devDependencies
+├── package-lock.json       # 依赖锁文件
+├── tsconfig.json           # TypeScript 配置（ES2022, commonjs, strict）
+├── cdktf.json              # CDKTF provider 配置（huaweicloud/huaweicloud）
+├── jest.config.js          # Jest 测试配置（ts-jest preset）
+├── .gitignore              # 排除 cdktf.out/ .gen/ coverage/ node_modules/ dist/
+├── AGENTS.md               # 本文件
+├── README.md               # 快速开始与运维手册
+└── .gen/                   # 自动生成的 provider bindings（gitignored）
 ```
 
 ## 触发时机
@@ -57,7 +65,7 @@ personal-assistant-infra/
 
 | 场景 | 需要的资源 |
 |------|-----------|
-| Web Chat 前端需要静态托管 | OBS Bucket + CDN 加速域名 |
+| Web Chat 前端需要静态托管 | OBS Bucket ✅（已实现） |
 | 用户-渠道 ID 映射需要持久化存储 | RDS（PostgreSQL） |
 | OfficeClaw 需要固定公网入口 | EIP + 带宽配置 |
 | Identity STS Provider 需要授权 | IAM Agency / Role / Policy |
@@ -69,13 +77,19 @@ personal-assistant-infra/
 # 安装依赖
 cd personal-assistant-infra && npm install
 
+# 生成/更新 provider bindings（首次或 provider 版本变更时）
+npx cdktf get
+
+# TypeScript 类型检查
+npx tsc --noEmit
+
 # 生成 Terraform JSON（检查语法和类型）
 npx cdktf synth
 
-# 查看变更计划
+# 查看变更计划（需要 HuaweiCloud 凭据）
 npx cdktf diff
 
-# 执行部署
+# 执行部署（需要 HuaweiCloud 凭据）
 npx cdktf deploy
 
 # 运行测试
@@ -87,6 +101,12 @@ npm test
 - **Stack 命名**：一个环境一个 Stack（如 `pa-stack`），通过 `context` 区分 dev/staging/prod
 - **Resource 命名**：使用 kebab-case，带 `pa-` 前缀避免与平台资源冲突
 - **敏感信息**：禁止硬编码，通过环境变量或 Terraform variables 注入（标记 `sensitive = true`）
-- **状态管理**：Terraform state 存储在 OBS backend（`pa-terraform-state` bucket），避免本地状态丢失
+- **状态管理**：Terraform state 当前为本地存储。OBS backend（`pa-terraform-state` bucket）为最终目标，需在首次部署后迁移（chicken-and-egg 问题）。见 `stacks/pa-stack.ts` 中的 TODO 注释。
 - **Outputs**：跨 Stack 引用使用 Stack Outputs，供 Service 配置读取（如 RDS endpoint、OBS bucket name）
 - **变更流程**：修改 IaC → `cdktf synth`（本地验证）→ `cdktf diff`（查看变更）→ PR Review → `cdktf deploy`
+
+## 当前管理的资源
+
+| Resource | Terraform 类型 | Name | Region | 配置 |
+|----------|---------------|------|--------|------|
+| OBS Bucket | `huaweicloud_obs_bucket` | `personal-assistant-web-chat` | `cn-southwest-2` | ACL=public-read, versioning=true, static website hosting (SPA: error_document=index.html) |
