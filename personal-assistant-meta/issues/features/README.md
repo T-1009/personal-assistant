@@ -1,6 +1,6 @@
 # Features
 
-Personal Assistant 开发计划，12 个 Feature（含 1 个基础设施前置 Feature + 11 个 Phase Feature）。
+Personal Assistant 开发计划，13 个 Feature（含 1 个基础设施前置 Feature + 12 个 Phase Feature）。
 
 渠道策略：Web Chat → 飞书 → OfficeClaw。用浏览器快速验证 Agent 核心能力，再接入企业内部 IM 和微信。
 
@@ -20,7 +20,8 @@ Personal Assistant 开发计划，12 个 Feature（含 1 个基础设施前置 F
 | [6](feature-6-github-tool.md) | GitHub Tool (User Federation) | Agent 代用户查 GitHub Issues | Feature 1, 2, 4, 1.2 | backlog |
 | [7](feature-7-m2m-tool.md) | 内部 API Tool (M2M) | Agent 调企业内部 API | Feature 1, 4, 1.2 | backlog |
 | [8](feature-8-sts-tool.md) | 云资源 Tool (STS) | Agent 访问 OBS 等云资源 | Feature 1, 4, 1.2 | backlog |
-| [9](feature-9-deployment.md) | 部署上线 + 可观测 | 生产环境 + 三渠道验证 | Feature 1-8, 1.1, 1.2 | backlog |
+| [9](feature-9-deployment.md) | 部署上线 + 可观测 | 生产环境 + 三渠道验证 | Feature 1-8, 1.1, 1.2, 10 | backlog |
+| [10](feature-10-outbound-email-obs/issue.md) | Outbound Email + OBS（AgentArts Python SDK） | 邮件处理（Microsoft Graph）+ OBS 文件查询（STS） | Feature 1, 2, 4, 1.2, 8 | backlog |
 
 ## 依赖关系
 
@@ -42,11 +43,15 @@ flowchart TD
     F4 --> F6
     F4 --> F7["Feature 7: M2M Tool"]
     F4 --> F8["Feature 8: STS Tool"]
+    F8 --> F10["Feature 10: Email + OBS"]
+    F4 --> F10
+    F2 --> F10
     F3 --> F9["Feature 9: 部署上线"]
     F5 --> F9
     F6 --> F9
     F7 --> F9
     F8 --> F9
+    F10 --> F9
 ```
 
 ## 渠道上线顺序
@@ -84,12 +89,13 @@ gantt
     F6  GitHub Tool                 :f6, after f4, 7d
     F7  M2M Tool                    :f7, after f4, 5d
     F8  STS Tool                    :f8, after f4, 5d
+    F10  Email + OBS (需 F8)        :f10, after f8, 7d
 
     section 收尾
-    F9  部署上线 + 可观测            :milestone, after f6, 0d
+    F9  部署上线 + 可观测            :milestone, after f10, 0d
 ```
 
-> F1.1 和 F1.2 在 F1 完成后即可并行推进，互不阻塞。F2、F5 也可同步进行。瓶颈在 F1.2 → F4 链路上（因 F4 依赖 1.2 的表结构，F6-8 又依赖 F4）。F3 是纯配置工作，放在 Memory 之后做是因为需要验证跨渠道 Memory。
+> F1.1 和 F1.2 在 F1 完成后即可并行推进，互不阻塞。F2、F5 也可同步进行。瓶颈在 F1.2 → F4 链路上（因 F4 依赖 1.2 的表结构，F6-8 又依赖 F4）。F10 在 F8（STS 基础设施）完成后开始，复用 F8 的 STS Provider。F3 是纯配置工作，放在 Memory 之后做是因为需要验证跨渠道 Memory。
 
 ## 相关文档
 

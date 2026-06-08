@@ -1,6 +1,6 @@
 # Personal Assistant — 总体功能规格书
 
-> 版本：v0.4 | 状态：Draft | 基于 AgentArts 平台
+> 版本：v0.5 | 状态：Draft | 基于 AgentArts 平台
 
 ---
 
@@ -74,6 +74,15 @@ flowchart LR
 - **草拟回复**：根据上下文草拟邮件回复内容，用户确认后发送
 - **邮件发送**：通过对话撰写并发送邮件，支持指定收件人、抄送和附件
 - **敏感操作拦截**：发送邮件等写操作需用户二次确认（Guard 机制）
+
+### 3.2 云资源查询（OBS）
+
+- **对象浏览**：按 Bucket 和路径前缀列出 OBS 对象存储中的文件
+- **文件读取**：读取 OBS 对象的文本内容，返回可读格式（纯文本、JSON、CSV 等）
+- **元数据查询**：查询对象大小、类型、最后修改时间等元信息
+- **只读安全**：MVP 阶段仅开放读取操作，不涉及文件写入或删除
+
+> 典型场景：运维人员通过对话 "帮我看看 my-bucket/logs/ 目录下有什么文件" 或 "读取 obs-config.json 的内容" 快速查阅云存储中的文件，无需登录 OBS 控制台。
 
 ---
 
@@ -198,6 +207,7 @@ llm:
 |--------|------|
 | **Inbound Auth** | 用户通过 OAuth 2.0 / API Key 认证后访问 Agent |
 | **Outbound Auth (User Federation)** | Agent 以用户委托身份调用 Microsoft 365 邮件 API |
+| **OBS 文件查询** | Agent 列出和读取 OBS 对象存储中的文件内容 |
 | **Chat Loop** | 多轮对话 + 工具调用 + 流式响应 |
 | **Memory** | 跨 Session 持久化用户偏好和上下文 |
 | **Guard** | 发送邮件等写操作需用户确认 |
@@ -212,5 +222,6 @@ llm:
 | **Phase 2** | 集成 Memory：创建 Memory Space，保存/检索记忆 | 跨 Session 记忆 |
 | **Phase 3** | 配置 Inbound Identity：JWT + API Key 认证 | 用户登录后访问 |
 | **Phase 4** | 实现 Outbound OAuth2 (User Federation)：邮件 Tool | Agent 代用户查邮件 |
+| **Phase 4.5** | 实现 OBS 文件查询 Tool（STS 模式，复用 Feature 8 基础设施） | Agent 浏览和读取 OBS 文件 |
 | **Phase 5** | Web Chat 前端：Vite + React + SSE 流式对话 + OAuth 登录 | 浏览器完整对话体验 |
 | **Phase 6** | 部署上线 + 全链路可观测 | 生产可用 |
