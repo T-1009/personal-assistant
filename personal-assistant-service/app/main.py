@@ -41,13 +41,13 @@ app = FastAPI(
 )
 
 
-@app.get("/api/ping")
+@app.get("/ping")
 async def ping():
     """Health check endpoint."""
     return {"status": "ok"}
 
 
-@app.post("/api/invocations")
+@app.post("/invocations")
 async def invocations(request: Request):
     """Synchronous agent invocation endpoint."""
     body = await request.json()
