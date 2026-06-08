@@ -191,7 +191,7 @@ flowchart TD
 
 每个领域 Manager 内部跑 control loop：Dev → Tester → Reviewer。Manager 不写代码，只做调度和决策。**领域 loop 内不再包含 commit 步骤**——commit 由顶层的 `personal-assistant-committer` 在三个检查点执行：Meta 完成后（Plan Commit）、所有领域完成后（Implementation Commit）、E2E review 通过后（E2E Commit）。
 
-Reviewer 的审查分两阶段：（1）先审查 Dev 产出的业务代码；（2）再审查 Tester 产出的测试代码。一次 review 覆盖全部产出，避免 review 遗漏测试代码。
+Reviewer 的审查分两阶段：（1）先审查 Dev 产出的业务代码；（2）再审查 Tester 产出的测试代码。一次 review 覆盖全部产出，避免 review 遗漏测试代码。Reviewer 还需**审计 Tester 移除的 stale 测试**——Tester 负责识别并移除当前 issue 范围内不再有意义的测试，Reviewer 确保没有误删正确测试。
 
 Tester 报告失败时，Manager 做三级决策：
 
@@ -203,7 +203,7 @@ Tester 报告失败时，Manager 做三级决策：
 
 ### E2E Control Loop
 
-personal-assistant-e2e-manager 管理 E2E 领域的质量闭环：调度 personal-assistant-e2e-tester 编写 E2E 测试 → personal-assistant-e2e-reviewer 审查测试代码。E2E-Manager 的决策逻辑与领域 Manager 一致：Tester 产出后 Reviewer 审查，Reviewer 发现问题时 Manager 根据问题类型决定回退 Tester 修复或上报 personal-assistant-manager。
+personal-assistant-e2e-manager 管理 E2E 领域的质量闭环：调度 personal-assistant-e2e-tester 编写 E2E 测试 → personal-assistant-e2e-reviewer 审查测试代码。E2E-Manager 的决策逻辑与领域 Manager 一致：Tester 产出后 Reviewer 审查，Reviewer 发现问题时 Manager 根据问题类型决定回退 Tester 修复或上报 personal-assistant-manager。Tester 负责识别并移除当前 issue 范围内不再有意义的回归测试，Reviewer 审计确保无误删。
 
 ## Exceptional Control Flow
 
@@ -297,20 +297,20 @@ permission:
 | `personal-assistant-meta-client-dev` | — | allow | allow | — | 生成 TypeScript 类型（bash）+ commit（bash） |
 | `personal-assistant-service-manager` | allow | — | — | — | 纯调度 |
 | `personal-assistant-service-dev` | — | allow | allow | — | 写后端代码 + 运行 type check/test/commit |
-| `personal-assistant-service-reviewer` | — | deny | — | — | 只检查报告 |
-| `personal-assistant-service-tester` | — | allow | allow | — | 写测试文件 + 运行 pytest/mypy |
+| `personal-assistant-service-reviewer` | — | deny | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `personal-assistant-service-tester` | — | allow | allow | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 pytest/mypy |
 | `personal-assistant-client-manager` | allow | — | — | — | 纯调度 |
 | `personal-assistant-client-dev` | — | allow | allow | — | 写前端代码 + 运行 tsc/lint/test/commit |
-| `personal-assistant-client-reviewer` | — | deny | — | — | 只检查报告 |
-| `personal-assistant-client-tester` | — | allow | allow | — | 写测试文件 + 运行 tsc/lint/test/build |
+| `personal-assistant-client-reviewer` | — | deny | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `personal-assistant-client-tester` | — | allow | allow | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 tsc/lint/test/build |
 | `personal-assistant-infra-manager` | allow | — | — | — | 纯调度 |
 | `personal-assistant-infra-dev` | — | allow | allow | — | 写 CDKTF 代码 + 运行 cdktf synth/commit |
-| `personal-assistant-infra-reviewer` | — | deny | — | — | 只检查报告 |
-| `personal-assistant-infra-tester` | — | allow | allow | — | 写测试文件 + 运行 jest/cdktf/tsc |
+| `personal-assistant-infra-reviewer` | — | deny | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `personal-assistant-infra-tester` | — | allow | allow | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 jest/cdktf/tsc |
 | `personal-assistant-committer` | — | deny | allow | — | bash 用于 git 操作；显式 deny edit 防止意外修改源码 |
 | `personal-assistant-e2e-manager` | allow | — | — | — | 纯调度，管理 E2E Tester → Reviewer 闭环 |
-| `personal-assistant-e2e-tester` | — | allow | allow | allow | primary agent（mode: all），需要完整工具链；skill 用于加载 hermes-e2e-testing |
-| `personal-assistant-e2e-reviewer` | — | deny | — | — | 只检查报告，审查 E2E 测试代码 |
+| `personal-assistant-e2e-tester` | — | allow | allow | allow | primary agent（mode: all），需要完整工具链；skill 用于加载 hermes-e2e-testing。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
+| `personal-assistant-e2e-reviewer` | — | deny | — | — | 审查 E2E 测试代码；审计 stale 测试移除 |
 
 ### 按角色分类
 
@@ -318,10 +318,10 @@ permission:
 |------|---------|----------|------|
 | Manager（Orchestrator） | `task: allow` | — | 只调度，不操作文件和命令 |
 | Dev（实现者） | `edit: allow`, `bash: allow` | — | 写代码 + 运行命令 |
-| Reviewer（审查者） | — | `edit: deny` | 只检查报告，禁止修改被审查内容 |
-| Tester（测试者） | `edit: allow`, `bash: allow` | — | 写测试文件 + 运行测试套件 |
+| Reviewer（审查者） | — | `edit: deny` | 审查业务代码 + 测试代码；审计 stale 测试移除，防止误删 |
+| Tester（测试者） | `edit: allow`, `bash: allow` | — | 写测试文件、移除 stale 测试 + 运行测试套件 |
 | Committer（提交者） | `bash: allow` | `edit: deny` | `git add/commit/push`，禁止修改源码 |
-| E2E Tester（端到端测试） | `edit: allow`, `bash: allow`, `skill: allow` | — | primary agent，完整工具链 |
+| E2E Tester（端到端测试） | `edit: allow`, `bash: allow`, `skill: allow` | — | primary agent，完整工具链。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
 
 ### 权限审计经验
 
