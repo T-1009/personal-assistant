@@ -9,23 +9,15 @@ SPA instead of Chainlit. This test verifies the proxy rule exists and works.
 
 import subprocess
 import time
-from pathlib import Path
 
 import httpx
 import pytest
 
+# Import shared ServiceProcess fixture from e2e conftest.
+# pytest automatically discovers conftest.py in the e2e root directory.
+from conftest import PROJECT_ROOT, ServiceProcess
 
-# Project paths
-_PROJ_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-_CLIENT_DIR = _PROJ_ROOT / "personal-assistant-client"
-_SERVICE_DIR = _PROJ_ROOT / "personal-assistant-service"
-
-
-def _get_uv_path() -> str:
-    uv_path = _SERVICE_DIR / ".venv" / "bin" / "uv"
-    if uv_path.exists():
-        return str(uv_path)
-    return "uv"
+_CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 
 
 class ClientDevProcess:
@@ -79,74 +71,6 @@ class ClientDevProcess:
         self.process = None
 
 
-class ServiceProcess:
-    """Manage a subprocess running the uvicorn server (backend)."""
-
-    def __init__(self, port: int = 8765):
-        self.port = port
-        self.process: subprocess.Popen | None = None
-        self.url = f"http://127.0.0.1:{port}"
-
-    def start(self, env: dict[str, str] | None = None, timeout: float = 60.0):
-        """Start the service in a subprocess."""
-        import os
-
-        merged_env = os.environ.copy()
-        if env:
-            merged_env.update(env)
-
-        self.process = subprocess.Popen(
-            [
-                _get_uv_path(),
-                "run",
-                "uvicorn",
-                "app.main:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
-                str(self.port),
-                "--log-level",
-                "error",
-            ],
-            cwd=str(_SERVICE_DIR),
-            env=merged_env,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-        )
-
-        deadline = time.time() + timeout
-        while time.time() < deadline:
-            if self.process.poll() is not None:
-                _, stderr = self.process.communicate(timeout=5)
-                raise RuntimeError(
-                    f"Service exited with code {self.process.returncode}: "
-                    f"{stderr.decode(errors='replace')[-500:]}"
-                )
-            try:
-                resp = httpx.get(f"{self.url}/api/ping", timeout=2.0)
-                if resp.status_code == 200:
-                    return
-            except (httpx.ConnectError, httpx.TimeoutException):
-                pass
-            time.sleep(0.5)
-
-        self.stop()
-        raise TimeoutError(
-            f"Service did not become healthy within {timeout}s on port {self.port}"
-        )
-
-    def stop(self):
-        """Stop the service subprocess."""
-        if self.process and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
-        self.process = None
-
-
 @pytest.mark.regression
 @pytest.mark.slow
 class TestBug6_VitePlaygroundProxyMissing:
@@ -157,7 +81,8 @@ class TestBug6_VitePlaygroundProxyMissing:
     (index.html with <div id="root">) instead of Chainlit.
     """
 
-    SERVICE_PORT = 18730
+    # Must match the proxy target in vite.config.ts (hardcoded to localhost:8080)
+    SERVICE_PORT = 8080
     VITE_PORT = 18731
 
     @pytest.fixture
@@ -210,15 +135,30 @@ class TestBug6_VitePlaygroundProxyMissing:
             f"got status {resp.status_code}"
         )
 
+        # If redirect, verify the Location header targets /playground/ (the
+        # Chainlit mount requires the trailing slash).
+        if resp.status_code in (302, 307):
+            location = resp.headers.get("Location", "")
+            assert location.endswith("/playground/"), (
+                f"Expected redirect Location to end with /playground/, "
+                f"got {location!r}"
+            )
+
         # Key assertion: response must NOT be the assistant-ui SPA.
-        # The SPA's index.html contains '<div id="root">' — if we see this,
-        # the Vite SPA fallback intercepted the request (bug present).
+        # The SPA's index.html contains Vite-specific scripts like '@vite/client';
+        # Chainlit HTML does not. (NB: both are React apps and both contain
+        # '<div id="root">', so that is NOT a valid discriminator.)
         content_type = resp.headers.get("content-type", "")
         if "text/html" in content_type:
-            assert "<div id=\"root\">" not in resp.text, (
+            assert "@vite/client" not in resp.text, (
                 "FAIL: /playground on Vite dev server returned assistant-ui SPA "
-                "(contains <div id=\"root\">). The Vite proxy for /playground is "
+                "(contains @vite/client). The Vite proxy for /playground is "
                 "NOT configured — the SPA fallback is catching the path."
+            )
+            # Sanity: should contain Chainlit markers
+            assert "chainlit" in resp.text.lower(), (
+                "FAIL: /playground response is HTML but does not contain Chainlit "
+                "markers — unexpected content."
             )
 
     def test_playground_trailing_slash_on_vite_works(self, dev_urls):
@@ -230,10 +170,17 @@ class TestBug6_VitePlaygroundProxyMissing:
         )
         assert "text/html" in resp.headers.get("content-type", "")
 
-        # Should contain Chainlit markers, not SPA markers
-        assert "<div id=\"root\">" not in resp.text, (
+        # Should contain Chainlit markers, not SPA markers.
+        # Chainlit HTML includes 'chainlit' and lacks '@vite/client'.
+        # (Both Chainlit and the Vite SPA contain '<div id="root">', so that
+        # is NOT a valid discriminator — use Vite-specific scripts instead.)
+        assert "@vite/client" not in resp.text, (
             "FAIL: /playground/ on Vite dev server returned the assistant-ui SPA "
-            "instead of Chainlit HTML. The proxy is NOT forwarding to the backend."
+            "(contains @vite/client). The proxy is NOT forwarding to the backend."
+        )
+        assert "chainlit" in resp.text.lower(), (
+            "FAIL: /playground/ response is HTML but missing Chainlit markers — "
+            "the proxy may be returning unexpected content."
         )
 
     # ── Sanity checks ─────────────────────────────────────────────────
@@ -249,8 +196,9 @@ class TestBug6_VitePlaygroundProxyMissing:
         resp = httpx.get(f"{dev_urls['vite_url']}/")
         assert resp.status_code == 200
         assert "text/html" in resp.headers.get("content-type", "")
-        assert "<div id=\"root\">" in resp.text, (
-            "Sanity check failed: Vite root path does NOT serve the SPA."
+        assert "@vite/client" in resp.text, (
+            "Sanity check failed: Vite root path does NOT serve the SPA "
+            "(missing @vite/client script injection)."
         )
 
     def test_playground_ws_proxied(self, dev_urls):
@@ -274,12 +222,15 @@ class TestBug6_VitePlaygroundProxyMissing:
                 # is working but ws upgrade fails for other reasons (e.g., no
                 # Chainlit session), we should at least not get SPA HTML back.
                 if "text/html" in resp.headers.get("content-type", ""):
-                    assert "<div id=\"root\">" not in resp.text, (
+                    assert "@vite/client" not in resp.text, (
                         "FAIL: /playground/ws WebSocket upgrade was caught by "
-                        "Vite SPA fallback. The proxy does not handle /playground "
-                        "WebSocket connections."
+                        "Vite SPA fallback (contains @vite/client). The proxy "
+                        "does not handle /playground WebSocket connections."
                     )
-        except httpx.RemoteProtocolError:
+        except httpx.RemoteProtocolError as e:
             # This is expected if the connection is handled as WebSocket
             # but our httpx client can't complete the handshake.
-            pass
+            pytest.skip(
+                f"WebSocket connection triggered RemoteProtocolError "
+                f"(expected for ws upgrade): {e}"
+            )
