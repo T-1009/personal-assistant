@@ -117,3 +117,94 @@ app.add_middleware(SPAFallbackMiddleware, static_dir=STATIC_DIR)
 | 侵入性 | 替代 StaticFiles 的部分职责 | 零侵入，StaticFiles 不动 |
 | 运行时开销 | 无额外开销（正常路由匹配） | 每个请求多一次 status code 检查 |
 | 代码量 | ~10 行 | ~20 行（含 class 定义） |
+
+---
+
+## 最终决策：Middleware 方案
+
+**决策日期**: 2026-06-08  
+**决策者**: @malu  
+**结论**: 采用 **Middleware 拦截 404** 方案，不采用 Catch-all 路由方案。
+
+### 选择 Middleware 的理由
+
+1. **路由优先级无冲突**。Catch-all 路由方案必须在 `StaticFiles` mount 之前注册，否则永远走不到；而注册在前又必须自行判断文件存在性、处理路径遍历安全——本质上是在 URL 路由层模拟 StaticFiles 的语义，架构上不合理。Middleware 在响应阶段拦截，不参与路由匹配，StaticFiles 保持完整职责。
+
+2. **不与 build 产物结构耦合**。Catch-all 的 `startswith("assets/")` 过滤依赖 Vite 当前输出结构——Vite 升级或配置变更产生根级文件（如 `/vite.svg`）就会打断过滤逻辑。Middleware 用 `skip_prefixes=["/api/", "/playground"]` 按业务路径排除，与物理文件布局无关。
+
+3. **路径遍历安全复用 StaticFiles 内置校验**。Catch-all 需要自己实现 `Path.resolve()` + `startswith()` 路径遍历保护，而 Middleware 完全不接触文件系统路径解析——它只在 StaticFiles 返回 404 时读取已知的安全路径 `STATIC_DIR / "index.html"` 并返回 `FileResponse`。
+
+4. **可扩展性好**。未来新增不需要 fallback 的路由（如 `/health`、`/metrics`），Middleware 只需加一条 `skip_prefixes`；Catch-all 方案需要同时修改过滤条件和路由注册顺序。
+
+5. **业界标准做法**。Nginx `try_files`、Express `connect-history-api-fallback`、Caddy `try_files {path} /index.html` 都是在文件服务层之后、响应返回之前做 fallback，概念上与 middleware 完全一致。这通过了 Four-Question Gate 的全部四项检查。
+
+### 实施要点
+
+#### `main.py` 变更（最小化）
+
+1. **删除**第 118-121 行关于 `html=True` 的错误注释（该注释描述的 SPA fallback 语义 Starlette 从未实现）
+2. **去掉** `StaticFiles(..., html=True)` 中的 `html=True` 参数（fallback 由 middleware 接管，不再依赖该参数）
+3. **新增** `app.add_middleware(SPAFallbackMiddleware, static_dir=STATIC_DIR)` 注册（在 `StaticFiles` mount 之后）
+
+`StaticFiles` mount 本身不变——它继续正常 serve `dist/` 下的所有物理文件，middleware 只在它返回 404 时才介入。
+
+#### 新建 `app/spa_middleware.py`
+
+```python
+from pathlib import Path
+
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.responses import FileResponse
+
+
+class SPAFallbackMiddleware(BaseHTTPMiddleware):
+    """Intercept 404 from StaticFiles and serve index.html for SPA client-side routes.
+
+    StaticFiles handles physical files normally; this middleware only kicks in
+    when StaticFiles returns 404 — the request doesn't match any physical file
+    and should be handled by the client-side router (e.g. React Router).
+
+    Path traversal safety: we only ever read STATIC_DIR / "index.html" (a fixed
+    path), never interpolate user input into filesystem paths.
+    """
+
+    def __init__(self, app, static_dir: Path, skip_prefixes=("/api/", "/playground")):
+        super().__init__(app)
+        self.static_dir = static_dir
+        self.skip_prefixes = skip_prefixes
+
+    async def dispatch(self, request, call_next):
+        # API and playground requests pass through without fallback
+        if any(request.url.path.startswith(p) for p in self.skip_prefixes):
+            return await call_next(request)
+
+        response = await call_next(request)
+        if response.status_code == 404:
+            index = self.static_dir / "index.html"
+            if index.exists():
+                return FileResponse(str(index))
+        return response
+```
+
+#### `skip_prefixes` 设计说明
+
+- `"/api/"` — 排除所有 API 路由
+- `"/playground"` — **不加 trailing slash**，同时匹配 `/playground`（重定向到 `/playground/`）和 `/playground/xxx`（Chainlit 内部路由）
+
+#### 关联测试更新
+
+| 文件 | 操作 |
+|------|------|
+| `personal-assistant-e2e/tests/regression/test_bug_2_spa_fallback_not_working.py` | 移除两个 `@pytest.mark.xfail`，测试应全部 PASS |
+| `personal-assistant-e2e/tests/features/test_feature_1_1_web_chat.py` | 移除 `test_spa_fallback_serves_index_html` 上的 `@pytest.mark.xfail(strict=True)` |
+| `personal-assistant-service/tests/test_main.py` | 新增 4 个 middleware 单元测试：SPA fallback 正常返回 index.html、API 路由不被 fallback 拦截、playground 路由不被 fallback 拦截、dist 不存在时 404 正常传递 |
+
+#### Fix commit 建议范围
+
+```
+personal-assistant-service/app/spa_middleware.py        # 新增
+personal-assistant-service/app/main.py                 # 修改（~5 行）
+personal-assistant-service/tests/test_main.py          # 新增 4 个测试
+personal-assistant-e2e/tests/regression/test_bug_2_spa_fallback_not_working.py  # 移除 xfail
+personal-assistant-e2e/tests/features/test_feature_1_1_web_chat.py  # 移除 xfail
+```
