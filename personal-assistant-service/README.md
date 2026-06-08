@@ -67,8 +67,8 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| `GET` | `/api/ping` | 健康检查，返回 `{"status":"ok"}` |
-| `POST` | `/api/invocations` | 非流式对话，供 AgentArts / OfficeClaw 调用 |
+| `GET` | `/ping` | 健康检查，返回 `{"status":"ok"}` |
+| `POST` | `/invocations` | 非流式对话，供 AgentArts / OfficeClaw 调用 |
 | `GET` | `/api/chat/stream?q=...` | SSE 流式对话，供 Web Chat 前端使用 |
 | `GET` | `/` | Web Chat 静态页面 |
 
@@ -76,10 +76,10 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ```bash
 # 健康检查
-curl http://localhost:8080/api/ping
+curl http://localhost:8080/ping
 
 # 非流式对话
-curl -X POST http://localhost:8080/api/invocations \
+curl -X POST http://localhost:8080/invocations \
   -H "Content-Type: application/json" \
   -d '{"message":"你好"}'
 
@@ -148,7 +148,7 @@ Browser ──GET /──→ StaticFiles (web/index.html)
   │                    │
   │              MaaS LLM (DeepSeek-V4-Pro)
   │
-  └── POST /api/invocations ──→ AgentHandler.handle() → agent.ainvoke()
+  └── POST /invocations ──→ AgentHandler.handle() → agent.ainvoke()
 ```
 
 ## 后续 Feature
