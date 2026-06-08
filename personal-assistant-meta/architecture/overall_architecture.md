@@ -191,30 +191,32 @@ AgentArts Identity SDK 提供三种 Outbound 认证模式：
 通过 AgentArts SDK 创建各类 Credential Provider：
 
 ```python
-from agentarts.sdk.services.identity import IdentityClient
+from agentarts.sdk import IdentityClient
+from agentarts.sdk.identity import OAuth2Vendor
 
 client = IdentityClient(region="cn-southwest-2")
 
 # 1. 创建 Workload Identity（Agent 的工作负载身份）
 workload = client.create_workload_identity(
     name="personal-assistant-workload",
-    description="Personal Assistant Agent 工作负载身份"
+    allowed_resource_oauth2_return_urls=["http://localhost:8000/auth/callback"],
 )
 
 # 2. OAuth2 Provider — GitHub（User Federation）
 github_provider = client.create_oauth2_credential_provider(
     name="github-provider",
-    vendor="github",
+    vendor=OAuth2Vendor.GITHUBOAUTH2,
     client_id="your-github-oauth-app-client-id",
-    client_secret="your-github-oauth-app-client-secret"
+    client_secret="your-github-oauth-app-client-secret",
 )
 
 # 3. OAuth2 Provider — Microsoft 365（User Federation）
 m365_provider = client.create_oauth2_credential_provider(
     name="m365-provider",
-    vendor="microsoft",
+    vendor=OAuth2Vendor.MICROSOFTOAUTH2,
     client_id="your-m365-client-id",
-    client_secret="your-m365-client-secret"
+    client_secret="your-m365-client-secret",
+    tenant_id="your-azure-tenant-id",
 )
 
 # 4. API Key Provider — 企业内部 API（M2M）
@@ -235,7 +237,7 @@ sts_provider = client.create_sts_credential_provider(
 
 ```python
 from agentarts.sdk import require_access_token, require_api_key, require_sts_token
-from agentarts.sdk.identity.types import StsCredentials
+from agentarts.sdk.identity import StsCredentials
 from typing import Optional
 import httpx
 
