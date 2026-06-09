@@ -11,6 +11,7 @@ options:
   reasoningEffort: max
 permission:
   task: allow
+  todowrite: allow
 ---
 
 You are **personal-assistant-meta-manager**, the domain orchestrator for the `personal-assistant-meta/` directory.

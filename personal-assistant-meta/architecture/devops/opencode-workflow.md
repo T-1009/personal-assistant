@@ -285,32 +285,43 @@ permission:
 
 值：`allow`（直接允许）、`ask`（需用户确认）、`deny`（禁止）。
 
+### 可用工具权限 Key
+
+除 `task`、`edit`、`bash`、`skill` 外，还支持以下工具权限：
+
+| 权限 Key | 工具 | 说明 | 前置条件 |
+|----------|------|------|---------|
+| `webfetch` | WebFetch | 抓取 URL 内容，支持 HTML/Text/Markdown 格式 | 无 |
+| `websearch` | WebSearch | 网络搜索 | 需设置环境变量 `OPENCODE_ENABLE_EXA=1`，否则 websearch 不可用 |
+
+其他未列出的内置工具（如 `read`、`grep`、`glob`、`write`、`question`）为所有 subagent 默认可用，无需显式声明。
+
 ### 完整权限矩阵（22 个 Agent）
 
-| Agent | task | edit | bash | skill | 设计理由 |
-|-------|:----:|:----:|:----:|:-----:|---------|
-| `personal-assistant-manager` | allow | — | allow | — | task 用于 delegate 子 Agent；bash 用于 `git checkout`/`git merge` |
-| `personal-assistant-meta-manager` | allow | — | — | — | 纯调度，不直接操作文件或命令 |
-| `personal-assistant-meta-dev` | — | allow | — | — | 撰写 plan.md，需要写文件 |
-| `personal-assistant-meta-reviewer` | — | deny | — | — | 只检查报告，禁止修改被审查内容 |
-| `personal-assistant-meta-service-dev` | — | allow | allow | — | 更新 API schema（edit）+ 生成 OpenAPI spec（bash） |
-| `personal-assistant-meta-client-dev` | — | allow | allow | — | 生成 TypeScript 类型（bash）+ commit（bash） |
-| `personal-assistant-service-manager` | allow | — | — | — | 纯调度 |
-| `personal-assistant-service-dev` | — | allow | allow | — | 写后端代码 + 运行 type check/test/commit |
-| `personal-assistant-service-reviewer` | — | deny | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
-| `personal-assistant-service-tester` | — | allow | allow | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 pytest/mypy |
-| `personal-assistant-client-manager` | allow | — | — | — | 纯调度 |
-| `personal-assistant-client-dev` | — | allow | allow | — | 写前端代码 + 运行 tsc/lint/test/commit |
-| `personal-assistant-client-reviewer` | — | deny | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
-| `personal-assistant-client-tester` | — | allow | allow | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 tsc/lint/test/build |
-| `personal-assistant-infra-manager` | allow | — | — | — | 纯调度 |
-| `personal-assistant-infra-dev` | — | allow | allow | — | 写 CDKTF 代码 + 运行 cdktf synth/commit |
-| `personal-assistant-infra-reviewer` | — | deny | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
-| `personal-assistant-infra-tester` | — | allow | allow | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 jest/cdktf/tsc |
-| `personal-assistant-committer` | — | deny | allow | — | bash 用于 git 操作；显式 deny edit 防止意外修改源码 |
-| `personal-assistant-e2e-manager` | allow | — | — | — | 纯调度，管理 E2E Tester → Reviewer 闭环 |
-| `personal-assistant-e2e-tester` | — | allow | allow | allow | primary agent（mode: all），需要完整工具链；skill 用于加载 hermes-e2e-testing。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
-| `personal-assistant-e2e-reviewer` | — | deny | — | — | 审查 E2E 测试代码；审计 stale 测试移除 |
+| Agent | task | edit | bash | skill | todowrite | webfetch | websearch | 设计理由 |
+|-------|:----:|:----:|:----:|:-----:|:---------:|:--------:|:---------:|---------|
+| `personal-assistant-manager` | allow | — | allow | — | allow | — | — | task 用于 delegate 子 Agent；bash 用于 `git checkout`/`git merge` |
+| `personal-assistant-meta-manager` | allow | — | — | — | allow | — | — | 纯调度，不直接操作文件或命令 |
+| `personal-assistant-meta-dev` | — | allow | — | — | — | allow | allow | 撰写 plan.md，需要写文件；webfetch/websearch 用于引用外部文档 |
+| `personal-assistant-meta-reviewer` | — | deny | — | — | — | allow | allow | 只检查报告，禁止修改被审查内容；webfetch/websearch 用于验证引用的外部文档 |
+| `personal-assistant-meta-service-dev` | — | allow | allow | — | — | — | — | 更新 API schema（edit）+ 生成 OpenAPI spec（bash） |
+| `personal-assistant-meta-client-dev` | — | allow | allow | — | — | — | — | 生成 TypeScript 类型（bash）+ commit（bash） |
+| `personal-assistant-service-manager` | allow | — | — | — | allow | — | — | 纯调度 |
+| `personal-assistant-service-dev` | — | allow | allow | — | — | — | — | 写后端代码 + 运行 type check/test/commit |
+| `personal-assistant-service-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `personal-assistant-service-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 pytest/mypy |
+| `personal-assistant-client-manager` | allow | — | — | — | allow | — | — | 纯调度 |
+| `personal-assistant-client-dev` | — | allow | allow | — | — | — | — | 写前端代码 + 运行 tsc/lint/test/commit |
+| `personal-assistant-client-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `personal-assistant-client-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 tsc/lint/test/build |
+| `personal-assistant-infra-manager` | allow | — | — | — | allow | — | — | 纯调度 |
+| `personal-assistant-infra-dev` | — | allow | allow | — | — | — | — | 写 CDKTF 代码 + 运行 cdktf synth/commit |
+| `personal-assistant-infra-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `personal-assistant-infra-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 jest/cdktf/tsc |
+| `personal-assistant-committer` | — | deny | allow | — | — | — | — | bash 用于 git 操作；显式 deny edit 防止意外修改源码 |
+| `personal-assistant-e2e-manager` | allow | — | — | — | allow | — | — | 纯调度，管理 E2E Tester → Reviewer 闭环 |
+| `personal-assistant-e2e-tester` | — | allow | allow | allow | — | — | — | primary agent（mode: all），需要完整工具链；skill 用于加载 hermes-e2e-testing。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
+| `personal-assistant-e2e-reviewer` | — | deny | — | — | — | — | — | 审查 E2E 测试代码；审计 stale 测试移除 |
 
 ### 按角色分类
 

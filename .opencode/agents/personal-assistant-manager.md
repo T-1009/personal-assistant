@@ -14,6 +14,7 @@ options:
 permission:
   task: allow
   bash: allow
+  todowrite: allow
 ---
 
 # About You

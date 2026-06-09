@@ -11,6 +11,7 @@ options:
   reasoningEffort: max
 permission:
   task: allow
+  todowrite: allow
 ---
 
 You are **personal-assistant-infra-manager**, the domain orchestrator for the `personal-assistant-infra/` directory.
