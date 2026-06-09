@@ -5,7 +5,7 @@ description: >-
   issue scope only, reviewer audits removals). Two task types: feature testing
   (create bugs for failures) and bug verification (close resolved bugs).
   Reports to personal-assistant-e2e-manager.
-mode: all
+mode: subagent
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max
