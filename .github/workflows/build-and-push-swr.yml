@@ -26,10 +26,11 @@ jobs:
 
       - name: Build and push ARM64 image
         env:
-          BUILDKIT_USE_OCI_MEDIA_TYPES: "0"  # SWR 不支持 OCI 格式，Docker 27+ 必需
+          BUILDKIT_USE_OCI_MEDIA_TYPES: "0"  # SWR 基础版不支持 OCI 格式
         run: |
           docker build \
             --platform linux/arm64 \
+            --provenance=false \
             -f personal-assistant-service/Dockerfile \
             -t swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest \
             .
