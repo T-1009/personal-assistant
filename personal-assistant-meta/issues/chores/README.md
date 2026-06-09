@@ -7,6 +7,7 @@
 | Chore | 标题 | 关联 Feature | 状态 |
 |-------|------|-------------|------|
 | [1](chore-1-agentarts-deploy/issue.md) | 首次部署至 AgentArts Runtime 生产环境 | feature-9-deployment | backlog |
+| [3](chore-3-docs-tests-maintenance-workflow/issue.md) | 新增 Docs/Tests 维护工作流 | — | backlog |
 
 ## 相关文档
 
