@@ -30,8 +30,8 @@ flowchart LR
     CORS --> Runtime[AgentArts Runtime<br/>FastAPI :8080]
     Runtime -->|/ping| Ping[Health Check]
     Runtime -->|/invocations| Inv[Sync Invoke]
-    Runtime -->|/api/chat/stream| SSE[SSE 流式对话]
-    Runtime -->|/playground/| PG[Playground]
+    Runtime -->|/invocations/stream| SSE[SSE 流式对话]
+    Runtime -->|/invocations/playground| PG[Playground]
 ```
 
 ## 项目结构
