@@ -70,8 +70,16 @@ jobs:
         run: |
           # Clean up stale dist/ directory from old uploads
           obsutil rm obs://personal-assistant-web-chat/dist/ -r -f || true
-          obsutil cp dist/index.html obs://personal-assistant-web-chat/index.html -f -acl=public-read
+          obsutil cp dist/index.html obs://personal-assistant-web-chat/index.html -f -acl=public-read -contentType=text/html
           obsutil cp dist/assets/ obs://personal-assistant-web-chat/assets/ -r -f -acl=public-read
+          # Auto-set content types for assets (obsutil defaults to octet-stream otherwise)
+          for f in $(obsutil ls obs://personal-assistant-web-chat/assets/ -r -s | awk '{print $5}'); do
+            case "$f" in
+              *.js)   obsutil set-object-property "$f" --contentType="application/javascript" || true ;;
+              *.css)  obsutil set-object-property "$f" --contentType="text/css" || true ;;
+              *.woff2) obsutil set-object-property "$f" --contentType="font/woff2" || true ;;
+            esac
+          done
           echo "✅ Uploaded to obs://personal-assistant-web-chat/"
 
       - name: Set cache headers
