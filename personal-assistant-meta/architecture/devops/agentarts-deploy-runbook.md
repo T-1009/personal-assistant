@@ -23,7 +23,7 @@
 | P7 | agentarts CLI 已安装 | `agentarts --version` | 输出版本号 |
 | P8 | uv.lock 存在 | `ls personal-assistant-service/uv.lock` | 文件存在 |
 | P9 | openssl 已安装 | `openssl version` | 输出版本信息（SWR 密码生成依赖） |
-| P10 | SWR 域名可达 | `curl -s -o /dev/null -w '%{http_code}' https://swr.cn-southwest-2.myhuaweicloud.com` | 200 或 401（可达） |
+| P10 | SWR 域名可达 | `curl -s -o /dev/null -w '%{http_code}' https://swr.cn-southwest-2.myhuaweicloud.com/v2/` | 401（可达，Registry API 需认证） |
 | P11 | **Node.js 已安装** | `node --version` | v18+ 或 v20+（前端构建需要） |
 | P12 | **npm 已安装** | `npm --version` | v9+ |
 | P13 | **obsutil CLI 可用** | `obsutil version` | 输出版本号（华为云 OBS 命令行工具） |
@@ -179,8 +179,8 @@ agentarts --version
 openssl version
 
 # 1.8 验证 SWR 域名可达
-curl -s -o /dev/null -w '%{http_code}' https://swr.cn-southwest-2.myhuaweicloud.com
-# 期望输出：200 或 401（可达）
+curl -s -o /dev/null -w '%{http_code}' https://swr.cn-southwest-2.myhuaweicloud.com/v2/
+# 期望输出：401（可达，Registry API 需认证；404 也说明连通性正常）
 
 # 1.9 验证 Node.js 和 npm 可用（前端构建）
 node --version  # 期望 v18+ 或 v20+
@@ -215,12 +215,12 @@ docker build --platform linux/arm64 \
   .
 
 # 如果在 X86 机器上，使用 buildx + QEMU：
-# docker buildx create --use --name arm64-builder
-# docker buildx build --platform linux/arm64 \
-#   --load \
-#   -f personal-assistant-service/Dockerfile \
-#   -t swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest \
-#   .
+docker buildx create --use --name arm64-builder
+docker buildx build --platform linux/arm64 \
+  --load \
+  -f personal-assistant-service/Dockerfile \
+  -t swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest \
+  .
 
 # 2.3 验证镜像构建成功
 docker images | grep agent_personal_assistant
