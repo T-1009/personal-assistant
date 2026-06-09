@@ -88,7 +88,7 @@ graph TD
     EM --> ER
 ```
 
-共 22 个 Agent。Meta 领域下的 personal-assistant-meta-service-dev / personal-assistant-meta-client-dev 与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：personal-assistant-e2e-manager 调度 personal-assistant-e2e-tester 编写测试、personal-assistant-e2e-reviewer 审查测试代码。
+共 26 个 Agent。Meta 领域下的 personal-assistant-meta-service-dev / personal-assistant-meta-client-dev 与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：personal-assistant-e2e-manager 调度 personal-assistant-e2e-tester 编写测试、personal-assistant-e2e-reviewer 审查测试代码。Issue Analyzer 独立负责 issue 分析/创建/更新，通过三个不同模型的咨询 sub-agent 获取多角度建议。
 
 ### 与 AnyWear 的结构差异
 
@@ -322,6 +322,10 @@ permission:
 | `personal-assistant-e2e-manager` | allow | — | — | — | allow | — | — | 纯调度，管理 E2E Tester → Reviewer 闭环 |
 | `personal-assistant-e2e-tester` | — | allow | allow | allow | — | — | — | primary agent（mode: all），需要完整工具链；skill 用于加载 hermes-e2e-testing。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
 | `personal-assistant-e2e-reviewer` | — | deny | — | — | — | — | — | 审查 E2E 测试代码；审计 stale 测试移除 |
+| `personal-assistant-issue-analyzer` | allow | allow | — | — | allow | allow | allow | 管理 issue；task 用于 delegate 咨询 sub-agent；edit 用于创建/更新 issue 文件；webfetch/websearch 用于外部参考 |
+| `personal-assistant-issue-analyzer-deepseek` | — | — | — | — | — | allow | allow | 纯咨询，只读。webfetch/websearch 用于外部文档 |
+| `personal-assistant-issue-analyzer-gemini` | — | — | — | — | — | allow | allow | 纯咨询，只读。webfetch/websearch 用于外部文档 |
+| `personal-assistant-issue-analyzer-gpt` | — | — | — | — | — | allow | allow | 纯咨询，只读。webfetch/websearch 用于外部文档 |
 
 ### 按角色分类
 
@@ -504,5 +508,9 @@ OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_ta
 | personal-assistant-e2e-manager | `personal-assistant-e2e-manager.md` |
 | personal-assistant-e2e-tester | `personal-assistant-e2e-tester.md` |
 | personal-assistant-e2e-reviewer | `personal-assistant-e2e-reviewer.md` |
+| personal-assistant-issue-analyzer | `personal-assistant-issue-analyzer.md` |
+| personal-assistant-issue-analyzer-deepseek | `personal-assistant-issue-analyzer-deepseek.md` |
+| personal-assistant-issue-analyzer-gemini | `personal-assistant-issue-analyzer-gemini.md` |
+| personal-assistant-issue-analyzer-gpt | `personal-assistant-issue-analyzer-gpt.md` |
 
-命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester}。例外：`personal-assistant-committer.md`（统一 Committer，无 domain 限定）。
+命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester}。例外：`personal-assistant-committer.md`（统一 Committer，无 domain 限定）和 `personal-assistant-issue-analyzer*.md`（独立 issue 分析 Agent 及其咨询 sub-agent）。
