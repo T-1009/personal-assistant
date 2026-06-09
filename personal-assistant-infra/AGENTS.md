@@ -15,8 +15,8 @@
 | 文档 | 内容 |
 |------|------|
 | `architecture/devops/cicd.md` | CI/CD 流水线、分层部署策略、IaC 触发时机 |
-| `architecture/ADR/ADR-006-iac-cdktf-typescript.md` | CDKTF 选型理由、技术对比、目录结构 |
-| `issues/features/feature-9-deployment/issue.md` | 部署上线任务（含 IaC 相关子任务） |
+| `architecture/ADR/ADR-006-iac-cdktf-typescript.md` | OpenTofu + HCL 选型理由、技术对比、迁移记录 |
+| `issues/refactor/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md` | CDKTF → OpenTofu + HCL 迁移任务 |
 
 ### 与 `agentarts_config.yaml` 的关系
 
@@ -24,44 +24,38 @@
 
 ```
 personal-assistant-service/.agentarts_config.yaml  → AgentArts 层（容器/认证/可观测）
-personal-assistant-infra/**/*.ts                    → 华为云基础资源层（OBS/RDS/IAM/VPC/EIP/CDN）
+personal-assistant-infra/*.tf                       → 华为云基础资源层（OBS/RDS/IAM/VPC/EIP/CDN）
 ```
 
 ## 技术栈
 
 | 项 | 选择 | 依据 |
 |----|------|------|
-| **IaC 框架** | CDK for Terraform (CDKTF) | ADR-006 |
-| **语言** | TypeScript | 编译期类型检查、IDE 支持、团队经验匹配 |
-| **Provider** | `@cdktf-provider-huaweicloud` | HuaweiCloud Terraform Provider |
-| **包管理** | npm | CDKTF 生态标准 |
-| **测试** | Jest / Vitest | CDKTF 单元测试 |
+| **IaC 工具** | OpenTofu + HCL | ADR-006（修订 2026-06-09），Linux 基金会托管，100% Terraform 兼容 |
+| **语言** | HCL（HashiCorp Configuration Language） | IaC 行业标准，1-2 天上手 |
+| **Provider** | `huaweicloud/huaweicloud` | HuaweiCloud Terraform Provider |
+| **状态管理** | 本地 `.tfstate`（短期）；OBS backend（长期目标） | 同原 CDKTF 策略 |
+| **验证** | `tofu validate` + `tofu plan` | CLI 内置 |
 
 ## 目录结构
 
 ```
 personal-assistant-infra/
-├── main.ts                 # CDKTF 入口（App + Stack 注册）
-├── stacks/
-│   ├── pa-stack.ts         # PersonalAssistantStack — 主 Stack（OBS bucket + provider）
-│   └── __tests__/
-│       └── pa-stack.test.ts # Unit tests (Jest + cdktf snapshot)
-├── constructs/
-│   └── .gitkeep            # 可复用 Construct（当前为占位符）
-├── package.json            # cdktf + constructs + devDependencies
-├── package-lock.json       # 依赖锁文件
-├── tsconfig.json           # TypeScript 配置（ES2022, commonjs, strict）
-├── cdktf.json              # CDKTF provider 配置（huaweicloud/huaweicloud）
-├── jest.config.js          # Jest 测试配置（ts-jest preset）
-├── .gitignore              # 排除 cdktf.out/ .gen/ coverage/ node_modules/ dist/
-├── AGENTS.md               # 本文件
-├── README.md               # 快速开始与运维手册
-└── .gen/                   # 自动生成的 provider bindings（gitignored）
+├── main.tf                # Terraform/Provider 配置 + Backend
+├── obs.tf                 # OBS Bucket 资源（web chat 静态托管）
+├── variables.tf           # 变量声明（ak, sk, region）
+├── outputs.tf             # Stack outputs（website_endpoint 等）
+├── terraform.tfvars       # 变量赋值（gitignored，含敏感信息）
+├── .terraform.lock.hcl    # Provider 版本锁（git tracked）
+├── .terraform/            # Provider 缓存（gitignored）
+├── .gitignore
+├── AGENTS.md              # 本文件
+└── README.md              # 快速开始与运维手册
 ```
 
 ## 触发时机
 
-以下场景出现任意一个，就需要在 `personal-assistant-infra/` 中编写 IaC：
+以下场景出现任意一个，就需要在 `personal-assistant-infra/` 中编写 HCL：
 
 | 场景 | 需要的资源 |
 |------|-----------|
@@ -74,39 +68,47 @@ personal-assistant-infra/
 ## 常用命令
 
 ```bash
-# 安装依赖
-cd personal-assistant-infra && npm install
+# 安装 OpenTofu（macOS）
+brew install opentofu
 
-# 生成/更新 provider bindings（首次或 provider 版本变更时）
-npx cdktf get
+# 初始化（首次或 provider 版本变更时）
+cd personal-assistant-infra
+tofu init
 
-# TypeScript 类型检查
-npx tsc --noEmit
+# 语法验证
+tofu validate
 
-# 生成 Terraform JSON（检查语法和类型）
-npx cdktf synth
+# 格式检查
+tofu fmt -check
+
+# 自动格式化
+tofu fmt
 
 # 查看变更计划（需要 HuaweiCloud 凭据）
-npx cdktf diff
+tofu plan
 
 # 执行部署（需要 HuaweiCloud 凭据）
-npx cdktf deploy
+tofu apply
 
-# 运行测试
-npm test
+# 导入已有资源（从 CDKTF 迁移时）
+tofu import huaweicloud_obs_bucket.web_chat personal-assistant-web-chat
 ```
 
 ## 开发约定
 
-- **Stack 命名**：一个环境一个 Stack（如 `pa-stack`），通过 `context` 区分 dev/staging/prod
+- **文件拆分**：按资源类型拆分 `.tf` 文件（`main.tf`, `obs.tf`, `rds.tf` 等），`main.tf` 只放 provider 和 backend 配置
 - **Resource 命名**：使用 kebab-case，带 `pa-` 前缀避免与平台资源冲突
-- **敏感信息**：禁止硬编码，通过环境变量或 Terraform variables 注入（标记 `sensitive = true`）
-- **状态管理**：Terraform state 当前为本地存储。OBS backend（`pa-terraform-state` bucket）为最终目标，需在首次部署后迁移（chicken-and-egg 问题）。见 `stacks/pa-stack.ts` 中的 TODO 注释。
-- **Outputs**：跨 Stack 引用使用 Stack Outputs，供 Service 配置读取（如 RDS endpoint、OBS bucket name）
-- **变更流程**：修改 IaC → `cdktf synth`（本地验证）→ `cdktf diff`（查看变更）→ PR Review → `cdktf deploy`
+- **敏感信息**：禁止硬编码。通过 `variables.tf` 声明变量（标记 `sensitive = true`），`terraform.tfvars` 赋值（gitignored），或通过环境变量 `TF_VAR_*` 注入
+- **状态管理**：Terraform state 当前为本地存储。OBS backend（`pa-terraform-state` bucket）为最终目标，需在首次部署后迁移（chicken-and-egg 问题）
+- **Outputs**：重要的资源属性通过 `outputs.tf` 导出，供 Service 配置读取（如 RDS endpoint、OBS bucket name）
+- **变更流程**：修改 `.tf` → `tofu validate`（语法验证）→ `tofu plan`（查看变更）→ PR Review → `tofu apply`
 
 ## 当前管理的资源
 
 | Resource | Terraform 类型 | Name | Region | 配置 |
 |----------|---------------|------|--------|------|
 | OBS Bucket | `huaweicloud_obs_bucket` | `personal-assistant-web-chat` | `cn-southwest-2` | ACL=public-read, versioning=true, static website hosting (SPA: error_document=index.html) |
+
+## 迁移记录
+
+2026-06-09：从 CDKTF (TypeScript) 迁移到 OpenTofu + HCL。动机：CDKTF 被 HashiCorp 归档（2025-12-10），社区 fork CDK Terrain 存活风险过高。详见 [Refactor 6](../personal-assistant-meta/issues/refactor/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)。

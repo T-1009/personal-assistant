@@ -101,7 +101,7 @@ MaaS 的模型部署和 API Key 管理目前通过控制台操作，没有声明
 
 | 场景 | 需要的资源 |
 |------|-----------|
-| Web Chat 前端需要静态托管 | ✅ OBS Bucket + CDN 加速域名（已实现，由 `personal-assistant-infra/` CDKTF 管理；部署操作见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)） |
+| Web Chat 前端需要静态托管 | ✅ OBS Bucket + CDN 加速域名（已实现，由 `personal-assistant-infra/` OpenTofu + HCL 管理；部署操作见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)） |
 | 用户-渠道 ID 映射需要持久化存储 | RDS（PostgreSQL） |
 | OfficeClaw 需要固定公网入口 | EIP + 带宽配置 |
 | Identity STS Provider 需要授权 | IAM Agency / Role / Policy |
@@ -135,67 +135,55 @@ Terraform CLI（本地）     RFS（华为云控制台）
        华为云 API（同一套）
 ```
 
+#### OpenTofu vs Terraform CLI
+
+2023 年 HashiCorp 将 Terraform 从 MPL 切换为 BUSL（Business Source License），不再属于真正的开源。**OpenTofu** 是 Linux 基金会托管的 MPL 协议 fork，100% 兼容 Terraform 且真正开源中立。
+
+本项目选择 **OpenTofu**（`tofu` CLI），命令等价于 `terraform`。
+
 #### 选哪个？
 
-| 因素 | Terraform CLI | RFS |
+| 因素 | OpenTofu CLI | RFS |
 |------|--------------|-----|
 | **语法** | HCL | HCL（同一套） |
 | **状态管理** | 自己管（OBS backend） | RFS 自动托管 |
 | **可视化** | 无 | 拖拽编辑器 |
-| **本地测试** | ✅ `terraform plan` | ❌ 控制台操作 |
+| **本地测试** | ✅ `tofu plan` | ❌ 控制台操作 |
 | **CI/CD 集成** | ✅ GitHub Actions 等 | ⚠️ 需调 RFS API |
 | **社区生态** | ✅ 模块市场、StackOverflow | ❌ 仅华为云文档 |
-| **学习资源** | 丰富 | 较少 |
+| **许可证** | MPL（真正开源） | — |
+| **学习资源** | 丰富（复用 Terraform 生态） | 较少 |
 
-**推荐 Terraform CLI**。日常开发 `plan`/`apply` 在本地跑，CI 中也更容易集成。如果未来公司有统一管控要求，迁到 RFS 只是在控制台上传同一份 `.tf` 文件，零成本。
+**推荐 OpenTofu CLI**。日常开发 `plan`/`apply` 在本地跑，CI 中也更容易集成。如果未来公司有统一管控要求，迁到 RFS 只是在控制台上传同一份 `.tf` 文件，零成本。
 
-#### CDK：用 Python 写基础设施
+#### 为什么不用 CDK（CDKTF / CDK Terrain）
 
-华为云没有自研 CDK（像 AWS CDK 那样），但可以用 **CDK for Terraform (CDKTF)** —— HashiCorp 官方的 CDK 框架，支持 `huaweicloud` provider。允许用 Python / TypeScript / Java / Go / C# 定义云资源，编译为 Terraform JSON。
+| CDK 方案 | 评估结果 |
+|----------|----------|
+| **CDKTF（原版）** | ❌ HashiCorp 于 2025-12-10 归档，停止所有维护 |
+| **CDK Terrain (cdktn)** | ❌ 社区 fork < 6 个月，ThoughtWorks Radar "Assess"，长期存活风险高 |
 
-```python
-# infra/main.py — 用 Python 定义 OBS 桶
-from cdktf import App, TerraformStack
-from imports.huaweicloud.obs_bucket import ObsBucket
+**核心原因**：CDK-for-Terraform 方向本身已被市场否定——CDKTF 被归档的根本原因是"未能找到产品与市场契合点"（HashiCorp 官方声明）。在当前项目规模（1 个 OBS Bucket）下，CDK 的类型安全和抽象能力没有实际收益，而 HCL 直写更简单直接——1-2 天上手，99% Terraform 教程直接复用。
 
-class PersonalAssistantStack(TerraformStack):
-    def __init__(self, scope, id):
-        super().__init__(scope, id)
-        ObsBucket(self, "web_chat",
-            bucket="personal-assistant-web-chat",
-            acl="public-read"
-        )
-
-app = App()
-PersonalAssistantStack(app, "pa")
-app.synth()
-```
-
-| CDK 方式 | 适合谁 |
-|----------|--------|
-| **CDKTF (Python)** | Python 技术栈团队，想用代码而不是 HCL 管基础设施 |
-| **Terraform HCL** | 大多数团队，声明式语言，文档和示例最丰富 |
-
-考虑到你有 AWS CDK 经验，CDKTF 上手会很快。但项目初期资源少（可能就一个 OBS + RDS），用 HCL 更直接，不需要引入额外依赖。两者不互斥，可以混用。
-
-### 4.3 Terraform + AgentArts 的共存
+### 4.3 OpenTofu + AgentArts 的共存
 
 两者互不冲突，管理的是不同层的资源：
 
 ```
-infra/
-├── main.tf              # Provider 配置 + Backend
+personal-assistant-infra/
+├── main.tf              # terraform {} + provider "huaweicloud" {}
 ├── obs.tf               # OBS 桶（Web Chat 前端托管）
 ├── rds.tf               # RDS 实例（用户映射表）
 ├── iam.tf               # IAM 角色/策略
-└── variables.tf         # 环境变量
+├── variables.tf         # 变量声明
+└── outputs.tf           # 输出值
 
 agentarts_config.yaml    # AgentArts 层（容器/认证/可观测）
 ```
 
-部署时互不影响：`terraform apply` 管华为云资源，`agentarts launch` 管 Agent 容器。
+部署时互不影响：`tofu apply` 管华为云资源，`agentarts launch` 管 Agent 容器。
 
-### 4.4 示例：未来可能的 Terraform 配置
+### 4.4 示例：OpenTofu 配置（当前已实现）
 
 ```hcl
 terraform {
@@ -252,4 +240,4 @@ resource "huaweicloud_rds_instance" "user_mapping" {
 |------|----------|----------|----------|
 | Layer 1 — AgentArts | `agentarts_config.yaml` | `agentarts launch` | 每次代码变更 |
 | Layer 2 — MaaS | 控制台手动 | 无（REST API 可备选） | 极低（模型选型是 ADR 级决策） |
-| Layer 3 — 基础资源 | 尚未需要 | Terraform（推荐） | 首次创建 + 偶尔变更 |
+| Layer 3 — 基础资源 | OpenTofu + HCL（`personal-assistant-infra/`） | `tofu apply` | 首次创建 + 偶尔变更 |

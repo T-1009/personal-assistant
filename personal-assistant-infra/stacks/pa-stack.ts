@@ -13,6 +13,8 @@ export class PersonalAssistantStack extends TerraformStack {
 
     new HuaweicloudProvider(this, "huaweicloud", {
       region: "cn-southwest-2",
+      accessKey: process.env.HUAWEICLOUD_SDK_AK,
+      secretKey: process.env.HUAWEICLOUD_SDK_SK,
     });
 
     const webChatBucket = new ObsBucket(this, "web-chat", {
