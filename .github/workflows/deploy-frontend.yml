@@ -55,7 +55,7 @@ jobs:
           curl -fsSL "https://obs-community.obs.cn-north-1.myhuaweicloud.com/obsutil/current/obsutil_linux_${OBSUTIL_ARCH}.tar.gz" -o obsutil.tar.gz
           tar -xzf obsutil.tar.gz
           sudo mv obsutil_linux_${OBSUTIL_ARCH}_*/obsutil /usr/local/bin/obsutil
-          rm -rf obsutil.tar.gz obsutil_linux_${OBSUTIL_ARCH}_*
+          sudo rm -rf obsutil.tar.gz obsutil_linux_${OBSUTIL_ARCH}_*
           obsutil version
 
       - name: Configure obsutil
