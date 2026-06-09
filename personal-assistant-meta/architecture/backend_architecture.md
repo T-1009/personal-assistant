@@ -57,8 +57,8 @@ AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求，G
 ```
 浏览器/客户端 ──→ Gateway (defaultgw-xxx...) ──→ 容器 :8080
                        │
-                  PREFIX_MATCH: /invocations/* → ✅ 转发
-                  其他路径: /playground, /api/* → ❌ 404 No matching policy found
+                   PREFIX_MATCH: /invocations/* → ✅ 转发
+                   其他路径（非 /invocations/* 前缀）→ ❌ 404 No matching policy found
 ```
 
 **关键约束**：
