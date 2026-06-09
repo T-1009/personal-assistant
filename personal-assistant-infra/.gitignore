@@ -1,3 +1,5 @@
+.gen
+cdktf.out/
 # Local .terraform directories
 .terraform/
 
