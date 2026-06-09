@@ -17,18 +17,17 @@ flowchart TB
         OC["OfficeClaw<br/>桌面客户端"]
     end
 
-    subgraph Backend["☁️ 后端 — FastAPI（详见 backend_architecture.md）"]
-        direction LR
-        Routes["路由层<br/>/ping /invocations<br/>/feishu/webhook<br/>/auth/callback<br/>/chat/stream"]
-        Handler["Agent 处理逻辑<br/>deepagents 编排"]
-        SDK["agentarts-sdk<br/>Memory / Identity / Sandbox"]
-    end
-
     subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
+        APIGW["API Gateway<br/>defaultgw-xxx...<br/>IAM 签名认证<br/>仅转发 /invocations/*"]
+        subgraph Container["容器 :8080"]
+            Routes["FastAPI 路由层<br/>/ping /invocations<br/>/invocations/stream<br/>/invocations/playground"]
+            Handler["Agent 处理逻辑<br/>deepagents 编排"]
+            SDK["agentarts-sdk<br/>Memory / Identity / Sandbox"]
+        end
         MemorySvc["Memory Service"]
         IdentitySvc["Identity Service"]
         SandboxSvc["Sandbox Service"]
-        MCPGW["MCP Gateway"]
+        MCPGW["MCP Gateway<br/>API → MCP Tool 转换"]
     end
 
     subgraph External["外部服务"]
@@ -37,9 +36,10 @@ flowchart TB
         InternalAPI["企业内部 API"]
     end
 
-    WebChat -->|"SSE + OAuth"| Routes
-    Feishu -->|"Webhook"| Routes
-    OC -->|"AgentArts 转发"| Routes
+    WebChat -->|"/invocations"| APIGW
+    Feishu -->|"/invocations"| APIGW
+    OC -->|"/invocations"| APIGW
+    APIGW -->|"转发"| Routes
     Routes --> Handler
     Handler --> SDK
     SDK --> MemorySvc
@@ -54,8 +54,9 @@ flowchart TB
 | 层 | 负责 | 详细文档 |
 |----|------|----------|
 | **前端** | 消息通道、用户交互界面 | `frontend_architecture.md` |
-| **后端** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
-| **平台** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
+| **API Gateway** | IAM 签名认证、路由转发（仅 `/invocations/*`） | `cloud-service/agentarts.md` §9 |
+| **后端（容器）** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
+| **平台服务** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
 
 ### 1.2 技术选型
 
@@ -97,8 +98,8 @@ flowchart LR
         Handler["Agent 处理逻辑"]
     end
 
-    WebChat -->|"SSE + OAuth"| Routes
-    Feishu -->|"Webhook 事件"| Routes
+    WebChat -->|"POST /invocations"| Routes
+    Feishu -->|"POST /invocations"| Routes
     OC -->|"AgentArts /invocations"| Routes
     Routes --> Handler
 ```
@@ -357,7 +358,7 @@ async def invoke(request: Request):
     return {"response": result}
 ```
 
-不再使用 `AgentArtsRuntimeApp` 和 `@app.entrypoint`，改用标准 FastAPI 路由。平台层面完全兼容，只要容器在 8080 提供 `/ping` + `/invocations` 即可。
+不再使用 `AgentArtsRuntimeApp` 和 `@app.entrypoint`，改用标准 FastAPI 路由。平台层面完全兼容——只要容器在 8080 提供 `/ping`（平台内部健康检查）和 `/invocations`（Gateway 转发入口），并启用 `url_match_type: PREFIX_MATCH` 以支持 `/invocations/*` 子路径。详见 [backend_architecture.md §2.1](backend_architecture.md#21-agentarts-gateway-路由约束)。
 
 ### 5.3 Agent 数据流
 
