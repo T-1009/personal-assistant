@@ -51,6 +51,8 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
           AWS_DEFAULT_REGION: cn-southwest-2
         run: |
+          aws configure set s3.addressing_style virtual
+
           aws s3 sync dist/ s3://personal-assistant-web-chat/ \
             --endpoint-url=https://obs.cn-southwest-2.myhuaweicloud.com \
             --acl public-read \
