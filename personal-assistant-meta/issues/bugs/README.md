@@ -10,6 +10,7 @@
 | [2](bug-2-spa-fallback-not-working/issue.md) | SPA Fallback Not Working (StaticFiles html=True) | feature-1.1-web-chat-frontend | backlog |
 | [4](bug-4-cwd-sensitive-chainlit-mount/issue.md) | `mount_chainlit` relative path breaks module import from outside SERVICE_DIR | feature-1.4-chainlit-playground | backlog |
 | [5](bug-5-env-merge-prevents-key-removal-in-e2e-tests/issue.md) | E2E Test Environment Merge Prevents Removing Environment Variables | feature-1-agent-skeleton | backlog |
+| [7](bug-7-agents-not-updating-docs/issue.md) | Agent 开发后未同步更新 AGENTS.md / README.md | — | backlog |
 
 ## 已解决 Bug
 
