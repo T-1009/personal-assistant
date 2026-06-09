@@ -1,42 +1,39 @@
 default_agent: personal-assistant
-
 agents:
   personal-assistant:
     base:
       name: personal-assistant
-      entrypoint: "agent:app"
-      dependency_file: "pyproject.toml"
-      platform: "linux/arm64"
-      language: "python3"
-      base_image: "ghcr.io/astral-sh/uv:python3.12-bookworm"
-      region: "cn-southwest-2"
-
+      entrypoint: agent:app
+      dependency_file: pyproject.toml
+      region: cn-southwest-2
+      platform: linux/arm64
+      language: python3
+      base_image: ghcr.io/astral-sh/uv:python3.12-bookworm
+      container_runtime: docker
     swr_config:
-      organization: "personal-assistant-org"
-      repository: "agent_personal_assistant"
       organization_auto_create: true
+      organization: personal-assistant-org
       repository_auto_create: true
-
+      repository: agent_personal_assistant
     runtime:
+      arch: arm64
+      agent_gateway_id: null
+      agent_id: 5a12629d-f0b4-4fdb-a39b-96dbdf987cc5
+      execution_agency_name: null
       invoke_config:
         protocol: HTTP
         port: 8080
-
+        file_transfer_config: null
+        url_match_type: ACCURATE_MATCH
       network_config:
         network_mode: PUBLIC
-
-      environment_variables:
-        - key: MAAS_API_KEY
-          value: "<MaaS API Key>"
-        - key: DEEPSEEK_API_KEY
-          value: "<DeepSeek 官方 API Key>"
-        - key: MODEL_API_KEY
-          value: "<your-maas-api-key>"
-        - key: MODEL_NAME
-          value: "deepseek-v4-pro"
-        - key: MODEL_URL
-          value: "https://api.modelarts-maas.com/openai/v1"
-
+        vpc_config:
+          vpc_id: null
+          subnet_id: null
+          security_group_id: []
+      identity_configuration:
+        authorizer_type: IAM
+        authorizer_configuration: null
       observability:
         tracing:
           enabled: true
@@ -44,14 +41,20 @@ agents:
           enabled: true
         logs:
           enabled: true
-
       artifact_source:
         url: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest
-        commands:
-          - "uv sync --frozen --no-dev"
-
+        commands: []
+      environment_variables:
+      - key: DEEPSEEK_API_KEY
+        value: xxxxxxxxxxxxxxxxxxxxxxx
+      - key: MODEL_API_KEY
+        value: xxxxxxxxxxxxxxxxxxxxxxx
+      - key: MODEL_NAME
+        value: deepseek-v4-pro
+      - key: MODEL_URL
+        value: https://api.modelarts-maas.com/openai/v1
       tags:
-        - key: app
-          value: personal-assistant
-        - key: env
-          value: dev
+      - key: app
+        value: personal-assistant
+      - key: env
+        value: dev

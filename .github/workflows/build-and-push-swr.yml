@@ -3,6 +3,9 @@ name: Build and Push to SWR
 on:
   push:
     branches: [main]
+    paths:
+      - "personal-assistant-service/**"
+      - ".github/workflows/build-and-push-swr.yml"
   workflow_dispatch:  # 手动触发
 
 jobs:

@@ -28,6 +28,7 @@
 | P12 | **npm 已安装** | `npm --version` | v9+ |
 | P13 | **obsutil CLI 可用** | `obsutil version` | 输出版本号（华为云 OBS 命令行工具） |
 | P14 | 前端项目存在 | `ls personal-assistant-client/package.json` | 文件存在 |
+| P15 | **`runtime.arch` 一致性** | `grep -A10 'runtime:' personal-assistant-service/.agentarts_config.yaml \| grep 'arch:'` | 无此字段，或值为 `arm64`（不允许 `x86_64`） |
 
 ### 1.2 人工需提供（凭据/密钥）
 
@@ -194,6 +195,12 @@ obsutil version
 export HUAWEICLOUD_SDK_AK="<your-ak>"
 export HUAWEICLOUD_SDK_SK="<your-sk>"
 echo $HUAWEICLOUD_SDK_AK  # 确认已设置
+
+# 1.12 确认 runtime.arch 与镜像架构一致（⚠️ 常见陷阱）
+grep -A10 'runtime:' personal-assistant-service/.agentarts_config.yaml | grep 'arch:'
+# 期望输出：无此字段（继承 base.platform: linux/arm64），或值为 arch: arm64
+# 如果值为 arch: x86_64：ARM64 镜像会被调度到 x86 节点，runc 直接拒绝启动
+# → 将 arch: x86_64 改为 arch: arm64，或删除该行
 ```
 
 ---
@@ -852,7 +859,21 @@ obsutil cp /path/to/old-dist/ obs://personal-assistant-web-chat/ -r -f
   2. 确保前端代码使用 `import.meta.env.VITE_API_BASE_URL` 拼接 API URL
   3. 如果首次部署尚未实现此机制，可在构建时临时硬编码 Runtime 域名
 
-### 15.12 前端缓存策略
+### 15.12 `runtime.arch` 与镜像架构不一致
+
+- **问题**：`.agentarts_config.yaml` 中 `runtime.arch` 字段控制 AgentArts 将容器调度到哪种 CPU 架构的节点运行。如果设置为 `x86_64`，ARM64 镜像会被调度到 x86 节点，指令集不匹配导致 runc 直接拒绝启动。
+- **症状**：
+  - `agentarts invoke` 返回 `NA.30200: failed to start container`
+  - 日志中 `stdout="" stderr=""` — 进程根本没启动，无任何输出
+  - `OCI runtime create failed: empty msg in log file`
+- **排查**：
+  ```bash
+  grep -A10 'runtime:' personal-assistant-service/.agentarts_config.yaml | grep 'arch:'
+  ```
+- **解决**：将 `arch: x86_64` 改为 `arch: arm64`，或删除该行让它继承 `base.platform: linux/arm64`。修改后需重新 `agentarts launch` 部署。
+- **背景**：AgentArts 的鲲鹏 ARM 服务器运行 x86 镜像会直接报 `exec format error`，反之亦然。`base.platform` 声明的是**镜像**的 CPU 架构，`runtime.arch` 声明的是**调度目标节点**的 CPU 架构——两者必须一致。
+
+### 15.13 前端缓存策略
 
 - **问题**：`index.html` 被浏览器长期缓存，新版前端部署后用户仍看到旧版本。
 - **症状**：部署新版本后浏览器仍加载旧的 JS bundle references
@@ -861,7 +882,7 @@ obsutil cp /path/to/old-dist/ obs://personal-assistant-web-chat/ -r -f
   - JS/CSS bundle（含 content hash）设置 `Cache-Control: max-age=31536000, immutable`
   - 使用 content hash 是 Vite 默认行为，每次构建产生新文件名，天然打破缓存
 
-### 15.13 obsutil CLI 安装
+### 15.14 obsutil CLI 安装
 
 - **问题**：初次部署可能未安装 obsutil
 - **安装方法**：
@@ -883,7 +904,7 @@ obsutil cp /path/to/old-dist/ obs://personal-assistant-web-chat/ -r -f
   obsutil config -i="$HUAWEICLOUD_SDK_AK" -k="$HUAWEICLOUD_SDK_SK" -e="obs.cn-southwest-2.myhuaweicloud.com"
   ```
 
-### 15.14 Region 锁定
+### 15.15 Region 锁定
 
 - **重要**：AgentArts Runtime 和 OBS Bucket 均使用 `cn-southwest-2`（西南贵阳一）。所有操作（SWR、AgentArts、OBS）必须在此 Region 下进行。
 - **验证**：
