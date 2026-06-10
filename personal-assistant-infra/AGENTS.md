@@ -16,7 +16,7 @@
 |------|------|
 | `architecture/devops/cicd.md` | CI/CD 流水线、分层部署策略、IaC 触发时机 |
 | `architecture/ADR/ADR-006-iac-cdktf-typescript.md` | OpenTofu + HCL 选型理由、技术对比、迁移记录 |
-| `issues/refactor/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md` | CDKTF → OpenTofu + HCL 迁移任务 |
+| `issues/refactor/resolved/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md` | CDKTF → OpenTofu + HCL 迁移任务 |
 
 ### 与 `agentarts_config.yaml` 的关系
 
@@ -99,7 +99,7 @@ tofu import huaweicloud_obs_bucket.web_chat personal-assistant-web-chat
 - **文件拆分**：按资源类型拆分 `.tf` 文件（`main.tf`, `obs.tf`, `rds.tf` 等），`main.tf` 只放 provider 和 backend 配置
 - **Resource 命名**：使用 kebab-case，带 `pa-` 前缀避免与平台资源冲突
 - **敏感信息**：禁止硬编码。HuaweiCloud Provider 凭据通过原生环境变量 `HW_ACCESS_KEY` / `HW_SECRET_KEY` 注入，无需在 `variables.tf` 中声明。其他敏感变量可通过 `terraform.tfvars` 赋值（gitignored）或环境变量 `TF_VAR_*` 注入
-- **状态管理**：Terraform state 当前为本地存储。OBS backend（`pa-terraform-state` bucket）为最终目标，需在首次部署后迁移（chicken-and-egg 问题）
+- **状态管理**：Terraform state 存储在 OBS S3-compatible backend（`pa-terraform-state` bucket），CI 和本地共享远程 state
 - **Outputs**：重要的资源属性通过 `outputs.tf` 导出，供 Service 配置读取（如 RDS endpoint、OBS bucket name）
 - **变更流程**：修改 `.tf` → `tofu validate`（语法验证）→ `tofu plan`（查看变更）→ PR Review → `tofu apply`
 
@@ -108,7 +108,9 @@ tofu import huaweicloud_obs_bucket.web_chat personal-assistant-web-chat
 | Resource | Terraform 类型 | Name | Region | 配置 |
 |----------|---------------|------|--------|------|
 | OBS Bucket | `huaweicloud_obs_bucket` | `personal-assistant-web-chat` | `cn-southwest-2` | ACL=public-read, versioning=true, static website hosting (SPA: error_document=index.html) |
+| DNS Zone | `huaweicloud_dns_zone` | `resource-governance.cloud` | — | 华为云购买域名时自动创建 |
+| DNS Recordset | `huaweicloud_dns_recordset` | `chat.resource-governance.cloud` | — | CNAME → OBS website endpoint |
 
 ## 迁移记录
 
-2026-06-09：从 CDKTF (TypeScript) 迁移到 OpenTofu + HCL。动机：CDKTF 被 HashiCorp 归档（2025-12-10），社区 fork CDK Terrain 存活风险过高。详见 [Refactor 6](../personal-assistant-meta/issues/refactor/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)。
+2026-06-09：从 CDKTF (TypeScript) 迁移到 OpenTofu + HCL。动机：CDKTF 被 HashiCorp 归档（2025-12-10），社区 fork CDK Terrain 存活风险过高。详见 [Refactor 6](../personal-assistant-meta/issues/refactor/resolved/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)。
