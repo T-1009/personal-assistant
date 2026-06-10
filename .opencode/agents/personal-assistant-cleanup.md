@@ -178,7 +178,7 @@ Keep the code intelligence index up to date so impact analysis, context queries,
 
 ### Steps
 
-1. **Re-analyze**: `gitnexus analyze -skip-agents-md --skip-skills`
+1. **Re-analyze**: `gitnexus analyze --skip-agents-md --skip-skills`
    - This refreshes symbols, relationships, and execution flows.
    - `--skip-agents-md` and `--skip-skills` avoid unnecessary work for non-code files.
 
