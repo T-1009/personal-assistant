@@ -22,30 +22,13 @@ GET ... net::ERR_FAILED 404 (Not Found)
 
 ### 诊断（必须，修复前执行）
 
-- [ ] 运行 `agentarts runtime describe`，确认已部署的 Runtime 配置：
-  - `invoke_config.url_match_type` 是否为 `PREFIX_MATCH`
-  - Runtime 状态是否为 `Running`
-  - Gateway URL 是否与前端 `VITE_API_BASE_URL` 一致
-  - `CORS_ALLOWED_ORIGINS` 环境变量是否包含 `https://agentarts-personal-assistant.netlify.app`
-- [ ] 用 `curl` 验证 Gateway 路由（绕过浏览器 CORS）：
-  ```bash
-  # 测试精确匹配 /invocations (ACCURATE_MATCH 应能通过)
-  curl -s -X POST "$RUNTIME_DOMAIN/invocations" \
-    -H "Content-Type: application/json" \
-    -d '{"message":"hello"}'
-  # 预期 200
-
-  # 测试前缀匹配 /invocations/stream (需 PREFIX_MATCH)
-  curl -s -i "$RUNTIME_DOMAIN/invocations/stream?q=hello" \
-    -H "Origin: https://agentarts-personal-assistant.netlify.app" \
-    -H "Accept: text/event-stream"
-  # 预期 200 + Access-Control-Allow-Origin 头
-  ```
-- [ ] 用 AgentArts CLI 绕过 Gateway 直连验证：
-  ```bash
-  agentarts invoke --custom-path invocations/stream '{"message":"hello"}'
-  ```
-- [ ] 检查 AgentArts 控制台容器日志，确认无启动崩溃（ARM64 架构不匹配、OCI media types 错误等）
+- [x] ~~`agentarts runtime describe`~~ — **此命令不存在**。`agentarts runtime` 仅支持 `invoke`、`exec-command`、`upload-files`、`download-files`、`start-session`、`stop-session`。Runtime 配置需通过**华为云 AgentArts 控制台 → Runtime 详情页**查看。
+- [x] **诊断已执行**（2026-06-10），结果如下：
+  - `curl -i /invocations/stream?q=hello` → `404 {"code":404,"message":"No matching policy found"}` ← **确认**
+  - `agentarts invoke '{"message":"hello"}'`（精确路径 `/invocations`）→ ✅ 200 正常返回 ← **确认**
+  - `agentarts invoke --custom-path invocations/stream '{"message":"hello"}'` → ❌ `No matching policy found` ← **确认**
+  - **结论**：部署的 Runtime 中 `url_match_type` 为 `ACCURATE_MATCH`（默认值），精确路径 `/invocations` 正常，子路径 `/invocations/stream` 被 Gateway 拒绝
+- [ ] 在 AgentArts 控制台确认 `invoke_config.url_match_type` 实际值、Runtime 运行状态、`CORS_ALLOWED_ORIGINS` 环境变量
 
 ### 修复（根据诊断结果选择对应场景）
 
@@ -101,6 +84,16 @@ GET ... net::ERR_FAILED 404 (Not Found)
 
 ## Notes
 
+### 确认诊断结果 (2026-06-10)
+
+| 测试 | 命令 | 结果 |
+|------|------|------|
+| Gateway 子路径路由 | `curl -i /invocations/stream?q=hello` | ❌ `404 {"code":404,"message":"No matching policy found"}` |
+| Gateway 精确路径路由 | `agentarts invoke '{"message":"hello"}'` | ✅ 200 OK，正常返回 Agent 响应 |
+| CLI 子路径调用 | `agentarts invoke --custom-path invocations/stream ...` | ❌ `No matching policy found` |
+
+**确认**：部署的 Runtime 的 `url_match_type` 为 `ACCURATE_MATCH`（默认值），精确路径 `/invocations` 可正常转发到容器，但子路径 `/invocations/stream` 被 Gateway 拒绝。
+
 ### 技术分析总结
 
 以下结论综合了 DeepSeek、Gemini、GPT 三位 AI 顾问的并行分析：
@@ -121,15 +114,13 @@ GET ... net::ERR_FAILED 404 (Not Found)
 
 ```
 浏览器报 CORS + 404
-  ├─ agentarts runtime describe
-  │   ├─ url_match_type != PREFIX_MATCH → 场景 A：重新 launch
-  │   └─ url_match_type == PREFIX_MATCH
-  │       ├─ Runtime 状态 != Running → 场景 B：检查容器日志
-  │       └─ Runtime 状态 == Running
-  │           ├─ CORS_ALLOWED_ORIGINS 不包含 Netlify 域名 → 场景 C：修正 env var + relaunch
-  │           └─ CORS_ALLOWED_ORIGINS 正确 → 检查 IAM 鉴权是否需要调整
-  └─ curl /invocations/stream 返回 200
-      └─ 问题在浏览器端 → 检查 VITE_API_BASE_URL 是否正确
+  ├─ curl -i /invocations/stream?q=test → 404 {"message":"No matching policy found"}
+  │   └─ url_match_type 为 ACCURATE_MATCH → 场景 A：重新 launch
+  └─ curl -i /invocations/stream?q=test → 200
+      ├─ CORS_ALLOWED_ORIGINS 不包含 Netlify 域名 → 场景 C：修正 env var + relaunch
+      └─ CORS_ALLOWED_ORIGINS 正确 → 检查 IAM 鉴权是否需要调整
+
+注：agentarts runtime 无 describe 子命令，Runtime 配置需在 AgentArts 控制台查看
 ```
 
 ### 咨询顾问综合建议
