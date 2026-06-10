@@ -92,19 +92,14 @@ The full chain: Worker → Domain Manager → You → Human. If a domain Manager
 
 ### 0. REPO SETUP
 
-This is a **single Git repository**. We are in a **git worktree** — `main` is checked out in another worktree, so `git checkout main` / `git switch main` will not work here. No submodules to sync. Always start from the latest `main`.
+This is a **single Git repository**. We are in a **git worktree** — `main` is checked out in another worktree, so `git checkout main` / `git switch main` will not work here. No submodules to sync. Always start from the latest local `main` (NOT remote `origin/main`).
 
 1. **Identify the feature branch name.** Derive from the issue (e.g., `feat/user-auth`).
-2. **Fetch latest main.**
+2. **Create (or reset) the feature branch from the latest local `main`.** Use `-B` (not `-b`): creates the branch if it doesn't exist, or hard-resets it to `main` if it does — always a clean slate.
    ```bash
-   git fetch origin main
+   git checkout -B <feature-branch> main
    ```
-   If there are unrelated local changes, stash them first (`git stash`).
-3. **Create (or reset) the feature branch from the latest main.** Use `-B` (not `-b`): creates the branch if it doesn't exist, or hard-resets it to `origin/main` if it does — always a clean slate.
-   ```bash
-   git checkout -B <feature-branch> origin/main
-   ```
-4. Report: `Repo setup complete — on branch <feature-branch> (from main @ <latest-commit-short-hash>)`.
+3. Report: `Repo setup complete — on branch <feature-branch> (from local main @ <latest-commit-short-hash>)`.
 
 ### 1. META PHASE — Delegate to personal-assistant-meta-manager
 
