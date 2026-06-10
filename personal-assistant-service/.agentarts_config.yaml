@@ -32,8 +32,11 @@ agents:
           subnet_id: null
           security_group_id: []
       identity_configuration:
-        authorizer_type: IAM
-        authorizer_configuration: null
+        authorizer_type: KEY_AUTH
+        authorizer_configuration:
+          key_auth:
+            api_keys:
+              - "pa-dev-api-key-2026"
       observability:
         tracing:
           enabled: true

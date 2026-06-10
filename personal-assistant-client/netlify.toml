@@ -10,12 +10,6 @@
   command = "npm run build"
   publish = "dist"
 
-# API 代理 — 必须写在 SPA catch-all (/*) 之前
-[[redirects]]
-  from = "/invocations"
-  to = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/invocations"
-  status = 200
-
 [[redirects]]
   from = "/*"
   to = "/index.html"
