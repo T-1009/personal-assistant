@@ -40,8 +40,8 @@ jobs:
       - name: tofu plan
         working-directory: personal-assistant-infra
         env:
-          TF_VAR_ak: ${{ secrets.HUAWEICLOUD_SDK_AK }}
-          TF_VAR_sk: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          HW_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HW_SECRET_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
           TF_VAR_region: "cn-southwest-2"
         run: tofu plan -input=false
 
@@ -49,7 +49,7 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         working-directory: personal-assistant-infra
         env:
-          TF_VAR_ak: ${{ secrets.HUAWEICLOUD_SDK_AK }}
-          TF_VAR_sk: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+          HW_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HW_SECRET_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
           TF_VAR_region: "cn-southwest-2"
         run: tofu apply -auto-approve -input=false
