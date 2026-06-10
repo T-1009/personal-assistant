@@ -3,7 +3,9 @@
 # 将 chat.resource-governance.cloud CNAME 到 OBS 静态网站 endpoint，
 # 解决 OBS 默认域名强制 Content-Disposition: attachment 的问题。
 #
-# 域名在华为云购买时已自动创建 Zone，需先 import 再 apply。
+# Zone 由华为云在购买域名时自动创建，通过 CI import 步骤导入 state。
+# Zone ID (ff8080829e039233019eac11e92057f8) 来源于首次 apply 失败时
+# 华为云 API 错误响应中返回的已有 Zone UUID。
 
 resource "huaweicloud_dns_zone" "main" {
   name        = "resource-governance.cloud"
