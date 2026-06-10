@@ -13,7 +13,7 @@ OpenTofu + HCL 管理华为云基础资源。Provider 为 `huaweicloud/huaweiclo
 ## 前置条件
 
 - **OpenTofu CLI** ≥ 1.6（Linux 基金会托管，MPL 协议）：`brew install opentofu`
-- **华为云凭据**：AK/SK（通过 `terraform.tfvars` 或环境变量 `TF_VAR_ak` / `TF_VAR_sk` 注入）
+- **华为云凭据**：AK/SK（通过 Provider 原生环境变量 `HW_ACCESS_KEY` / `HW_SECRET_KEY` 注入）
 - **IAM 权限**：OBS FullAccess（当前必需）
 
 ## 快速开始
@@ -38,20 +38,16 @@ tofu plan
 ## 部署
 
 ```bash
-# 1. 配置华为云凭据（二选一）
-# 方式 A：通过 terraform.tfvars（推荐）
-cat > terraform.tfvars <<EOF
-ak = "your-ak"
-sk = "your-sk"
-EOF
-
-# 方式 B：通过环境变量
-export TF_VAR_ak="<your-ak>"
-export TF_VAR_sk="<your-sk>"
+# 1. 配置华为云凭据
+# HuaweiCloud Provider 通过原生环境变量读取凭据：
+export HW_ACCESS_KEY="<your-access-key>"
+export HW_SECRET_KEY="<your-secret-key>"
 
 # 2. 执行部署
 tofu apply
 ```
+
+> ⚠️ 如果你本地存在旧的 `terraform.tfvars` 文件且其中包含 `ak`/`sk` 变量赋值，请手动删除这些项——`ak`/`sk` 变量已不再声明，否则 `tofu plan` 会产生 "Undeclared variables" 警告。
 
 ## 销毁
 
@@ -78,9 +74,9 @@ curl -sI https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuawei
 personal-assistant-infra/
 ├── main.tf                # Terraform/Provider 配置 + Backend
 ├── obs.tf                 # OBS Bucket 资源（web chat 静态托管）
-├── variables.tf           # 变量声明（ak, sk, region）
+├── variables.tf           # 变量声明（region）
 ├── outputs.tf             # Stack outputs（website_endpoint 等）
-├── terraform.tfvars       # 变量赋值（gitignored，含敏感信息）
+├── terraform.tfvars       # 变量赋值（gitignored，不再用于 AK/SK 凭据）
 ├── .terraform.lock.hcl    # Provider 版本锁（git tracked）
 ├── .terraform/            # Provider 缓存（gitignored）
 ├── .gitignore

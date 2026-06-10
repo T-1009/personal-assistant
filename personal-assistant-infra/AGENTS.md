@@ -43,9 +43,9 @@ personal-assistant-infra/*.tf                       → 华为云基础资源层
 personal-assistant-infra/
 ├── main.tf                # Terraform/Provider 配置 + Backend
 ├── obs.tf                 # OBS Bucket 资源（web chat 静态托管）
-├── variables.tf           # 变量声明（ak, sk, region）
+├── variables.tf           # 变量声明（region）
 ├── outputs.tf             # Stack outputs（website_endpoint 等）
-├── terraform.tfvars       # 变量赋值（gitignored，含敏感信息）
+├── terraform.tfvars       # 变量赋值（gitignored，不再用于 AK/SK 凭据）
 ├── .terraform.lock.hcl    # Provider 版本锁（git tracked）
 ├── .terraform/            # Provider 缓存（gitignored）
 ├── .gitignore
@@ -98,7 +98,7 @@ tofu import huaweicloud_obs_bucket.web_chat personal-assistant-web-chat
 
 - **文件拆分**：按资源类型拆分 `.tf` 文件（`main.tf`, `obs.tf`, `rds.tf` 等），`main.tf` 只放 provider 和 backend 配置
 - **Resource 命名**：使用 kebab-case，带 `pa-` 前缀避免与平台资源冲突
-- **敏感信息**：禁止硬编码。通过 `variables.tf` 声明变量（标记 `sensitive = true`），`terraform.tfvars` 赋值（gitignored），或通过环境变量 `TF_VAR_*` 注入
+- **敏感信息**：禁止硬编码。HuaweiCloud Provider 凭据通过原生环境变量 `HW_ACCESS_KEY` / `HW_SECRET_KEY` 注入，无需在 `variables.tf` 中声明。其他敏感变量可通过 `terraform.tfvars` 赋值（gitignored）或环境变量 `TF_VAR_*` 注入
 - **状态管理**：Terraform state 当前为本地存储。OBS backend（`pa-terraform-state` bucket）为最终目标，需在首次部署后迁移（chicken-and-egg 问题）
 - **Outputs**：重要的资源属性通过 `outputs.tf` 导出，供 Service 配置读取（如 RDS endpoint、OBS bucket name）
 - **变更流程**：修改 `.tf` → `tofu validate`（语法验证）→ `tofu plan`（查看变更）→ PR Review → `tofu apply`

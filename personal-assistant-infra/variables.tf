@@ -1,8 +1,9 @@
 # ============================================================
 # 变量声明
 # ============================================================
-# 敏感变量（ak, sk）通过 terraform.tfvars（gitignored）赋值
-# 或通过环境变量 TF_VAR_ak / TF_VAR_sk 注入
+# region 等非敏感变量在此声明。
+# HuaweiCloud Provider 凭据（AK/SK）通过 Provider 原生环境变量
+# HW_ACCESS_KEY / HW_SECRET_KEY 注入，无需通过 Terraform 变量中转。
 
 variable "region" {
   description = "HuaweiCloud 区域"

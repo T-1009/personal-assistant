@@ -18,5 +18,5 @@ output "custom_domain" {
   value       = "https://chat.resource-governance.cloud"
 }
 
-# ⚠️ 注意：terraform.tfvars 文件包含敏感信息（AK/SK），已通过 .gitignore 排除。
-# 实际 variables.tf 中的 ak/sk 变量通过 .tfvars 或环境变量 TF_VAR_* 注入。
+# ⚠️ 注意：HuaweiCloud Provider 凭据（AK/SK）通过原生环境变量
+# HW_ACCESS_KEY / HW_SECRET_KEY 注入，不再通过 variables.tf 中转。

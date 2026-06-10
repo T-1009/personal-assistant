@@ -84,9 +84,9 @@ AgentArts 平台原生提供的声明式配置文件。执行 `agentarts launch`
 personal-assistant-infra/
 ├── main.tf                # terraform {} + provider "huaweicloud" {}
 ├── obs.tf                 # OBS Bucket 资源（web chat 静态托管）
-├── variables.tf           # 敏感变量声明（AK/SK）
+├── variables.tf           # 变量声明（region，Provider 凭据通过原生环境变量注入）
 ├── outputs.tf             # Stack outputs
-├── terraform.tfvars       # 变量赋值（gitignored）
+├── terraform.tfvars       # 变量赋值（gitignored，不再用于 AK/SK）
 ├── .terraform.lock.hcl    # Provider 版本锁
 ├── .gitignore             # Terraform 排除规则
 ├── AGENTS.md              # 本目录专用 instructions
@@ -108,8 +108,7 @@ terraform {
 
 provider "huaweicloud" {
   region     = var.region
-  access_key = var.ak
-  secret_key = var.sk
+  # 凭据通过 HW_ACCESS_KEY / HW_SECRET_KEY 原生环境变量注入（修订 2026-06-10）
 }
 ```
 

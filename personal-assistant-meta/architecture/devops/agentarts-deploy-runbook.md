@@ -539,27 +539,14 @@ terraform {
 
 provider "huaweicloud" {
   region     = var.region
-  access_key = var.ak
-  secret_key = var.sk
+  # 凭据通过 HW_ACCESS_KEY / HW_SECRET_KEY 原生环境变量注入（Provider 自动读取）
 }
 ```
 
-**`variables.tf`** — 凭据变量（敏感，通过 `terraform.tfvars` 或环境变量注入）：
+**`variables.tf`** — 当前仅声明 `region` 变量（Provider 凭据不再通过 Terraform 变量中转）：
 
 ```hcl
 # personal-assistant-infra/variables.tf
-variable "ak" {
-  description = "HuaweiCloud Access Key (AK)"
-  type        = string
-  sensitive   = true
-}
-
-variable "sk" {
-  description = "HuaweiCloud Secret Key (SK)"
-  type        = string
-  sensitive   = true
-}
-
 variable "region" {
   description = "HuaweiCloud 区域"
   type        = string
@@ -579,14 +566,14 @@ tofu init
 tofu validate
 tofu fmt -check
 
-# 预览变更（需先配置凭据：TF_VAR_ak / TF_VAR_sk 环境变量或 terraform.tfvars）
+# 预览变更（需先配置凭据：export HW_ACCESS_KEY / HW_SECRET_KEY 环境变量）
 tofu plan
 
 # 执行部署
 tofu apply
 ```
 
-> ⚠️ **凭据配置**：AK/SK 通过 `TF_VAR_ak` / `TF_VAR_sk` 环境变量或 `terraform.tfvars`（gitignored）注入，与之前 CDKTF 时期的 `HUAWEICLOUD_SDK_AK` / `HUAWEICLOUD_SDK_SK` 不同。Provider 版本锁定在 `.terraform.lock.hcl`（git tracked），确保跨环境一致性。Provider 文档见 [OpenTofu Registry](https://search.opentofu.org/provider/opentofu/huaweicloud)。
+> ⚠️ **凭据配置**：AK/SK 通过 HuaweiCloud Provider 原生环境变量 `HW_ACCESS_KEY` / `HW_SECRET_KEY` 注入（OpenTofu Provider 自动读取）。与 `obsutil` 等其他工具使用的 `HUAWEICLOUD_SDK_AK` / `HUAWEICLOUD_SDK_SK` 不同——两者作用域不同，不要混淆或误删。Provider 版本锁定在 `.terraform.lock.hcl`（git tracked），确保跨环境一致性。Provider 文档见 [OpenTofu Registry](https://search.opentofu.org/provider/opentofu/huaweicloud)。
 
 ### 11.3 方式二：obsutil CLI
 

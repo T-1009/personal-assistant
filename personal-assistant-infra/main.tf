@@ -22,5 +22,5 @@ terraform {
 }
 
 provider "huaweicloud" {
-  region     = var.region
+  region = var.region
 }

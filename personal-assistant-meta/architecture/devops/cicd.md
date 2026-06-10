@@ -199,8 +199,6 @@ terraform {
 
 provider "huaweicloud" {
   region     = var.region
-  access_key = var.ak
-  secret_key = var.sk
 }
 
 # Web Chat 前端静态托管
