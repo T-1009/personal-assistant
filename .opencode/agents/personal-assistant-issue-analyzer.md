@@ -75,13 +75,14 @@ Tasks come in three forms:
 Delegate the **same question** to all three sub-agents simultaneously. Craft a clear query that includes:
 - The issue context (description, requirements, constraints)
 - The specific question you want each to answer
+- **The Four-Question Gate** — ask each sub-agent to evaluate the proposed solution against all four questions
 - Reference to relevant architecture docs in `personal-assistant-meta/architecture/`
 
 Delegate format:
 ```
 Delegate to personal-assistant-issue-analyzer-deepseek:
-  input: Full issue context + specific questions
-  returns: Structured analysis
+  input: Full issue context + specific questions + Four-Question Gate evaluation request
+  returns: Structured analysis including Four-Question Gate assessment
 
 Delegate to personal-assistant-issue-analyzer-gemini: (same input)
 Delegate to personal-assistant-issue-analyzer-gpt: (same input)
@@ -102,6 +103,17 @@ Don't just compare — **produce one integrated solution**. Weigh each sub-agent
 - Resolves conflicts by explicit trade-off reasoning — explain why you chose one path over another
 - Flags any remaining uncertainty for human judgment
 
+#### Four-Question Gate Evaluation
+
+Every solution MUST be evaluated against the Four-Question Gate. Synthesize the three sub-agents' evaluations into a single assessment:
+
+1. **Is it best practice?** — Does this solution follow recognized software engineering best practices (SOLID, Separation of Concerns, Defense in Depth)? Would an experienced engineer approve it in code review?
+2. **Is it industry standard?** — Is this approach widely adopted by influential organizations in production? Does it align with patterns recommended by major cloud providers, framework authors, or platform vendors?
+3. **Is it conventional?** — Is this the most common, well-known solution for this class of problem? Would a new team member familiar with the tech stack immediately understand and expect this approach?
+4. **Is it modern?** — Does this represent the current leading edge of the technology ecosystem, rather than legacy technology nearing obsolescence? Is there clear community momentum (growing adoption, active maintenance, sustained innovation)?
+
+All four answers should be **Yes**. If any answer is **No**, document the deviation, the reason, and the trade-off analysis explicitly. If the three sub-agents disagree on any question, explain the conflict and your resolution.
+
 ### Step ⑤: Produce Output
 
 #### For Analyze tasks
@@ -111,6 +123,12 @@ Don't just compare — **produce one integrated solution**. Weigh each sub-agent
 
 ### Integrated Recommendation
 <A single, coherent solution synthesizing all three perspectives. This is the main deliverable — it should stand alone as actionable guidance.>
+
+### Four-Question Gate
+- **Is it best practice?**: <Yes/No — if No, explain deviation and trade-off>
+- **Is it industry standard?**: <Yes/No — if No, explain deviation and trade-off>
+- **Is it conventional?**: <Yes/No — if No, explain deviation and trade-off>
+- **Is it modern?**: <Yes/No — if No, explain deviation and trade-off>
 
 ### Solution Rationale
 - **Consensus**: <points all three agreed on — adopted as-is>
@@ -155,6 +173,16 @@ Issue template:
 - [ ] <criterion 1>
 - [ ] <criterion 2>
 
+## Four-Question Gate
+> Must pass all four. If any answer is No, document the deviation and trade-off analysis.
+
+| Question | Answer | Notes (if No, explain deviation & trade-off) |
+|----------|--------|------|
+| Is it best practice? | Yes/No | |
+| Is it industry standard? | Yes/No | |
+| Is it conventional? | Yes/No | |
+| Is it modern? | Yes/No | |
+
 ## Affected Architecture Docs
 - personal-assistant-meta/architecture/<path>
 
@@ -187,3 +215,4 @@ Issues are stored in `personal-assistant-meta/issues/` with this structure:
 6. **No implementation** — you manage issues, not code. Don't write implementation plans or code.
 7. **Escalate deadlocks** — if the three models give irreconcilably conflicting advice and you can't synthesize a defensible solution, escalate to personal-assistant-manager with the raw reports.
 8. **Track task_ids** — record the `task_id` from each sub-agent's first delegation. Reuse on re-delegation.
+9. **Four-Question Gate is mandatory** — every solution (Analyze, Create, or Update) must include a Four-Question Gate evaluation. All four answers must be Yes. If any is No, you must explicitly document the deviation, the reason, and the trade-off analysis. If the sub-agents disagree on any question, explain the conflict and your resolution.
