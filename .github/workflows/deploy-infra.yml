@@ -37,6 +37,13 @@ jobs:
         working-directory: personal-assistant-infra
         run: tofu fmt -check -recursive
 
+      - name: Import existing DNS zone
+        working-directory: personal-assistant-infra
+        env:
+          HW_ACCESS_KEY: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HW_SECRET_KEY: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+        run: tofu import huaweicloud_dns_zone.main resource-governance.cloud.
+
       - name: tofu plan
         working-directory: personal-assistant-infra
         env:
