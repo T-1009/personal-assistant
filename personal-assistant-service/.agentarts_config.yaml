@@ -34,6 +34,11 @@ agents:
       identity_configuration:
         authorizer_type: API_KEY
         authorizer_configuration:
+          custom_jwt:
+            discovery_url: null
+            allowed_audience: []
+            allowed_clients: []
+            allowed_scopes: []
           key_auth:
             api_keys:
             - api_key: pa-dev-api-key-2026
