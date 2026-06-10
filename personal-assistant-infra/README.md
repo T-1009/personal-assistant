@@ -107,7 +107,7 @@ personal-assistant-infra/
 
 2026-06-10：华为云凭据从 `TF_VAR_ak`/`TF_VAR_sk` 切换为 Provider 原生 `HW_ACCESS_KEY`/`HW_SECRET_KEY`。
 
-2026-06-09：从 CDKTF (TypeScript) 迁移到 OpenTofu + HCL。动机：CDKTF 被 HashiCorp 归档（2025-12-10），社区 fork CDK Terrain 存活风险过高。详见 [Refactor 6](../personal-assistant-meta/issues/refactor/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)。
+2026-06-09：从 CDKTF (TypeScript) 迁移到 OpenTofu + HCL。动机：CDKTF 被 HashiCorp 归档（2025-12-10），社区 fork CDK Terrain 存活风险过高。详见 [Refactor 6](../personal-assistant-meta/issues/refactor/resolved/refactor-6-migrate-cdktf-to-opentofu-hcl/issue.md)。
 
 ## 相关文档
 

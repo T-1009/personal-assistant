@@ -41,7 +41,7 @@ personal-assistant/
 ├── personal-assistant-client/   # 前端应用，Web Chat 界面及飞书/OfficeClaw 客户端适配
 ├── personal-assistant-service/  # 后端服务，AgentArts Runtime 上的 AI Agent 服务
 ├── personal-assistant-meta/     # Design hub，所有设计讨论、架构决策和变更规划
-├── personal-assistant-infra/    # 基础设施即代码（IaC），CDKTF + TypeScript，管理华为云资源
+├── personal-assistant-infra/    # 基础设施即代码（IaC），OpenTofu + HCL，管理华为云资源
 ├── personal-assistant-e2e/      # E2E 测试脚本，pytest，覆盖 Service+Client 联调
 ├── .opencode/                   # OpenCode agent 定义与 workflow 配置
 ├── AGENTS.md                    # 项目根 AGENTS.md，整体规范与目录导航
@@ -81,7 +81,7 @@ npm run dev
 
 1. **后端**：`docker build`（ARM64 镜像）→ 推送 SWR → `agentarts launch` 启动 AgentArts Runtime
 2. **前端**：`npm run build` → `obsutil cp` 上传至 OBS 静态网站
-3. **基础设施**：OBS Bucket 由 `personal-assistant-infra/` 中 CDKTF IaC 管理
+3. **基础设施**：OBS Bucket 由 `personal-assistant-infra/` 中 OpenTofu IaC 管理
 
 > 部署前须在 `app/main.py` 中配置 CORS 中间件，允许 OBS 域名跨域访问。
 

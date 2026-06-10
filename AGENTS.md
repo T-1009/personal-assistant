@@ -20,9 +20,8 @@ personal-assistant/
 ├── personal-assistant-client/   # 前端应用，Web Chat 界面及飞书/OfficeClaw 客户端适配
 ├── personal-assistant-service/  # 后端服务，AgentArts Runtime 上的 AI Agent 服务
 ├── personal-assistant-meta/     # Design hub，所有设计讨论、架构决策和变更规划
-├── personal-assistant-infra/    # 基础设施即代码（IaC），CDKTF + TypeScript，管理华为云资源
-├── personal-assistant-e2e/      # E2E 测试脚本，pytest，覆盖 Service+Client 联调
-└── .gitnexus/                   # GitNexus 索引配置
+├── personal-assistant-infra/    # 基础设施即代码（IaC），OpenTofu + HCL，管理华为云资源
+└── personal-assistant-e2e/      # E2E 测试脚本，pytest，覆盖 Service+Client 联调
 ```
 
 ### personal-assistant-client/ — 前端应用
@@ -39,7 +38,7 @@ personal-assistant/
 
 ### personal-assistant-infra/ — 基础设施即代码
 
-管理华为云基础资源（OBS、RDS、IAM、VPC、EIP、CDN 等）的 IaC 目录，使用 CDKTF + TypeScript 编写。`agentarts_config.yaml` 管 AgentArts 层（容器/认证/可观测），本目录管华为云基础资源层。开始前先阅读 [`personal-assistant-infra/AGENTS.md`](./personal-assistant-infra/AGENTS.md) 了解 IaC 规范、目录结构和常用命令。
+管理华为云基础资源（OBS、RDS、IAM、VPC、EIP、CDN 等）的 IaC 目录，使用 OpenTofu + HCL 编写。`.agentarts_config.yaml` 管 AgentArts 层（容器/认证/可观测），本目录管华为云基础资源层。开始前先阅读 [`personal-assistant-infra/AGENTS.md`](./personal-assistant-infra/AGENTS.md) 了解 IaC 规范、目录结构和常用命令。
 
 ### personal-assistant-e2e/ — E2E 测试
 
@@ -61,8 +60,8 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```bash
 curl http://localhost:8080/ping
 curl -X POST http://localhost:8080/invocations -H "Content-Type: application/json" -d '{"message": "你好"}'
-curl -N http://localhost:8080/api/chat/stream?q=你好 -H "Accept: text/event-stream"
-# Playground: http://localhost:8080/playground/
+curl -N -X POST http://localhost:8080/invocations -H "Content-Type: application/json" -H "Accept: text/event-stream" -d '{"message":"你好","stream":true}'
+# Playground: http://localhost:8080/invocations/playground
 ```
 
 ### Frontend（`personal-assistant-client/`）
@@ -81,7 +80,7 @@ npm run dev
 |------|----------|--------|------|
 | Backend | AgentArts Runtime（cn-southwest-2） | FastAPI, ARM64 容器, port 8080 | 部署 runbook 见 [`chore-1-agentarts-deploy/plan.md`](./personal-assistant-meta/issues/chores/chore-1-agentarts-deploy/plan.md) |
 | Frontend | OBS 静态网站托管（cn-southwest-2） | Vite + React | 构建产物通过 obsutil 上传至 OBS bucket |
-| Infrastructure | CDKTF（`personal-assistant-infra/`） | TypeScript | 管理 OBS bucket 及华为云基础资源 |
+| Infrastructure | OpenTofu + HCL（`personal-assistant-infra/`） | HCL | 管理 OBS bucket 及华为云基础资源 |
 
 **部署流程**：Docker build ARM64 镜像 → SWR push → agentarts launch 启动后端；`VITE_API_BASE_URL` 构建前端 → obsutil cp 上传至 OBS。
 
@@ -90,7 +89,7 @@ npm run dev
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **personal-assistant** (200 symbols, 197 relationships, 0 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **personal-assistant** (2,788 nodes, 3,569 edges, 24 clusters, 59 flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `gitnexus analyze --skip-agents-md --skip-skills` or `npx gitnexus analyze` in terminal first.
 
