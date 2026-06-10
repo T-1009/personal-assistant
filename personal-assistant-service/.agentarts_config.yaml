@@ -53,6 +53,8 @@ agents:
         value: deepseek-v4-pro
       - key: MODEL_URL
         value: https://api.modelarts-maas.com/openai/v1
+      - key: CORS_ALLOWED_ORIGINS
+        value: https://resource-governance.cloud,https://agentarts-personal-assistant.netlify.app
       tags:
       - key: app
         value: personal-assistant
