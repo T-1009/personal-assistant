@@ -113,7 +113,7 @@ Don't just compare — **produce one integrated solution**. Weigh each sub-agent
 Every solution MUST be evaluated against the Four-Question Gate. Synthesize the four sub-agents' evaluations into a single assessment:
 
 1. **Is it best practice?** — Does this solution follow recognized software engineering best practices (SOLID, Separation of Concerns, Defense in Depth)? Would an experienced engineer approve it in code review?
-2. **Is it industry standard?** — Is this approach widely adopted by influential organizations in production? Does it align with patterns recommended by major cloud providers, framework authors, or platform vendors?
+2. **Is it de facto standard?** — Is this approach the dominant convention in practice — widely adopted by influential organizations in production, recommended by major cloud providers or framework authors — regardless of whether it has formal standardization?
 3. **Is it conventional?** — Is this the most common, well-known solution for this class of problem? Would a new team member familiar with the tech stack immediately understand and expect this approach?
 4. **Is it modern?** — Does this represent the current leading edge of the technology ecosystem, rather than legacy technology nearing obsolescence? Is there clear community momentum (growing adoption, active maintenance, sustained innovation)?
 
@@ -131,7 +131,7 @@ All four answers should be **Yes**. If any answer is **No**, document the deviat
 
 ### Four-Question Gate
 - **Is it best practice?**: <Yes/No — if No, explain deviation and trade-off>
-- **Is it industry standard?**: <Yes/No — if No, explain deviation and trade-off>
+- **Is it de facto standard?**: <Yes/No — if No, explain deviation and trade-off>
 - **Is it conventional?**: <Yes/No — if No, explain deviation and trade-off>
 - **Is it modern?**: <Yes/No — if No, explain deviation and trade-off>
 
@@ -188,7 +188,7 @@ Issue template:
 | Question | Answer | Notes (if No, explain deviation & trade-off) |
 |----------|--------|------|
 | Is it best practice? | Yes/No | |
-| Is it industry standard? | Yes/No | |
+| Is it de facto standard? | Yes/No | |
 | Is it conventional? | Yes/No | |
 | Is it modern? | Yes/No | |
 
