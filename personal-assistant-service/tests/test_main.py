@@ -107,16 +107,15 @@ async def test_invocations_returns_response(client, fake_handler):
 
 
 # ---------------------------------------------------------------------------
-# Header fallback chain tests
+# Header handling tests
 # ---------------------------------------------------------------------------
 
 
-class TestHeaderFallbackChain:
-    """Verify the /invocations endpoint header reading.
+class TestHeaderHandling:
+    """Verify the /invocations endpoint reads AgentArts Gateway headers.
 
-    The endpoint reads:
-      - user_id: X-HW-AgentGateway-User-Id → "anonymous"
-      - session_id: x-hw-agentarts-session-id → cookie → uuid4()
+    - session_id: from x-hw-agentarts-session-id header (or cookie/uuid4 fallback)
+    - user_id: from X-HW-AgentGateway-User-Id header (or "anonymous" default)
     """
 
     # ── session_id ──────────────────────────────────────────────────
@@ -130,6 +129,16 @@ class TestHeaderFallbackChain:
             headers={"x-hw-agentarts-session-id": "sess-123"},
         )
         assert fake_handler.handle_calls[0][2] == "sess-123"
+
+    @pytest.mark.asyncio
+    async def test_cookie_fallback_in_development(
+        self, client, fake_handler, monkeypatch
+    ):
+        """When ENV=development and no session header, Set-Cookie is returned."""
+        monkeypatch.setenv("ENV", "development")
+        response = await client.post("/invocations", json={"message": "Hi"})
+        assert "Set-Cookie" in response.headers
+        assert "x-anonymous-session-id=" in response.headers["Set-Cookie"]
 
     # ── user_id ─────────────────────────────────────────────────────
 
@@ -161,13 +170,6 @@ async def test_invocations_stream_false_returns_response(client, fake_handler):
     assert response.json() == {"response": "Hello, I am your assistant!"}
     assert len(fake_handler.handle_calls) == 1
     assert fake_handler.stream_calls == []
-
-
-@pytest.mark.asyncio
-async def test_invocations_defaults_to_anonymous_user(client, fake_handler):
-    """POST /invocations without X-HW-AgentGateway-User-Id defaults to 'anonymous'."""
-    await client.post("/invocations", json={"message": "Hi"})
-    assert fake_handler.handle_calls[0][1] == "anonymous"
 
 
 @pytest.mark.asyncio

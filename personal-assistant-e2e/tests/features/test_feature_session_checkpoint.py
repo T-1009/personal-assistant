@@ -220,8 +220,8 @@ class TestScenario1_NonStreamingMultiTurn:
         """Send two non-streaming messages in the same session; verify context persistence."""
         base = f"http://127.0.0.1:{self.PORT}"
         headers = {
-            "X-AgentArts-User-Id": "test-user-1",
-            "X-AgentArts-Session-Id": "test-session-1",
+            "X-HW-AgentGateway-User-Id": "test-user-1",
+            "x-hw-agentarts-session-id": "test-session-1",
         }
 
         proc = _start_service(self.PORT, env={
@@ -270,8 +270,8 @@ class TestScenario2_StreamingMultiTurn:
         """Send two streaming messages in same session; verify SSE context."""
         base = f"http://127.0.0.1:{self.PORT}"
         headers = {
-            "X-AgentArts-User-Id": "test-user-1",
-            "X-AgentArts-Session-Id": "test-session-2",
+            "X-HW-AgentGateway-User-Id": "test-user-1",
+            "x-hw-agentarts-session-id": "test-session-2",
         }
 
         proc = _start_service(self.PORT, env={
@@ -310,8 +310,8 @@ class TestScenario2_StreamingMultiTurn:
         """Verify SSE stream format: lines start with 'data: ', valid JSON with token/done."""
         base = f"http://127.0.0.1:{self.PORT}"
         headers = {
-            "X-AgentArts-User-Id": "test-user-1",
-            "X-AgentArts-Session-Id": "test-sse-format",
+            "X-HW-AgentGateway-User-Id": "test-user-1",
+            "x-hw-agentarts-session-id": "test-sse-format",
         }
 
         proc = _start_service(self.PORT, env={
@@ -368,8 +368,8 @@ class TestScenario3_CrossSessionIsolation:
                 f"{base}/invocations",
                 json={"message": "我叫小红"},
                 headers={
-                    "X-AgentArts-User-Id": "test-user-1",
-                    "X-AgentArts-Session-Id": "session-a",
+                    "X-HW-AgentGateway-User-Id": "test-user-1",
+                    "x-hw-agentarts-session-id": "session-a",
                 },
             )
             assert r_a.status_code == 200, f"Session A failed: {r_a.status_code}"
@@ -379,8 +379,8 @@ class TestScenario3_CrossSessionIsolation:
                 f"{base}/invocations",
                 json={"message": "我叫什么名字？"},
                 headers={
-                    "X-AgentArts-User-Id": "test-user-1",
-                    "X-AgentArts-Session-Id": "session-b",
+                    "X-HW-AgentGateway-User-Id": "test-user-1",
+                    "x-hw-agentarts-session-id": "session-b",
                 },
             )
             assert r_b.status_code == 200, f"Session B failed: {r_b.status_code}"
@@ -416,8 +416,8 @@ class TestScenario4_UserScopedIsolation:
                 f"{base}/invocations",
                 json={"message": "我的秘密代码是12345"},
                 headers={
-                    "X-AgentArts-User-Id": "user_a",
-                    "X-AgentArts-Session-Id": "shared-session",
+                    "X-HW-AgentGateway-User-Id": "user_a",
+                    "x-hw-agentarts-session-id": "shared-session",
                 },
             )
             assert r_a.status_code == 200, f"User A failed: {r_a.status_code}"
@@ -427,8 +427,8 @@ class TestScenario4_UserScopedIsolation:
                 f"{base}/invocations",
                 json={"message": "秘密代码是什么？"},
                 headers={
-                    "X-AgentArts-User-Id": "user_b",
-                    "X-AgentArts-Session-Id": "shared-session",
+                    "X-HW-AgentGateway-User-Id": "user_b",
+                    "x-hw-agentarts-session-id": "shared-session",
                 },
             )
             assert r_b.status_code == 200, f"User B failed: {r_b.status_code}"
@@ -447,7 +447,7 @@ class TestScenario4_UserScopedIsolation:
 @pytest.mark.feature
 @pytest.mark.slow
 class TestScenario5_CookieFallback:
-    """AC5: 当 X-AgentArts-Session-Id header 缺失时，服务自动生成 session 并回传 cookie."""
+    """AC5: 当 x-hw-agentarts-session-id header 缺失时，服务自动生成 session 并回传 cookie."""
 
     PORT = 18714
 
@@ -464,7 +464,7 @@ class TestScenario5_CookieFallback:
             r1 = http_client.post(
                 f"{base}/invocations",
                 json={"message": "我住在北京"},
-                headers={"X-AgentArts-User-Id": "test-cookie-user"},
+                headers={"X-HW-AgentGateway-User-Id": "test-cookie-user"},
             )
             assert r1.status_code == 200, f"Request 1 failed: {r1.status_code}"
 
@@ -486,7 +486,7 @@ class TestScenario5_CookieFallback:
                 f"{base}/invocations",
                 json={"message": "我住在哪个城市？"},
                 headers={
-                    "X-AgentArts-User-Id": "test-cookie-user",
+                    "X-HW-AgentGateway-User-Id": "test-cookie-user",
                     "Cookie": f"x-anonymous-session-id={session_id}",
                 },
             )
@@ -511,7 +511,7 @@ class TestScenario5_CookieFallback:
             r = http_client.post(
                 f"{base}/invocations",
                 json={"message": "你好", "stream": True},
-                headers={"X-AgentArts-User-Id": "test-cookie-user"},
+                headers={"X-HW-AgentGateway-User-Id": "test-cookie-user"},
             )
             assert r.status_code == 200, f"Stream request failed: {r.status_code}"
             set_cookie = r.headers.get("Set-Cookie")
@@ -561,7 +561,7 @@ class TestScenario6_PingAndExisting:
             r = http_client.post(
                 f"{base}/invocations",
                 json={"message": "你好"},
-                headers={"X-AgentArts-User-Id": "test-no-session"},
+                headers={"X-HW-AgentGateway-User-Id": "test-no-session"},
             )
             assert r.status_code == 200, f"Request failed: {r.status_code}"
             data = r.json()
@@ -574,8 +574,8 @@ class TestScenario6_PingAndExisting:
         """Non-stream then stream in same session: context persists."""
         base = f"http://127.0.0.1:{self.PORT}"
         headers = {
-            "X-AgentArts-User-Id": "test-user-ac8",
-            "X-AgentArts-Session-Id": "test-ac8",
+            "X-HW-AgentGateway-User-Id": "test-user-ac8",
+            "x-hw-agentarts-session-id": "test-ac8",
         }
 
         proc = _start_service(self.PORT, env={
