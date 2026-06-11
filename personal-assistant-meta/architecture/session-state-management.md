@@ -1,6 +1,6 @@
 # Personal Assistant — Session 状态管理架构
 
-> 版本：v0.1 | 状态：Draft | 关联 issue：[feature-session-checkpoint](../issues/features/feature-session-checkpoint/issue.md)
+> 版本：v1.0 | 状态：Implemented | 关联 issue：[feature-session-checkpoint](../issues/features/feature-session-checkpoint/issue.md)
 
 ---
 
@@ -62,10 +62,10 @@ Memory:     "用户偏好简洁回答（从 3 周前的对话中学到的）"
 
 ### 3.1 问题本质
 
-当前 `agent_handler.py` 中，`session_id` 从 header 提取后**未传递给 Agent**：
+`session_id` 从 header 提取后**未传递给 Agent**：
 
 ```python
-# 当前代码（有缺陷）
+# 修复前代码（有缺陷）
 result = await self.agent.ainvoke(
     {"messages": [{"role": "user", "content": message}]}
     # ❌ 没有 config={"configurable": {"thread_id": ...}}
@@ -89,8 +89,9 @@ sequenceDiagram
 
     Note over User,LLM: === 第 1 轮：建立 Session ===
     User->>GW: "我叫小明"
-    GW->>API: X-AgentArts-Session-Id: sess_abc
-    API->>AH: handle(message, session_id="sess_abc")
+    GW->>API: x-hw-agentarts-session-id: sess_abc
+    GW->>API: X-HW-AgentGateway-User-Id: user_x
+    API->>AH: handle(message, user_id="user_x", session_id="sess_abc")
     AH->>CP: get_state(thread_id="user_x:sess_abc")
     CP-->>AH: null（新 session）
     AH->>LLM: messages=[{role:"user", content:"我叫小明"}]
@@ -100,8 +101,9 @@ sequenceDiagram
 
     Note over User,LLM: === 第 2 轮：同一 Session ===
     User->>GW: "我叫什么名字？"
-    GW->>API: X-AgentArts-Session-Id: sess_abc
-    API->>AH: handle(message, session_id="sess_abc")
+    GW->>API: x-hw-agentarts-session-id: sess_abc
+    GW->>API: X-HW-AgentGateway-User-Id: user_x
+    API->>AH: handle(message, user_id="user_x", session_id="sess_abc")
     AH->>CP: get_state(thread_id="user_x:sess_abc")
     CP-->>AH: AgentState(messages=[user:"我叫小明", assistant:"好的..."])
     AH->>LLM: messages=[user:"我叫小明", assistant:"好的...", user:"我叫什么名字？"]
@@ -115,7 +117,7 @@ sequenceDiagram
 ```python
 # === 改动 1: create_deep_agent() 注入 Checkpointer ===
 
-from langgraph.checkpoint.memory import MemorySaver
+from langgraph.checkpoint.memory import InMemorySaver
 
 class AgentHandler:
     def __init__(self):
@@ -129,14 +131,14 @@ class AgentHandler:
         )
 
     def _init_checkpointer(self):
-        """按环境变量选择 Checkpointer 后端。"""
+        """按环境变量选择 Checkpointer 后端（异步安全）。"""
         if os.environ.get("POSTGRES_DSN"):
             from langgraph.checkpoint.postgres import PostgresSaver
             return PostgresSaver.from_conn_string(os.environ["POSTGRES_DSN"])
         if os.environ.get("SQLITE_DB_PATH"):
-            from langgraph.checkpoint.sqlite import SqliteSaver
-            return SqliteSaver.from_conn_string(os.environ["SQLITE_DB_PATH"])
-        return MemorySaver()  # 默认：进程内存（开发调试）
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+            return AsyncSqliteSaver.from_conn_string(os.environ["SQLITE_DB_PATH"])
+        return InMemorySaver()  # 默认：进程内存（开发调试）
 
 # === 改动 2: handle() 传递 config ===
 
@@ -176,7 +178,80 @@ class AgentHandler:
         return {"configurable": {"thread_id": f"{user_id}:{sid}"}}
 ```
 
-### 3.4 thread_id 安全模型
+### 3.4 AgentArts Gateway Header 规范
+
+生产环境中，AgentArts Gateway 传递以下 header 给后端容器：
+
+| Header | 示例值 | 说明 |
+|--------|--------|------|
+| `x-hw-agentarts-session-id` | `sess_abc` | 会话 ID，由客户端生成并传递（必选） |
+| `X-HW-AgentGateway-User-Id` | `user_x` | 用户 ID，由 Gateway 认证后注入 |
+
+后端 `main.py` 读取方式：
+
+```python
+user_id = request.headers.get("X-HW-AgentGateway-User-Id", "anonymous")
+session_id = request.headers.get("x-hw-agentarts-session-id")
+```
+
+### 3.5 本地开发 Session 降级：Cookie Fallback
+
+本地开发时无 AgentArts Gateway，`x-hw-agentarts-session-id` header 可能缺失。后端通过 **Cookie 降级** 机制保证本地多轮对话可用：
+
+```python
+# main.py — Cookie fallback（仅 ENV=development）
+if not session_id:
+    fallback_id = request.cookies.get("x-anonymous-session-id")
+    if fallback_id:
+        session_id = fallback_id
+    else:
+        session_id = str(uuid.uuid4())
+        if os.environ.get("ENV") == "development":
+            set_cookie = (
+                f"x-anonymous-session-id={session_id}; "
+                f"Path=/; HttpOnly; SameSite=Lax"
+            )
+```
+
+**行为说明**：
+- 首次请求无 header → 生成 UUID → `Set-Cookie` 返回浏览器
+- 后续请求自动携带 Cookie → 后端识别为同一 session
+- `ENV=development` 门控：仅在本地开发环境设 Cookie，生产环境绝不启用
+
+### 3.6 客户端 Session ID 持久化
+
+AgentArts Gateway 将 `x-hw-agentarts-session-id` 标记为**必选**——客户端必须自行生成并携带。若缺失，Gateway 直接返回 400。
+
+`chat-adapter.ts` 通过 `localStorage` 持久化 session ID：
+
+```typescript
+function getSessionId(): string {
+  const key = "agentarts-session-id";
+  try {
+    const stored = localStorage.getItem(key);
+    if (stored) return stored;
+    const id = crypto.randomUUID();
+    localStorage.setItem(key, id);
+    return id;
+  } catch {
+    return crypto.randomUUID(); // localStorage 不可用时降级
+  }
+}
+
+// 每轮请求自动附带
+const headers = {
+  "x-hw-agentarts-session-id": getSessionId(),
+  // ...
+};
+```
+
+**行为说明**：
+- 首次加载 → `crypto.randomUUID()` → 存入 `localStorage`
+- 后续请求 → 自动附带持久化的 session ID
+- 同一浏览器同一设备内，关闭重开页面后 session 保持不变
+- `localStorage` 不可用时（私密模式/禁用），回退为每次生成新 UUID
+
+### 3.7 thread_id 安全模型
 
 ```mermaid
 flowchart LR
@@ -214,10 +289,12 @@ flowchart LR
 
 ```mermaid
 flowchart LR
-    Dev["开发/调试"] -->|"MemorySaver<br/>进程内存"| DevNote["❌ 重启丢失<br/>✅ 零配置<br/>✅ 最快"]
-    Local["本地持久化"] -->|"SqliteSaver<br/>磁盘文件"| LocalNote["✅ 重启保留<br/>✅ 单文件<br/>⚠️ 单进程"]
+    Dev["开发/调试"] -->|"InMemorySaver<br/>进程内存"| DevNote["❌ 重启丢失<br/>✅ 零配置<br/>✅ 最快"]
+    Local["本地持久化"] -->|"AsyncSqliteSaver<br/>磁盘文件"| LocalNote["✅ 重启保留<br/>✅ 单文件<br/>⚠️ 单进程"]
     Prod["生产环境"] -->|"PostgresSaver<br/>RDS PostgreSQL"| ProdNote["✅ 多副本共享<br/>✅ 高可用<br/>⚠️ 需要 DB 基础设施"]
 ```
+
+> **异步安全**：服务使用 `ainvoke()` / `astream_events()` 异步调用，必须使用异步 Checkpointer 变体（`AsyncSqliteSaver`、`AsyncPostgresSaver`）。`InMemorySaver` 本身 async-safe。同步版本（`SqliteSaver`）会阻塞 event loop。
 
 环境变量驱动切换：
 
@@ -272,41 +349,56 @@ flowchart TB
 
 **设计原则**：每种渠道的"对话标识"（Web Chat 的 Gateway session_id / 飞书的 chat_id / OfficeClaw 的 Gateway session_id）映射为统一的 `thread_id`。映射表由后续 Feature 独立实现，Checkpoint 层不感知渠道差异。
 
-### 4.4 客户端视角：如何恢复会话
+### 4.4 客户端视角：Session ID 生命周期
 
 ```mermaid
 sequenceDiagram
     actor User as 用户
     participant Client as Web Chat
-    participant GW as Gateway
+    participant LS as localStorage
+    participant GW as AgentArts Gateway
     participant API as Backend
     participant CP as Checkpointer
 
-    Note over User,CP: === 场景：用户重新打开浏览器 ===
-    User->>Client: 打开 Web Chat
-    Client->>Client: 检查本地 session 列表（localStorage）
+    Note over User,CP: === 场景：首次打开 Web Chat ===
+    User->>Client: 打开页面
+    Client->>LS: getItem("agentarts-session-id")
+    LS-->>Client: null（首次访问）
+    Client->>Client: crypto.randomUUID() → sess_new
+    Client->>LS: setItem("agentarts-session-id", sess_new)
 
-    alt 有历史 session
-        Client->>User: 展示最近会话列表
-        User->>Client: 选择"昨天和 Agent 讨论项目方案"
-        Client->>GW: POST /invocations<br/>X-AgentArts-Session-Id: sess_yesterday
-        GW->>API: 转发
-        API->>CP: get_state(thread_id="user_x:sess_yesterday")
-        CP-->>API: AgentState（昨天的完整对话历史）
-        API->>Client: 注入历史消息 + 新回复
-        Client-->>User: 展示完整上下文 + 新回复
-    else 新会话
-        Client->>GW: POST /invocations（无 session header）
-        GW->>API: X-AgentArts-Session-Id: sess_new（Gateway 生成）
-        API->>CP: get_state(thread_id="user_x:sess_new") → null
-        API-->>Client: 新 session 的第一轮回复
-    end
+    User->>Client: "我叫小明"
+    Client->>GW: POST /invocations<br/>x-hw-agentarts-session-id: sess_new
+    GW->>API: x-hw-agentarts-session-id: sess_new<br/>X-HW-AgentGateway-User-Id: user_x
+    API->>CP: get_state(thread_id="user_x:sess_new")
+    CP-->>API: null（新 session）
+    API-->>Client: "好的，记住了，你叫小明"
+
+    Note over User,CP: === 场景：关闭浏览器后重新打开 ===
+    User->>Client: 重新打开页面
+    Client->>LS: getItem("agentarts-session-id")
+    LS-->>Client: sess_new（已持久化）
+
+    User->>Client: "我叫什么名字？"
+    Client->>GW: POST /invocations<br/>x-hw-agentarts-session-id: sess_new
+    GW->>API: x-hw-agentarts-session-id: sess_new<br/>X-HW-AgentGateway-User-Id: user_x
+    API->>CP: get_state(thread_id="user_x:sess_new")
+    CP-->>API: AgentState（前序对话历史）
+    API-->>Client: "你叫小明"
+
+    Note over User,CP: === 场景：换浏览器/换设备 ===
+    User->>Client: 新设备打开 Web Chat
+    Client->>LS: getItem("agentarts-session-id")
+    LS-->>Client: null（新环境）
+    Client->>Client: crypto.randomUUID() → sess_alt
+    Note over Client,CP: 全新的 session_id，Checkpoint 从零开始<br/>跨设备 session 恢复需后续 Feature 的 Session 列表 API
 ```
 
 **关键点**：
-- 短期（本 Feature）：Gateway 自动注入 `X-AgentArts-Session-Id`，客户端无需感知。浏览器关闭重开后，Gateway 可能分配新的 session_id，此时 Checkpoint 从零开始。
-- 中期（后续 Feature）：客户端通过 Session 列表 API 获取历史会话，用户可选择恢复。
-- **当前 scope 不涉及 Cookie 降级**：feature-session-checkpoint 方案（issue.md §73-74）中的 cookie 降级仅针对**本地开发无 Gateway** 场景。生产环境由 Gateway 管理 session_id。
+- Session ID 由**客户端生成**（`crypto.randomUUID()`），存于 `localStorage`
+- AgentArts Gateway **不自动注入** session ID——客户端必须自行携带（必选参数）
+- 同一浏览器同一设备内，关闭重开页面后 session 保持不变（localStorage 持久化）
+- 跨设备/跨浏览器的 session 恢复需后续 Feature 的 Session 列表 API 支持
 
 ---
 
@@ -375,11 +467,10 @@ Feature 2: Memory 集成
 
 | 风险 | 严重度 | 缓解 |
 |------|:------:|------|
-| **MemorySaver 重启丢失** | Medium | 短期（开发阶段）可接受。`SQLITE_DB_PATH` 环境变量提供本地持久化。生产强制使用 PostgresSaver。 |
-| **handle_stream 缺少 session_id** | High | 当前签名不接收 `session_id`，流式请求无法利用 Checkpoint。**必须追加**。 |
+| **InMemorySaver 重启丢失** | Medium | 短期（开发阶段）可接受。`SQLITE_DB_PATH` 环境变量提供本地持久化。生产强制使用 PostgresSaver。 |
 | **并发写入冲突** | Medium | 相同 `thread_id` 的并发写入可能触发 Checkpointer 乐观锁冲突。缓解：AgentHandler 入口对相同 `thread_id` 加 `asyncio.Lock`。当前低并发阶段可控。 |
 | **Checkpoint 存储膨胀** | Low | 默认全量保留，无 TTL。短期数据量极小（开发阶段）。生产引入定期清理 Cron。 |
-| **Gateway session_id 不可控** | Medium | 生产环境 session_id 由 Gateway 注入，客户端无法主动恢复历史会话。客户端 Session 列表 + 选择功能需后续 Feature 实现。 |
+| **localStorage 不可用** | Low | 私密浏览模式或企业策略可能禁用 localStorage。`getSessionId()` 内置 `try/catch` 降级：每次生成新 UUID（不持久），会话在单次浏览器会话内仍连续。 |
 
 ---
 
@@ -391,15 +482,16 @@ gantt
     dateFormat  YYYY-MM-DD
     axisFormat  %m/%d
 
-    section 短期（本 Feature）
-    MemorySaver + config 传递       :done,    s1, 2026-06-01, 3d
-    handle_stream 签名改造           :active,  s2, after s1, 2d
-    user-scoped thread_id            :         s3, after s1, 1d
-    SqliteSaver 本地持久化            :         s4, after s3, 2d
-    Cookie 降级（本地开发无 Gateway）  :         s5, after s4, 1d
+    section 短期（已完成）
+    InMemorySaver + config 传递      :done,    s1, 2026-06-01, 3d
+    handle_stream 签名改造            :done,    s2, after s1, 2d
+    user-scoped thread_id             :done,    s3, after s1, 1d
+    AsyncSqliteSaver 本地持久化        :done,    s4, after s3, 2d
+    Cookie 降级（本地开发）            :done,    s5, after s4, 1d
+    客户端 session ID 持久化          :done,    s6, after s5, 1d
 
     section 中期（Feature 2 之后）
-    PostgresSaver 生产部署            :         m1, after s5, 3d
+    PostgresSaver 生产部署            :         m1, after s6, 3d
     Session 列表 API                  :         m2, after m1, 3d
     渠道→Session 映射表               :         m3, after m2, 2d
 
@@ -416,7 +508,7 @@ gantt
 |------|------|
 | `architecture/backend_architecture.md` §3 | 更新 AgentHandler 代码示例，增加 Checkpointer 初始化 + config 传递 |
 | `architecture/overall_architecture.md` §1.2 | 技术选型表新增一行：`Session State \| LangGraph Checkpoint \| 短期会话状态持久化` |
-| `architecture/session-state-management.md` | **本文档**，新建 |
+| `architecture/session-state-management.md` | **本文档**，实现后更新至 v1.0 |
 | `ADR-009: deepagents` | 引用确认 `create_deep_agent(checkpointer=...)` 是框架原生能力 |
 
 ---
