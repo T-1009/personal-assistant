@@ -10,6 +10,21 @@ load_dotenv()
 
 logger = logging.getLogger("uvicorn")
 
+
+class PingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Prevent logging of /ping endpoint
+        if record.args and len(record.args) >= 3:
+            path = record.args[2]
+            if path == "/ping":
+                return False
+        msg = record.getMessage()
+        return "GET /ping " not in msg
+
+
+# Apply the filter to uvicorn.access logger to reduce ping log noise
+logging.getLogger("uvicorn.access").addFilter(PingFilter())
+
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
