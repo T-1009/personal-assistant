@@ -23,7 +23,8 @@ class PingFilter(logging.Filter):
                 return False
         # Fallback string matching to ensure we only filter successful pings
         msg = record.getMessage()
-        return not ("GET /ping " in msg and " 200" in msg)
+        return True
+        # return not ("GET /ping " in msg and " 200" in msg)
 
 
 # Apply the filter to uvicorn.access logger to reduce ping log noise
