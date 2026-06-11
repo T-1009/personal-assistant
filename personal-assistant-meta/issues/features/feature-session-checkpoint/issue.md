@@ -14,7 +14,28 @@ status: backlog
 
 **影响**：多轮对话完全不工作。用户说"我叫小明"后，紧接着问"我叫什么名字？"，Agent 无法回忆上一条消息。
 
-本 Feature 采用 LangGraph 框架原生的 **Checkpointer** 机制解决此问题——这是方案分析文档中评估的三种方案中的 **方案 C**（对比方案 A 客户端驱动、方案 B 自建消息存储，方案 C 为当前技术栈下的最优选择）。详细分析见：[session-management-analysis.md](../session-management-analysis.md)。
+本 Feature 采用 LangGraph 框架原生的 **Checkpointer** 机制解决此问题。以下三种方案经过四问闸门评估，方案 C 为唯一全部通过的选择：
+
+### 方案对比
+
+| 维度 | A: 客户端驱动 | B: 服务端 Store | C: LangGraph Checkpoint |
+|------|:---:|:---:|:---:|
+| 代码量 | 最少 | 中 | **最小**（框架已就绪） |
+| 基础设施 | 无 | Redis/PG | MemorySaver→SqliteSaver→PostgresSaver 渐进 |
+| 多轮上下文 | ✅ | ✅ | ✅ |
+| 跨 Session 记忆 | ❌ | 需叠加 Memory 层 | 需叠加 Memory 层 |
+| 中断恢复 | ❌ | ❌ | ✅（graph node 位置） |
+| Token 效率（不重传历史） | ❌ | ✅ | ✅ |
+| 并发扩展 | ✅ Trivial | 中等 | 取决于 checkpointer 后端 |
+| 防御客户端篡改 | ❌ | ✅ | ✅ |
+| 与现有 deepagents 集成 | — | — | 一行 config 改动 |
+| **四问闸门** | ❌ 3 项未通过 | ⚠️ 部分通过 | ✅ **全部通过** |
+
+**方案 A（客户端驱动）**：Client 每轮请求带完整 `messages[]` 历史。问题：客户端不可信（无 Defense in Depth）、请求体膨胀、token 浪费、不支持 graph 状态恢复。
+
+**方案 B（服务端 Session Store）**：后端 Redis/PG 自建消息存储。问题：在 LangGraph 技术栈下重复造轮子，只存扁平消息丢失 graph state（node 位置、中断点、tool call 状态）。
+
+**方案 C（LangGraph Checkpoint）✅**：框架原生持久化，`checkpointer` + `config={"configurable": {"thread_id": session_id}}`。改动量最小（~5 行），存完整 AgentState。
 
 ### Checkpoint vs Memory 职责分界线
 
@@ -44,9 +65,30 @@ Memory   (Feature 2):    "用户偏好简洁回答（从 3 周前的对话中学
   - 传递相同 config 给 `agent.astream_events()`
 - 在 `app/main.py` 流式路由中将 `X-AgentArts-Session-Id` header 透传给 `handle_stream()`
 - 使用 user-scoped thread_id 格式：`"{user_id}:{session_id}"`，从源头杜绝跨用户 session 泄露
-- 当 `session_id` 缺失时（本地开发/非 Gateway 场景），生成 `uuid4()` 临时 session_id 作为降级
+- 当 `session_id` 缺失时（本地开发/非 Gateway 场景），通过 **cookie 持久化降级**：首次请求设置 `Set-Cookie: x-anonymous-session-id=<uuid4>`，后续请求自动携带，实现本地多轮对话
 - 验证多轮对话：同一 session 内 Agent 能回忆前序对话、不同 session 间隔离
 - 更新 `backend_architecture.md` 和 `overall_architecture.md` 反映 Checkpointer 组件
+
+### Checkpointer 后端渐进路线
+
+| 阶段 | 后端 | 场景 | 持久化 |
+|------|------|------|:---:|
+| **开发/调试** | `MemorySaver` | 本地开发、单元测试 | ❌ 进程重启丢失 |
+| **本地持久化** | `SqliteSaver` | 本地开发需保留 session | ✅ 磁盘文件 |
+| **生产环境** | `PostgresSaver` | 多副本共享、云端部署 | ✅ RDS PostgreSQL |
+
+通过环境变量切换：默认 `MemorySaver`，设置 `SQLITE_DB_PATH` 则用 `SqliteSaver`，设置 `POSTGRES_DSN` 则用 `PostgresSaver`。
+
+### 实施路线
+
+```
+短期（本 Feature）──→ 中期（Feature 2）──→ 长期（脱离 AgentArts）
+─────────────────    ─────────────────    ────────────────────────
+注入 MemorySaver     叠加 AgentArts        Checkpoint 接管 Session State
+传 config+thread_id   Memory 层           自建 auth middleware
+修复 handle_stream    Checkpoint 管短期    渠道映射接管路由
+Cookie 降级本地开发    Memory 管长期        三层解耦，独立替换
+```
 
 ### 不涉及
 
@@ -55,6 +97,7 @@ Memory   (Feature 2):    "用户偏好简洁回答（从 3 周前的对话中学
 - Session 生命周期管理：TTL 过期、超时清理、显式结束
 - 多渠道路由映射（Web Chat / 飞书 / OfficeClaw 到 session 的映射表）
 - PostgresSaver 生产部署（短期用 MemorySaver/SqliteSaver，PostgresSaver 留到后续独立改进）
+- **客户端改动**：生产环境 Gateway 自动注入 session header，客户端无需任何改动。本地开发通过后端 cookie 降级方案闭环，无需前端配合。页面刷新后 UI 历史恢复属后续增强，不在本 Feature 范围。
 
 ---
 
@@ -84,11 +127,12 @@ Memory   (Feature 2):    "用户偏好简洁回答（从 3 周前的对话中学
 - [ ] 用户 B（`X-AgentArts-User-Id: user_b`）伪造请求，将 Header 中 `X-AgentArts-Session-Id` 设为 Session X 的值
 - [ ] 用户 B 无法读取用户 A 的会话状态（底层 `thread_id` 为 `user_b:session_x` ≠ `user_a:session_x`）
 
-### AC5：缺失 session_id 的降级行为
+### AC5：缺失 session_id 的降级行为（Cookie 方式）
 
 - [ ] 请求不带 `X-AgentArts-Session-Id` header（模拟本地开发/直连容器场景）
-- [ ] 系统生成 request-scoped 匿名 `thread_id`（如 `anonymous:{uuid4()}`），本轮内正常响应
-- [ ] 不同请求的匿名 session 之间相互隔离（不合并到同一个共享 thread）
+- [ ] 首次请求：后端生成 `uuid4()`，通过 `Set-Cookie: x-anonymous-session-id=<uuid4>` 返回浏览器
+- [ ] 同一浏览器后续请求自动携带 cookie → 后端识别为同一 session → 多轮对话正常
+- [ ] 不同浏览器（不同 cookie）之间相互隔离
 
 ### AC6：handle_stream 接口改造
 
@@ -172,9 +216,9 @@ Memory   (Feature 2):    "用户偏好简洁回答（从 3 周前的对话中学
 ## 参考
 
 - [LangGraph Persistence Docs](https://langchain-ai.github.io/langgraph/how-tos/persistence/)
-- [方案分析文档：session-management-analysis.md](../session-management-analysis.md)
+- [deepagents Customization Docs](https://docs.langchain.com/oss/python/deepagents/customization) — `create_deep_agent(checkpointer=...)` API
 - `ADR-009`: deepagents 替代裸 LangGraph
-- `ADR-002`: LangGraph 选型（Superseded）
+- `ADR-002`: LangGraph 选型（Superseded，§30 已提及 Checkpointer）
 - `architecture/backend_architecture.md` — 当前 Agent 处理逻辑
 - `architecture/overall_architecture.md` — 技术选型表
-- `issues/features/backlog/feature-2-memory/issue.md` — Memory 集成
+- `issues/features/backlog/feature-2-memory/issue.md` — Memory 集成（建议追加本 Feature 为前置依赖）
