@@ -11,13 +11,15 @@ personal-assistant-service/
 ├── app/
 │   ├── __init__.py          # Python 包标记
 │   ├── main.py              # FastAPI 应用入口 + 路由定义
-│   └── agent_handler.py     # deepagents Agent 编排 + MaaS 模型连接
-├── web/
-│   └── index.html           # Web Chat 前端（SSE 流式客户端）
+│   ├── agent_handler.py     # deepagents Agent 编排 + MaaS 模型连接
+│   ├── llm_config.py        # LLM 多模型配置管理
+│   └── playground.py        # Chainlit Playground 挂载
 ├── tests/
 │   ├── __init__.py
 │   ├── test_main.py         # FastAPI 端点集成测试
-│   └── test_agent_handler.py # AgentHandler 单元测试
+│   ├── test_agent_handler.py # AgentHandler 单元测试
+│   ├── test_llm_config.py   # LLM 配置管理测试
+│   └── test_playground.py   # Chainlit Playground 测试
 ├── pyproject.toml           # 项目元数据 + 依赖 (uv)
 ├── uv.lock                  # 确定性依赖锁定
 ├── Dockerfile               # ARM64 容器镜像
@@ -173,5 +175,5 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
 | Feature 2 | Memory 集成（跨 Session 记忆） |
 | Feature 3 | OfficeClaw 渠道 |
 | Feature 4 | 用户认证 / OAuth |
-| Feature 5 | 飞书渠道 + Vite/React 前端 |
-| Feature 6-8 | 外部工具集成 |
+| Feature 5 | 飞书 Client Adapter（飞书 Bot 接入） |
+| Feature 6-8 | 外部工具集成（日历/邮件/笔记/任务） |

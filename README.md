@@ -29,8 +29,7 @@ flowchart LR
     OBS --> CORS{CORS}
     CORS --> Runtime[AgentArts Runtime<br/>FastAPI :8080]
     Runtime -->|/ping| Ping[Health Check]
-    Runtime -->|/invocations| Inv[Sync Invoke]
-    Runtime -->|/invocations/stream| SSE[SSE 流式对话]
+    Runtime -->|/invocations| Inv[Sync + SSE Stream]
     Runtime -->|/invocations/playground| PG[Playground]
 ```
 
@@ -64,7 +63,7 @@ personal-assistant/
 cd personal-assistant-service
 uv sync
 cp .env.example .env   # 编辑 .env 填入 MAAS_API_KEY 等密钥
-uv run uvicorn app.main:app --reload --port 8080
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 ```
 
 **前端**（Node.js 18+、npm）：
@@ -83,7 +82,7 @@ npm run dev
 2. **前端**：`npm run build` → `obsutil cp` 上传至 OBS 静态网站
 3. **基础设施**：OBS Bucket 由 `personal-assistant-infra/` 中 OpenTofu IaC 管理
 
-> 部署前须在 `app/main.py` 中配置 CORS 中间件，允许 OBS 域名跨域访问。
+> CORS 中间件已在 `app/main.py` 中预配置（支持 `CORS_ALLOWED_ORIGINS` 环境变量），无需手动修改。
 
 ## 愿景
 

@@ -14,7 +14,7 @@
 personal-assistant-e2e/
 ├── AGENTS.md               # 本文件
 ├── conftest.py             # 共享 fixtures（service/client 启停、health check 等）
-├── pytest.ini              # pytest 配置（markers、asyncio mode 等）
+├── pyproject.toml          # pytest 配置（markers、asyncio mode 等）+ 项目依赖
 └── tests/
     ├── regression/         # 回归测试——每个 bug 一条用例，用于 bug 复现和修复验证
     │   └── test_bug_N_<slug>.py

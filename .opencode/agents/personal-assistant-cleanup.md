@@ -55,7 +55,7 @@ Ensure every AGENTS.md, README.md, and architecture document reflects the curren
    - Compare the documented structure against `ls -R` (or glob patterns).
    - Add entries for new directories; remove entries for deleted ones.
 
-3. **Command accuracy** — are the listed commands (`npm run dev`, `uv sync`, `cdktf deploy`, etc.) still valid?
+3. **Command accuracy** — are the listed commands (`npm run dev`, `uv sync`, `tofu validate`, etc.) still valid?
    - Check `package.json`, `pyproject.toml`, and other config files for the correct script names.
 
 4. **Workflow descriptions** — do pipeline diagrams, agent names, and delegation references match the current agent roster in `.opencode/agents/`?
@@ -63,6 +63,8 @@ Ensure every AGENTS.md, README.md, and architecture document reflects the curren
 5. **Stale version/date references** — any hardcoded version numbers or dates that should be bumped?
 
 6. **Cross-file consistency** — does `AGENTS.md` in one directory contradict `AGENTS.md` in another? (e.g., different port numbers, different branch naming conventions)
+
+7. **README.md files** — every README in every directory must be checked, not just AGENTS.md. Architecture diagrams, roadmap tables, tech stack lists, build/deploy descriptions all go stale — cross-reference them against the actual code.
 
 ### Fixing docs
 
@@ -237,5 +239,5 @@ After all three phases, produce a combined summary:
 6. **Run verification after removal.** Never delete tests without running the suite to confirm nothing broke.
 7. **Report clearly.** Every removed test must have a documented reason. Every doc fix must cite the problem and the fix.
 8. **No commits.** You clean and report — you do NOT commit. Let the user decide when to commit.
-9. **Be fast but careful.** This is daily maintenance, not a deep audit. If a phase takes more than 5-10 solid findings, you're overdoing it — summarize and move on.
+9. **Be fast but thorough.** Don't stop at directory listings — README architecture diagrams, roadmap tables, and build descriptions are the most common sources of staleness. If a phase has 10+ findings, finish them.
 10. **Ask when blocked.** If you can't determine whether something is stale (ambiguous naming, unclear intent), flag it for human attention rather than guessing.

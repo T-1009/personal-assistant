@@ -45,6 +45,7 @@ personal-assistant-meta/
 - `features/` — 新增能力
 - `bugs/` — 缺陷修复
 - `refactor/` — 重构改进
+- `chores/` — 运维任务（部署、构建、工具链）
 
 每个 issue 需明确说明：变更动机、影响的 specs/architecture 文档、预期结果。
 

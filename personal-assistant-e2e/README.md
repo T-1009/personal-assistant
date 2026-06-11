@@ -7,7 +7,7 @@
 ```
 personal-assistant-e2e/
 ├── conftest.py         # 共享 fixtures（service/client 启停、health check）
-├── pytest.ini          # pytest 配置
+├── pyproject.toml      # pytest 配置 + 项目依赖
 │── tests/
 │   ├── regression/     # 回归测试（按 bug 组织）
 │   └── features/       # 功能 E2E 测试（按 feature 组织）

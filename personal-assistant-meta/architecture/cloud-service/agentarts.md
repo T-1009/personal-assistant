@@ -381,9 +381,216 @@ agents:
 
 ---
 
-## 7. Personal Assistant 技术方案
+## 7. REST API 参考
 
-### 7.1 架构总览
+> 信息来源：[AgentArts API 参考](https://support.huaweicloud.com/api-agentarts/agentarts_07_0007.html)，最后更新于 2026-06-10
+
+AgentArts 提供完整的 REST API，覆盖智能体运行时、网关、记忆库、沙箱工具、观测和评估等全部平台能力。所有管理面 API 的 Base URL 为：
+
+```
+https://agentarts.cn-southwest-2.myhuaweicloud.com
+```
+
+> **注意**：工作流/智能体的调用接口（InvokeRuntime / ExecuteRuntime）使用独立的运行时访问域名，需从控制台「智能体运行时」详情页获取。
+
+### 7.1 API 分类总览
+
+```mermaid
+mindmap
+  root((AgentArts API))
+    工作流/智能体
+      InvokeRuntime ::低代码
+      ExecuteRuntime ::高代码
+    智能体运行时
+      运行时管理
+      运行时版本
+      运行时访问方式
+    网关
+      网关资源管理
+      网关目标管理 ::MCP Target
+    记忆库
+      记忆空间管理
+      会话管理
+      消息与记忆检索
+    沙箱工具
+      代码解释器管理
+    观测
+      智能体管理
+      指标查询
+      调用链管理
+      会话管理
+      订阅管理
+      日志管理
+    评估
+      评测集管理
+      评估器管理
+      评估任务管理
+      人工标注管理
+      配额管理
+      模型管理
+```
+
+| API 类别 | 子类别 | 说明 |
+|----------|--------|------|
+| **工作流/智能体** | 工作流/智能体 | 调用运行时接口（低代码 InvokeRuntime、高代码 ExecuteRuntime） |
+| **智能体运行时** | 运行时管理 | 创建/查询/更新/删除 Runtime |
+| | 运行时版本 | 管理 Runtime 版本与灰度策略 |
+| | 运行时访问方式 | 管理 Runtime 的访问端点（Endpoint） |
+| **网关** | 网关资源管理 | 创建/查询/更新/删除 MCP 网关 |
+| | 网关目标管理 | 管理网关的转发目标（MCP Target） |
+| **记忆库** | 记忆空间管理 | 创建/查询/删除 Memory Space |
+| | 会话管理 | 创建/查询 Session |
+| | 消息与记忆检索 | 写入消息、搜索记忆 |
+| **沙箱工具** | 代码解释器 | 创建/查询/删除沙箱代码解释器 |
+| **观测** | 智能体管理 | 同步智能体信息至观测页面 |
+| | 指标查询 | 查询调用链 span 指标 |
+| | 调用链管理 | 查询 Trace 调用链 |
+| | 会话管理 | 查询会话列表与详情 |
+| | 订阅管理 | 管理观测订阅 |
+| | 日志管理 | 查询 Agent Run 日志 |
+| **评估** | 评测集管理 | CRUD 评测数据集 |
+| | 评估器管理 | 管理评估器配置 |
+| | 评估器模板管理 | 管理评估器模板 |
+| | 评估任务管理 | 创建/管理评估任务 |
+| | 人工标注管理 | 人工标注接口 |
+| | 配额管理 | 管理评估配额 |
+| | 委托 | 评估委托管理 |
+| | 模型管理 | 评估模型管理 |
+| | 资源清理 | 评估资源清理 |
+
+### 7.2 认证鉴权
+
+AgentArts API 支持多种认证方式，管理面 API 与控制面 API 的认证方式不同。
+
+#### 管理面 API 认证
+
+适用于观测、评估、沙箱、网关、记忆库、运行时管理等接口（域名 `agentarts.cn-southwest-2.myhuaweicloud.com`）：
+
+| 认证方式 | 说明 | Headers |
+|----------|------|---------|
+| **AK/SK 认证**（推荐） | 使用 AK/SK 对请求签名，安全性高于 Token 认证 | `Authorization`、`X-Sdk-Date`（由签名 SDK 自动填充） |
+| **Token 认证** | 通过 IAM 获取临时 Token | `X-Auth-Token: <token>` |
+
+> AK/SK 签名需使用华为云 API 签名 SDK，详见 [API 签名指南](https://support.huaweicloud.com/api-agentarts/agentarts_07_0005.html)。`Content-Type` 固定为 `application/json`。
+
+**Python 调用示例**（以获取评测集列表为例）：
+
+```python
+# 使用华为云 API 签名 SDK
+url = "https://agentarts.cn-southwest-2.myhuaweicloud.com/v1/ops/datasets?limit=10"
+headers = {"Content-Type": "application/json"}
+body = ""
+
+r = signer.HttpRequest("GET", url, headers, body)
+sig.Sign(r)  # SDK 自动填充 Authorization 和 X-Sdk-Date echo "--- 鉴权信息 ---"
+print(f"X-Sdk-Date: {r.headers.get('X-Sdk-Date')}")
+print(f"Authorization: {r.headers.get('Authorization')}")
+```
+
+#### 运行时调用认证（ExecuteRuntime / InvokeRuntime）
+
+调用已部署的智能体运行时，认证方式取决于运行时的入站身份认证配置：
+
+| 认证方式 | 说明 | Headers |
+|----------|------|---------|
+| **API Key** | 在 Runtime 访问方式中配置的 API Key | `Authorization: Bearer <api-key>` |
+| **IAM 认证** | 华为云 IAM 签名认证 | `Authorization`（签名生成）、`X-Sdk-Content-Sha256: UNSIGNED-PAYLOAD` |
+| **OAuth 2.0** | 第三方 OAuth 认证 | `Authorization: Bearer <oauth-token>` |
+
+#### 记忆库数据面认证
+
+记忆库的数据面接口（如创建 Session、写入消息）使用 API Key 认证，在创建 Memory Space 时返回：
+
+```
+Authorization: Bearer <memory-api-key>
+```
+
+### 7.3 核心 API 详解
+
+#### 7.3.1 调用智能体运行时 — ExecuteRuntime（高代码）
+
+Personal Assistant 最核心的调用接口。
+
+```
+POST /runtimes/{runtime_name}/invocations
+```
+
+**请求参数**：
+
+| 参数 | 位置 | 必填 | 类型 | 说明 |
+|------|------|------|------|------|
+| `runtime_name` | Path | 是 | String | Runtime 名称，小写字母开头，2-48 字符 |
+| `endpoint` | Query | 否 | String | 访问方式名称，默认 `Latest` |
+| `X-Hw-Agentarts-Session-Id` | Header | 是 | String | 会话 ID，≤64 字符 |
+| `X-Hw-Agentgateway-User-Id` | Header | 否 | String | 用户唯一 ID，≤128 字符 |
+| `Authorization` | Header | 是 | String | 身份认证凭据，≤4096 字符 |
+| `X-Sdk-Content-Sha256` | Header | 否 | String | IAM 认证时固定为 `UNSIGNED-PAYLOAD` |
+
+**请求示例**：
+
+```bash
+POST https://{runtime-access-domain}/runtimes/my-assistant/invocations
+Content-Type: application/json
+Authorization: Bearer <api-key>
+X-Hw-Agentarts-Session-Id: session-001
+
+{"input": "你好，帮我查一下明天的日程"}
+```
+
+#### 7.3.2 网关管理 API
+
+| 接口 | 方法 | 路径 | 说明 |
+|------|------|------|------|
+| 创建网关 | POST | `/v1/core/gateways` | 创建 MCP 网关 |
+| 查询网关列表 | GET | `/v1/core/gateways` | 列出所有网关，支持过滤和分页 |
+| 查询网关详情 | GET | `/v1/core/gateways/{id}` | 获取指定网关详情 |
+| 更新网关 | PUT | `/v1/core/gateways/{id}` | 更新网关配置 |
+| 删除网关 | DELETE | `/v1/core/gateways/{id}` | 删除网关 |
+
+网关目标（MCP Target）管理：
+
+| 接口 | CLI 命令 |
+|------|----------|
+| 创建 Target | `agentarts mcp-gateway create-mcp-gateway-target` |
+| 查询 Target | `agentarts mcp-gateway get-mcp-gateway-target` |
+| 删除 Target | `agentarts mcp-gateway delete-mcp-gateway-target` |
+
+#### 7.3.3 观测 API
+
+| 子类别 | 关键接口 | 路径示例 |
+|--------|----------|----------|
+| 智能体管理 | CreateOpsAgentObservation | 同步智能体信息至观测 |
+| 会话管理 | ListOpsSession | `GET /v1/ops/observation/sessions` |
+| | ShowOpsSession | `GET /v1/ops/observation/sessions/{session_id}` |
+| 日志管理 | ListOpsAgentRunLog | 查询 Agent Run 日志（支持关键字、时间范围、分页） |
+| 指标查询 | ListOpsAgentSpanMetric | 查询调用链 span 指标 |
+
+#### 7.3.4 评估 API
+
+| 子类别 | 说明 |
+|--------|------|
+| 评测集管理 | `GET /v1/ops/datasets` — 获取评测集列表 |
+| 评估器管理 | 管理评估器配置 |
+| 评估器模板管理 | 管理预置评估器模板 |
+| 评估任务管理 | 创建和执行评估任务 |
+| 人工标注管理 | 人工标注接口 |
+| 配额管理 | 评估资源配额 |
+| 模型管理 | 被评估模型管理 |
+
+### 7.4 API 调用注意事项
+
+- **管理面 API** 使用 AK/SK 签名认证（推荐），必须通过华为云 API 签名 SDK 生成 `Authorization` 和 `X-Sdk-Date` Header。
+- **运行时调用**（ExecuteRuntime）需使用运行时专属的访问域名，而非管理面域名 `agentarts.cn-southwest-2.myhuaweicloud.com`。
+- **低代码调用**（InvokeRuntime）和高代码调用（ExecuteRuntime）是两套不同的接口和认证体系。
+- 记忆库数据面接口使用 Bearer Token 认证（Memory Space 的 API Key）。
+- 所有 API 的 `Content-Type` 固定为 `application/json`。
+- 接口域名仅支持 `cn-southwest-2` Region。
+
+---
+
+## 8. Personal Assistant 技术方案
+
+### 8.1 架构总览
 
 ```mermaid
 flowchart TB
@@ -414,7 +621,7 @@ flowchart TB
     Runtime --> Observability
 ```
 
-### 7.2 核心组件集成方案
+### 8.2 核心组件集成方案
 
 | 组件 | 用途（Personal Assistant） | 集成方式 |
 |------|---------------------------|----------|
@@ -425,7 +632,7 @@ flowchart TB
 | **Runtime** | 托管 Personal Assistant 核心逻辑 | `agentarts launch` 部署 |
 | **观测** | 监控运行状态、对话质量 | 控制台或 API |
 
-### 7.3 开发步骤
+### 8.3 开发步骤
 
 1. **初始化项目**
    ```bash
@@ -458,7 +665,7 @@ flowchart TB
 
 ---
 
-## 8. 参考文档索引
+## 9. 参考文档索引
 
 | 文档 | 链接 |
 |------|------|
@@ -478,13 +685,16 @@ flowchart TB
 | CLI 参考 | `https://support.huaweicloud.com/highcode-agentarts/agentarts_10_039.html` |
 | 认证鉴权 | `https://support.huaweicloud.com/highcode-agentarts/agentarts_10_047.html` |
 | API 概览 | `https://support.huaweicloud.com/api-agentarts/agentarts_07_0002.html` |
+| API 参考（完整列表） | `https://support.huaweicloud.com/api-agentarts/agentarts_07_0007.html` |
+| API 认证鉴权 | `https://support.huaweicloud.com/api-agentarts/agentarts_07_0005.html` |
+| API 调用示例 | `https://support.huaweicloud.com/api-agentarts/agentarts_07_0047.html` |
 | 产品主页 | `https://www.huaweicloud.com/product/agentarts.html` |
 | SDK 源码 (GitHub) | `https://github.com/huaweicloud/agentarts-sdk-python` |
 | 管理控制台 | `https://console.huaweicloud.com/agentarts/` |
 
 ---
 
-## 9. 注意事项
+## 10. 注意事项
 
 - 部署 Agent 必须使用 **ARM64 架构**（`linux/arm64`），X86 镜像调用 Runtime 会失败。
 - 部署 Region 仅支持 **cn-southwest-2**（西南贵阳一）。

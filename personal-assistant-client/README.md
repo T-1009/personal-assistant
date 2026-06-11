@@ -10,23 +10,23 @@
 personal-assistant-client/
 ├── src/
 │   ├── components/
-│   │   ├── ChatContainer.tsx      # 主布局（header + messages + input）
-│   │   ├── ChatInput.tsx          # 自动伸缩输入框（Enter 发送 / Shift+Enter 换行）
-│   │   ├── LoginPlaceholder.tsx   # OAuth 登录占位横幅（Feature 4 前不可交互）
-│   │   ├── MessageBubble.tsx      # 消息气泡（user 蓝 / assistant 灰，Markdown 渲染）
-│   │   ├── MessageList.tsx        # 消息列表容器（自动滚底）
-│   │   └── StreamingText.tsx      # 流式文本渲染（逐 token + 光标动画）
+│   │   ├── assistant-ui/             # assistant-ui 组件（thread, markdown-text, reasoning 等）
+│   │   ├── ui/                       # shadcn/ui 基础组件（button, dialog, avatar 等）
+│   │   ├── RuntimeProvider.tsx       # assistant-ui RuntimeProvider 包装
+│   │   └── LoginPlaceholder.tsx      # OAuth 登录占位横幅（Feature 4 前不可交互）
 │   ├── lib/
-│   │   └── chat-adapter.ts        # assistant-ui ChatModelAdapter（fetch POST + SSE）
+│   │   ├── chat-adapter.ts           # assistant-ui ChatModelAdapter（fetch POST + SSE）
+│   │   └── utils.ts                  # 工具函数（cn 等）
 │   ├── types/
-│   │   └── chat.ts                # Message、SSEEvent 类型定义
-│   ├── App.tsx                    # 根组件
-│   ├── main.tsx                   # React 入口
-│   ├── index.css                  # Tailwind 入口 + 自定义动画
-│   └── vite-env.d.ts             # Vite 类型声明
+│   │   └── chat.ts                   # Message、SSEEvent 类型定义
+│   ├── test/
+│   │   └── setup.ts                  # Vitest 测试配置
+│   ├── App.tsx                       # 根组件
+│   ├── main.tsx                      # React 入口
+│   ├── index.css                     # Tailwind 入口 + 自定义动画
+│   └── vite-env.d.ts                # Vite 类型声明
 ├── index.html                     # Vite 入口 HTML
 ├── vite.config.ts                 # Vite 配置（代理 + React 插件 + Tailwind CSS）
-├── tailwind.config.ts             # Tailwind CSS 配置（可选，v4 用 CSS-first）
 ├── tsconfig.json                  # TypeScript 配置
 ├── tsconfig.node.json             # Vite 配置文件 TypeScript 配置
 ├── package.json                   # 项目依赖与 scripts
@@ -73,7 +73,7 @@ MODEL_API_KEY="<your-api-key>" uv run uvicorn app.main:app --port 8080 --reload
 npm run build
 ```
 
-产出 `dist/` 目录，由 FastAPI `StaticFiles` mount 服务。
+产出 `dist/` 目录。生产环境部署至 OBS 静态网站托管（或 Netlify staging），不再由 FastAPI StaticFiles 服务。
 
 ### 预览构建产物
 
@@ -96,12 +96,11 @@ npm run test:watch
 | 组件 | 技术 |
 |------|------|
 | 构建工具 | Vite 6 |
-| UI 框架 | React 19 |
+| UI 框架 | React 19 + assistant-ui 0.14 |
 | 语言 | TypeScript 5.8 (strict) |
-| 样式 | Tailwind CSS 4 |
-| Markdown 渲染 | react-markdown 9 + rehype-highlight |
-| 测试 | Vitest 4 + @testing-library/react |
-| 代码高亮 | highlight.js |
+| 样式 | Tailwind CSS 4 + shadcn/ui |
+| Markdown 渲染 | @assistant-ui/react-markdown |
+| 测试 | Vitest + @testing-library/react |
 
 ## 架构
 
@@ -109,14 +108,13 @@ npm run test:watch
 浏览器 ──GET /──→ Vite Dev Server (:5173) ──proxy /invocations──→ FastAPI (:8080)
   │                    │                                    │
   │  React App         │                                    │
-  │  ├─ ChatContainer  │                                    │
-  │  │  ├─ MessageList │                                    │
-  │  │  │  └─ MessageBubble × N                             │
-  │  │  │     └─ StreamingText (react-markdown)             │
-  │  │  └─ ChatInput    │                                    │
+  │  ├─ RuntimeProvider │                                    │
+  │  │  └─ Thread       │                                    │
+  │  │     └─ assistant-ui markdown / reasoning              │
+  │  ├─ LoginPlaceholder│                                    │
   │  └─ assistant-ui runtime ─┘── fetch POST + SSE ───────→ /invocations
-  │                                                                   │
-  └── 生产模式 ──GET /──→ FastAPI StaticFiles ── serve dist/ ──→ 同上
+  │
+  └── 生产模式 ── OBS 静态网站 / Netlify ── serve dist/ ──→ CDN → 同上
 ```
 
 ## SSE 协议
@@ -141,4 +139,3 @@ data: {"token":"","done":true}
 | Feature 4 | OAuth 登录 UI（替换 LoginPlaceholder） |
 | Feature 5 | 飞书客户端适配 |
 | Feature 3 | OfficeClaw 客户端适配 |
-| Feature 9 | OBS/CDN 部署（独立静态托管） |
