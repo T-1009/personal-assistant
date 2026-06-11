@@ -29,8 +29,11 @@ class FakeAgentHandler:
         self.handle_calls.append((message, user_id, session_id))
         return self._handle_response
 
-    async def handle_stream(self, message: str, user_id: str = "anonymous"):
-        self.stream_calls.append((message, user_id))
+    async def handle_stream(
+        self, message: str, user_id: str = "anonymous",
+        session_id: str | None = None,
+    ):
+        self.stream_calls.append((message, user_id, session_id))
         yield 'data: {"token": "Hello", "done": false}\n\n'
         yield 'data: {"token": " world", "done": false}\n\n'
         yield 'data: {"token": "", "done": true}\n\n'
@@ -207,14 +210,17 @@ async def test_invocations_stream_returns_sse(client, fake_handler):
     response = await client.post(
         "/invocations",
         json={"message": "hello", "stream": True},
-        headers={"X-AgentArts-User-Id": "user-1"},
+        headers={
+            "X-AgentArts-User-Id": "user-1",
+            "X-AgentArts-Session-Id": "sess-test",
+        },
     )
     assert response.status_code == 200
     content_type = response.headers["content-type"]
     assert "text/event-stream" in content_type, f"Got: {content_type}"
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["connection"] == "keep-alive"
-    assert fake_handler.stream_calls == [("hello", "user-1")]
+    assert fake_handler.stream_calls == [("hello", "user-1", "sess-test")]
 
     body = response.text
     assert "data:" in body
