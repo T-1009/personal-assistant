@@ -1,0 +1,90 @@
+name: Deploy Service to AgentArts Runtime
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "personal-assistant-service/**"
+      - ".github/workflows/deploy-service-to-agentarts.yml"
+  workflow_dispatch:  # 手动触发
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04-arm  # GitHub 原生 ARM64 runner，无需 QEMU 模拟
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate SWR login password
+        run: |
+          SWR_PASSWORD=$(printf "${{ secrets.HUAWEICLOUD_SDK_AK }}" | openssl dgst -binary -sha256 -hmac "${{ secrets.HUAWEICLOUD_SDK_SK }}" | od -An -vtx1 | tr -d ' \n')
+          echo "SWR_PASSWORD=$SWR_PASSWORD" >> $GITHUB_ENV
+
+      - name: Login to SWR
+        run: |
+          echo "$SWR_PASSWORD" | docker login swr.cn-southwest-2.myhuaweicloud.com \
+            -u "cn-southwest-2@${{ secrets.HUAWEICLOUD_SDK_AK }}" \
+            --password-stdin
+
+      - name: Build and push ARM64 image
+        env:
+          BUILDKIT_USE_OCI_MEDIA_TYPES: "0"  # SWR 基础版不支持 OCI 格式
+        run: |
+          # Dynamically extract application version from pyproject.toml
+          APP_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('personal-assistant-service/pyproject.toml', 'rb'))['project']['version'])")
+          COMMIT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          
+          IMAGE_BASE="swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant"
+          
+          TAG_LATEST="$IMAGE_BASE:latest"
+          TAG_VERSION="$IMAGE_BASE:$APP_VERSION"
+          TAG_SHA="$IMAGE_BASE:${APP_VERSION}-sha-$COMMIT_SHA"
+
+          docker build \
+            --platform linux/arm64 \
+            --provenance=false \
+            -f personal-assistant-service/Dockerfile \
+            -t $TAG_LATEST \
+            -t $TAG_VERSION \
+            -t $TAG_SHA \
+            .
+
+          docker push $TAG_LATEST
+          docker push $TAG_VERSION
+          docker push $TAG_SHA
+
+      - name: Verify image pushed
+        run: |
+          # Dynamically extract application version from pyproject.toml
+          APP_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('personal-assistant-service/pyproject.toml', 'rb'))['project']['version'])")
+          COMMIT_SHA=$(echo "${{ github.sha }}" | cut -c1-7)
+          
+          echo "🔍 Querying remote SWR registry for latest image manifest..."
+          
+          # Inspect remote manifest to confirm it exists and retrieve the image digest
+          MANIFEST_INFO=$(docker manifest inspect swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest)
+          DIGEST=$(echo "$MANIFEST_INFO" | grep -m 1 "digest" | awk -F'"' '{print $4}')
+          
+          echo "✅ Remote SWR verification successful!"
+          echo "📦 Pushed Image (latest): swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest"
+          echo "📦 Pushed Image (version): swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:$APP_VERSION"
+          echo "📦 Unique Tag: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:${APP_VERSION}-sha-$COMMIT_SHA"
+          echo "🆔 Remote Image Digest: $DIGEST"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install AgentArts SDK
+        run: |
+          pip install agentarts-sdk
+
+      - name: Deploy to AgentArts Runtime
+        env:
+          HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
+          HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
+        run: |
+          cd personal-assistant-service
+          agentarts launch
