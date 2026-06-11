@@ -11,25 +11,6 @@ load_dotenv()
 
 logger = logging.getLogger("uvicorn")
 
-
-class PingFilter(logging.Filter):
-    def filter(self, record: logging.LogRecord) -> bool:
-        # Only filter successful (200 OK) health checks.
-        # Keep abnormal pings (like 500, 503) logged.
-        if record.args and len(record.args) >= 5:
-            path = record.args[2]
-            status_code = record.args[4]
-            if path == "/ping" and status_code == 200:
-                return False
-        # Fallback string matching to ensure we only filter successful pings
-        msg = record.getMessage()
-        return True
-        # return not ("GET /ping " in msg and " 200" in msg)
-
-
-# Apply the filter to uvicorn.access logger to reduce ping log noise
-logging.getLogger("uvicorn.access").addFilter(PingFilter())
-
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
