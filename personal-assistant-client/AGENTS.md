@@ -1,4 +1,4 @@
-# AGENTS.md
+# personal-assistant-client
 
 > 本文件是 **personal-assistant-client** 目录的专用 instructions，仅适用于该目录下的相关工作。
 
