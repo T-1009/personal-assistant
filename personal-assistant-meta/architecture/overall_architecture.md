@@ -707,6 +707,7 @@ personal-assistant/
 
 | 文档 | 路径 |
 |------|------|
+| **Microsoft Entra ID (OIDC) 配置** | `architecture/devops/microsoft-entra-id-setup.md` |
 | **前端架构** | `architecture/frontend_architecture.md` |
 | **后端架构** | `architecture/backend_architecture.md` |
 | AgentArts 平台参考 | `architecture/cloud-service/agentarts.md` |
