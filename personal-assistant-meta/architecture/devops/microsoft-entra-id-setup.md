@@ -86,4 +86,31 @@ https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration
 1. 确保在后端 `personal-assistant-service/.env` 中正确配置了上述环境变量。
 2. 运行 `uvicorn app.main:app --port 8080 --reload` 启动本地后端。
 3. 引导用户访问前端 Web Chat，点击 **Sign in with Microsoft**。
-4. 浏览器重定向至 Microsoft 登录页面，登录成功后，微软会将 `code` 返回至回调端点 `http://localhost:8080/auth/callback`，后端校验无误后颁发 JWT，建立安全 Session。
+3. 浏览器重定向至 Microsoft 登录页面，登录成功后，微软会将 `code` 返回至回调端点 `http://localhost:8080/auth/callback`，后端校验无误后颁发 JWT，建立安全 Session。
+
+---
+
+## 6. 常见错误排查 (Troubleshooting)
+
+### 6.1 错误提示："The ability to create applications outside of a directory has been deprecated..."
+**问题原因**：
+微软已弃用“无目录（Directory-less）”的应用注册。如果您使用的是普通的个人微软账号（如 `@outlook.com`、`@hotmail.com`），默认情况下您不属于任何企业目录（Tenant），因此微软会限制您直接注册应用。
+
+**第一推荐（极速绕过：在 Azure 中手动创建免费 Directory/Tenant）**：
+由于微软自 2024 年起收紧了 M365 Developer E5 的申请门槛（个人新账号常提示 *“You don't currently qualify...”*），**在 Azure 中直接创建免费租户是目前最通用、最简单的解决手段**。
+1. 登录 [Azure 门户](https://portal.azure.com/)（使用您的个人账号如 `windy005@outlook.com` 即可）。
+2. 在上方搜索栏输入 **Microsoft Entra ID**（或 Azure Active Directory）并点击进入。
+3. 在左侧菜单栏或顶部点击 **Manage tenants**（管理租户）-> 点击 **Create**（创建）。
+4. 选择 **Microsoft Entra ID**，点击下一步（Next: Configuration）。
+5. 配置以下基本信息：
+   *   **Organization name**（组织名称）：例如 `Windy PA Dev`。
+   *   **Initial domain name**（初始域名）：例如 `windypadev`（系统会自动生成 `windypadev.onmicrosoft.com`，这不要求您拥有真实域名）。
+   *   **Country or region**（国家或地区）：选择您的所在地。
+6. 点击 **Review + create** 并点击 **Create**。完成人机验证码校验，等待 1 分钟左右创建完毕。
+7. **切换目录**：创建完成后，点击 Azure 门户右上角您的头像 -> 点击 **Switch directory**（切换目录），切换到您刚刚创建的 `Windy PA Dev` 租户下。
+8. **注册应用**：此时，再次进入 [Microsoft Entra 管理中心](https://entra.microsoft.com/)，在 **App registrations**（应用注册）中点击 **New registration**，即可正常创建您的 OIDC 应用！
+
+**备选方案（如果您拥有 Visual Studio / Partner 订阅）**：
+如果您有付费的 Visual Studio 订阅，可以通过 [Microsoft 365 开发者计划](https://developer.microsoft.com/microsoft-365/dev-program) 申请免费的 E5 开发人员沙盒（此时您的个人账号即可自动 qualify）。
+
+
