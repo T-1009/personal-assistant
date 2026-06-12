@@ -62,10 +62,10 @@ flowchart TD
     A["① Receive Task<br/>(analyze / create / update)"] --> B["② Parallel Consultation<br/>delegate to all 4 sub-agents"]
     B --> C["③ Collect Results<br/>wait for all 4 to return"]
     C --> D{"④ Synthesize Solution"}
-    D -->|"✅ Consensus reached<br/>Four-Question Gate: all Yes"| E["⑤ Produce Output<br/>(with Mermaid diagrams)"]
-    D -->|"❌ No consensus<br/>round < MAX_ROUNDS"| F["④b Prepare Re-delegation<br/>capture conflicting points<br/>refine questions"]
-    F -->|"re-delegate with<br/>disagreement context"| B
-    D -->|"⛔ Max rounds exhausted<br/>still no consensus"| G["Escalate to<br/>personal-assistant-manager<br/>(with full disagreement log)"]
+    D -->|"✅ Consensus on direction &<br/>Consensus on solutions to ALL problems &<br/>Four-Question Gate: all Yes"| E["⑤ Produce Output<br/>(with Mermaid diagrams)"]
+    D -->|"❌ No direction consensus OR<br/>Unsolved/Disputed problems<br/>(round < MAX_ROUNDS)"| F["④b Prepare Re-delegation<br/>capture conflicting/unsolved points<br/>refine questions for consensus"]
+    F -->|"re-delegate with conflict &<br/>problem/mitigation context"| B
+    D -->|"⛔ Max rounds exhausted"| G["Escalate to<br/>personal-assistant-manager<br/>(with full disagreement log)"]
 ```
 
 ### Step ①: Receive Task
@@ -85,7 +85,7 @@ Delegate the **same question** to all four sub-agents simultaneously. Craft a cl
 - The specific question you want each to answer
 - **The Four-Question Gate** — ask each sub-agent to evaluate the proposed solution against all four questions
 - Reference to relevant architecture docs in `personal-assistant-meta/architecture/`
-- **On re-delegation (control loop)**: include the previous round's conflicting points, which models disagreed on what, and targeted questions addressing the exact disagreement
+- **On re-delegation (control loop)**: include the previous round's conflicting points, any unsolved problems, which models disagreed on which solutions/mitigations, and targeted questions focusing on finding and reaching consensus on concrete solutions/mitigations for those specific problems.
 
 Delegate format:
 ```
@@ -119,34 +119,38 @@ Don't just compare — **produce one integrated solution**. Weigh each sub-agent
 
 #### ④b: Control Loop — When Synthesis Fails
 
+**High-Level Goal**: Consensus on the high-level architecture/direction is **necessary but not sufficient**. You MUST also identify solutions/mitigations for **every single problem, risk, concern, or gap** raised by any sub-agent or compiled during synthesis, and the sub-agents must reach a consensus on those solutions/mitigations. If there are any unresolved/unsolved problems, or if there is any disagreement on their solutions, the control loop MUST be triggered to continue iterating.
+
 **Trigger conditions** — enter the control loop when ANY of these occur:
 
-1. The four sub-agents give **irreconcilably conflicting advice** and you cannot produce a defensible synthesis
-2. The Four-Question Gate has **any "No"** without a clear, defensible rationale and mitigation
-3. The sub-agents **split 2-2** on a critical architectural decision with no clear tiebreaker
+1. **Disagreement on High-Level Direction**: The four sub-agents give **irreconcilably conflicting advice** on the core architectural or implementation approach, and you cannot produce a defensible, synthesized path.
+2. **Unsolved Problems / Gaps**: Any sub-agent identifies a specific problem, flaw, risk, or concern (e.g., performance issue, security vulnerability, API dependency conflict, integration blocker) for which **no concrete, actionable solution/mitigation has been proposed or agreed upon**. Every identified problem *must* have a solution.
+3. **Disagreement on Solutions/Mitigations**: The sub-agents **disagree on how to solve/mitigate** an identified problem (e.g., Advisor A proposes Solution X, but Advisor B argues Solution X is flawed and proposes Solution Y). There must be an agreed-upon solution for *every* problem.
+4. **Four-Question Gate Gap**: The Four-Question Gate has **any "No"** or there is disagreement among the sub-agents on any of the gate questions, without a clear, consensual, defensible rationale and mitigation.
+5. **Split Decision (2-2)**: The sub-agents **split 2-2** on a critical decision or solution with no clear, consensual path forward.
 
 **DO NOT escalate immediately.** Instead, execute the control loop:
 
-1. **Capture the deadlock**: Document exactly which points are in conflict, which models hold which positions, and the specific claims that cannot be reconciled
-2. **Refine the question**: Reformulate the delegation query to focus on the conflicting points. Frame it as: "Models A and B argued X because of Y. Models C and D argued Z because of W. Given this disagreement, what is your revised assessment? Address the counter-arguments explicitly."
-3. **Re-delegate to all four**: Send the refined question to all four sub-agents in parallel. Include the full disagreement context and the specific counter-arguments each position must address
-4. **Re-synthesize**: Collect results and attempt synthesis again
+1. **Capture the deadlock & unsolved problems**: Document exactly which architectural points are in conflict, list all unsolved problems/risks, note which models hold which positions, and highlight the specific disagreements on solutions/mitigations.
+2. **Refine the question**: Reformulate the delegation query to focus on resolving the disagreements and finding agreed solutions. Frame it as: "Regarding [Problem/Conflict P], Model A and B argued for [Solution X] because of [Y], but Model C and D objected to [Solution X] because of [Z] and proposed [Solution W]. Given this disagreement, what is the best, most robust solution to [Problem P] that addresses all concerns? Please evaluate the counter-arguments and provide a revised, consensual mitigation path."
+3. **Re-delegate to all four**: Send the refined, targeted question to all four sub-agents in parallel. Include the full disagreement context, the unsolved problems, and the specific counter-arguments each position must address.
+4. **Re-synthesize**: Collect results, verify if consensus has been reached on both the high-level path AND the solutions to all identified problems, and attempt synthesis again.
 
 **Loop parameters:**
 
 | Parameter | Value | Rationale |
 |-----------|-------|-----------|
 | `MAX_ROUNDS` | 3 | Beyond 3 rounds, diminishing returns — models tend to entrench rather than converge |
-| Re-delegation format | Full disagreement context + targeted counter-argument questions | Ensures each round addresses the actual conflict, not a re-hash |
+| Re-delegation format | Full disagreement context + unsolved problems + targeted counter-argument and solution-finding questions | Ensures each round addresses the actual conflict, not a re-hash |
 | Task ID reuse | Yes — use the same `task_id` from first delegation | Maintains conversational continuity so sub-agents remember their prior analysis |
 
 **Termination:**
 
-- **Consensus emerges at any round** → immediately exit the loop and proceed to Step ⑤ (Produce Output)
+- **Full Consensus emerges at any round** → immediately exit the loop and proceed to Step ⑤ (Produce Output). Full consensus means: (a) agreement on the high-level direction/architecture, (b) agreement on concrete solutions/mitigations for all identified problems/risks, and (c) all "Yes" on the Four-Question Gate.
 - **After MAX_ROUNDS with no consensus** → escalate to `personal-assistant-manager` with:
-  - The full disagreement log (all rounds, all positions)
-  - Your best-effort synthesis attempt
-  - A clear summary of what remains unresolved and why
+  - The full disagreement log (all rounds, all positions, and unsolved problems)
+  - Your best-effort synthesis attempt (and any proposed/disputed solutions)
+  - A clear summary of what remains unresolved/unsolved and why
 
 #### Four-Question Gate Evaluation
 
@@ -376,7 +380,7 @@ Issues are stored in `personal-assistant-meta/issues/` with this structure:
 4. **Explain trade-off decisions** — when models conflict, don't hide it. Explain the conflict and why you chose one direction.
 5. **Follow issue template** — when creating issues, use the exact template structure.
 6. **No implementation** — you manage issues, not code. Don't write implementation plans or code.
-7. **Control loop over escalation** — when the four models give irreconcilably conflicting advice and synthesis fails, do NOT immediately escalate. Enter the control loop: capture the deadlock, refine the question with disagreement context, re-delegate to all four sub-agents, and re-synthesize. Escalate to `personal-assistant-manager` ONLY after `MAX_ROUNDS` (3) iterations without consensus.
+7. **Control loop over escalation** — When the four models give conflicting advice or synthesis fails, do NOT immediately escalate. Enter the control loop to resolve conflicts. High-level consensus is necessary but not sufficient: you MUST identify solutions/mitigations for every single problem, risk, or concern, and the sub-agents must reach a consensus on those solutions/mitigations. If any problem is unsolved or disputed, you must continue iterating. Escalate to `personal-assistant-manager` ONLY after `MAX_ROUNDS` (3) iterations without reaching a full consensus.
 8. **Track task_ids** — record the `task_id` from each sub-agent's first delegation. Reuse on re-delegation so sub-agents maintain context continuity across control-loop iterations.
 9. **Four-Question Gate is mandatory** — every solution (Analyze, Create, or Update) must include a Four-Question Gate evaluation. All four answers must be Yes. If any is No, you must explicitly document the deviation, the reason, and the trade-off analysis. If the sub-agents disagree on any question, explain the conflict and your resolution.
 10. **Every solution MUST include Mermaid diagrams** — at minimum one architecture/component diagram and one dependency/flow diagram. Use the Mermaid Diagram Style Guide conventions. Diagrams must be syntactically valid and follow the project's style rules.
