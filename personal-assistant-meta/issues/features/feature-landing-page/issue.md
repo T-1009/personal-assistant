@@ -54,7 +54,7 @@ flowchart TB
 
     MAIN --> GUARD["AuthGuard<br/>检查 msalInProgress"]
 
-    GUARD -->|"inProgress = handleRedirect/login"| LOADING["LoadingState<br/>Apple-style 简约 spinner"]
+    GUARD -->|"Startup / HandleRedirect<br/>或未认证 + 交互中"| LOADING["LoadingState<br/>Apple-style 简约 spinner"]
 
     GUARD -->|"inProgress = none"| AUTH{"isAuthenticated?"}
 
@@ -127,15 +127,41 @@ Apple 设计语言原生于电商场景（产品摄影 → 产品 tile）。向 
 
 #### `AuthGuard` — 认证状态分流
 
-MSAL 登录回调期间（`inProgress === "handleRedirect"`）渲染 loading 状态，防止 LandingPage 闪现。
+MSAL 初始化/登录回调期间渲染 loading 状态，防止 LandingPage 闪现或未认证状态的页面抖动。
 
-| 行为 | 渲染 |
+```tsx
+import { InteractionStatus } from "@azure/msal-browser";
+import { useIsAuthenticated, useMsal } from "@azure/msal-react";
+
+function AuthGuard({ children }: { children: ReactNode }) {
+  const { inProgress } = useMsal();
+  const isAuthenticated = useIsAuthenticated();
+
+  const isAuthTransition =
+    inProgress === InteractionStatus.Startup ||       // MSAL 初始化
+    inProgress === InteractionStatus.HandleRedirect || // 登录回调处理中
+    (!isAuthenticated && inProgress !== InteractionStatus.None); // 未认证 + 任何交互中
+
+  if (isAuthTransition) {
+    return <LoadingState />;
+  }
+
+  return <>{children}</>;
+}
+```
+
+| 状态 | 行为 |
 |------|------|
-| `inProgress === "none"` 且 `isAuthenticated === false` | `children`（即 LandingPage） |
-| `inProgress === "none"` 且 `isAuthenticated === true` | `children`（即 ChatPage） |
-| `inProgress === "handleRedirect" \| "login"` | 居中简约 spinner · `colors.surface-black` 背景 |
+| `Startup` | MSAL 正在初始化 → 显示 LoadingState |
+| `HandleRedirect` | 处理 Microsoft 登录回调 → 显示 LoadingState |
+| `None` + `isAuthenticated = false` | 空闲且未认证 → 渲染 LandingPage |
+| `None` + `isAuthenticated = true` | 空闲且已认证 → 渲染 ChatPage |
+| `acquireToken` + 已认证 | 静默刷新 token → **不**拦截，正常渲染 ChatPage |
 
-`children` 的切换由上层 `App.tsx` 控制，`AuthGuard` 只负责在 MSAL 处理期间阻挡渲染。
+**关键设计决策**（Gemini & GPT 双审通过）：
+- 使用 `InteractionStatus` 枚举，不用裸字符串，避免 MSAL 版本升级后断裂
+- 显式排除 `acquireToken`——静默 token 刷新是后台操作，不应触发全屏 loading
+- `!isAuthenticated && inProgress !== None` 作为兜底，覆盖 `Login`、`Logout` 等状态，防止任何未认证期间的闪现
 
 #### `LandingPage` — 顶层容器
 
