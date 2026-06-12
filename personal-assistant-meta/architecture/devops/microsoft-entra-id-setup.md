@@ -113,4 +113,34 @@ https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration
 **备选方案（如果您拥有 Visual Studio / Partner 订阅）**：
 如果您有付费的 Visual Studio 订阅，可以通过 [Microsoft 365 开发者计划](https://developer.microsoft.com/microsoft-365/dev-program) 申请免费的 E5 开发人员沙盒（此时您的个人账号即可自动 qualify）。
 
+---
+
+### 6.2 模拟与重置用户登录授权状态（测试场景专用）
+
+在开发和集成 OIDC 登录时，测试人员和开发人员经常需要**扮演新用户**、**重置首次登录授权页面（Consent Screen）** 或 **测试 Token 过期/会话失效的异常流**。以下是针对不同测试需求的重置手段：
+
+#### 1) 彻底重置：让用户重新展示首次“同意授权证书 (Consent Screen)”
+一旦用户首次登录并点击了“同意读取邮箱和头像”，后续登录将不再展示此同意页面。
+*   **方法一（代码层控制 - 推荐）**：前端调用 MSAL 登录时，配置 `prompt: "consent"` 参数，强制微软每次登录时都弹出该授权确认页。
+    ```typescript
+    msalInstance.loginPopup({
+      scopes: ["openid", "profile", "user.read"],
+      prompt: "consent"
+    });
+    ```
+*   **方法二（用户侧撤销）**：测试用户登录 [微软应用管理中心](https://myapplications.microsoft.com/)，找到对应的应用 -> 点击 **Manage your application** -> 点击 **Revoke permissions**（撤销权限）进行彻底重置。
+
+#### 2) 全局吊销：模拟用户被强制下线/会话被撤销
+当需要测试“用户在其他设备被强制登出，或会话过期后，前端能否正确捕获 401 并自动跳转回登录页”的安全机制时，可在 Azure 控制台进行全局吊销：
+*   **操作路径**：
+    1. 登录 [Azure 门户](https://portal.azure.com/)。
+    2. 进入 **Microsoft Entra ID** -> 选择左侧的 **Users**（用户）。
+    3. 点击进入当前正在测试的外部或内部用户账号（如 `MA Lu`）。
+    4. 在用户详情页顶部的工具栏中，点击带有禁用图标的 **Revoke sessions**（吊销会话）按钮。
+*   **原理解析**：
+    点击后，微软将在云端瞬间吊销该用户所有的 **Refresh Token (刷新令牌)** 和 SSO Cookie。此时：
+    *   前端静默刷新 Token（即 `acquireTokenSilent()`）会**立刻失败**。
+    *   **【避坑注意】**：由于已颁发的 **Access Token / ID Token** 属于短期无状态 JWT（通常有 1 小时有效期），若前端本地缓存未被清除，在这 1 小时内通过 Gateway 验签依然会成功。因此要完成**瞬间失效**测试，通常需要配合**清除浏览器 SessionStorage / LocalStorage**，或直接使用**无痕模式浏览器**。
+
+
 
