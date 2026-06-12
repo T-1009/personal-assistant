@@ -20,6 +20,7 @@ Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 
 | [ADR-012](ADR-012-database-postgresql.md) | 持久化数据库选型 | Accepted | PostgreSQL 16，本地 Docker Compose，生产华为云 RDS，SQLAlchemy 2.0 async + asyncpg |
 | [ADR-013](ADR-013-assistant-ui-chat-library.md) | AI Chat UI 组件库选型 | Accepted | assistant-ui 替代 shadcn/ui 作为 Web Chat 组件库，保留 Chainlit 为 Playground |
 | [ADR-014](ADR-014-netlify-edge-function-auth-proxy.md) | Netlify Edge Function 认证代理 | Accepted | Edge Function 在服务端注入 Gateway 认证 header 后转发，解决 redirect 无法注入 header 的硬限制 |
+| [ADR-015](ADR-015-obs-cdn-path-routing-no-cors.md) | OBS + CDN 路径分发同域部署 | Accepted | 华为云 CDN 路径分发配置同域，消除 CORS 并绕开 AgentArts Gateway 对无凭据 OPTIONS 预检请求的拦截 |
 
 ## 决策原则
 
