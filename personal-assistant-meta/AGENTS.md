@@ -38,6 +38,12 @@ personal-assistant-meta/
 
 禁止 ADR Accepted 后结论只存在于 ADR 中而不体现在 architecture 文档里。ADR 记录的是**决策过程**（背景、方案对比、取舍），architecture 文档承载的是**系统的当前事实**——新成员应该读 architecture 了解系统长什么样，而不是翻 ADR 去拼凑。
 
+### AgentArts API 参考文档
+
+`architecture/cloud-service/agentarts-api-pdf.pdf` 是 **AgentArts 平台的官方 API 参考文档（PDF）**，是系统最关键的第三方 API 参考之一。所有与 AgentArts Runtime 交互的接口定义、参数说明、错误码等均以此 PDF 为准。
+
+> **重要**: 该文件为 PDF 格式，无法直接用 Markdown 阅读工具打开。需要阅读或检索其中内容时，**必须使用 PDF skill**。
+
 ### issues/ — 变更任务
 
 `issues/` 是**增量修改**的描述——每一份 issue 代表一个相对于 baseline 的变更请求。
