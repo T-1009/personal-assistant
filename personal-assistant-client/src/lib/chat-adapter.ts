@@ -53,7 +53,7 @@ export const chatAdapter: ChatModelAdapter = {
 
       let response: Response;
       let attempts = 0;
-      while (attempts < 2) {
+      do {
         const headers: Record<string, string> = {
           Accept: "text/event-stream",
           "Content-Type": "application/json",
@@ -87,7 +87,7 @@ export const chatAdapter: ChatModelAdapter = {
           throw new Error(`Chat API error: ${response.status} ${response.statusText}`);
         }
         break; // 2xx — proceed to SSE parsing
-      }
+      } while (attempts < 2);
 
       reader = response.body?.getReader();
       if (!reader) {
