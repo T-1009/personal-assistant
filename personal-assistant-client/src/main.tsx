@@ -2,7 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { MsalProvider } from "@azure/msal-react";
 import { EventType, type AuthenticationResult } from "@azure/msal-browser";
-import { msalInstance } from "@/lib/auth";
+import { msalInstance, acquireIdTokenSilently } from "@/lib/auth";
 import { useAuthStore } from "@/stores/auth-store";
 import App from "./App";
 import "./index.css";
@@ -20,9 +20,15 @@ msalInstance.initialize().then(() => {
   });
 
   // Safety net: handle any residual redirect response
-  msalInstance.handleRedirectPromise().then((response) => {
+  msalInstance.handleRedirectPromise().then(async (response) => {
     if (response?.idToken) {
       useAuthStore.getState().setIdToken(response.idToken);
+    } else {
+      // No redirect in progress — load existing token from MSAL cache (sessionStorage)
+      const cachedToken = await acquireIdTokenSilently();
+      if (cachedToken) {
+        useAuthStore.getState().setIdToken(cachedToken);
+      }
     }
   });
 
