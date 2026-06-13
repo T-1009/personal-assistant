@@ -11,6 +11,16 @@ const baseUrl: string = (
   import.meta.env.VITE_API_BASE_URL ?? ""
 ).replace(/\/$/, "");
 
+function extractUserIdFromToken(idToken: string): string | undefined {
+  try {
+    const payload = JSON.parse(atob(idToken.split(".")[1]));
+    return (payload as Record<string, unknown>).sub as string | undefined
+        ?? (payload as Record<string, unknown>).oid as string | undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 function getSessionId(): string {
   try {
     const existing = localStorage.getItem("agentarts-session-id");
@@ -58,6 +68,10 @@ export const chatAdapter: ChatModelAdapter = {
       };
       if (idToken) {
         headers["Authorization"] = `Bearer ${idToken}`;
+        const userId = extractUserIdFromToken(idToken);
+        if (userId) {
+          headers["X-HW-AgentGateway-User-Id"] = userId;
+        }
       }
 
       let response = await fetch(`${baseUrl}/invocations`, {
