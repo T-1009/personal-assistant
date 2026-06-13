@@ -12,7 +12,7 @@
 
 [[redirects]]
   from = "/invocations"
-  to = "/__netlify/edge-functions/invocations"
+  to = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/invocations"
   status = 200
   force = true
 
