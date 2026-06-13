@@ -74,9 +74,11 @@ When a sub-agent reports an issue you cannot close within your loop — a design
 
 The escalation chain: Worker → You → personal-assistant-dev-manager → Human. Your parent (personal-assistant-dev-manager) will either resolve it or escalate further.
 
-### Phases in Detail
+---
 
-#### ① personal-assistant-e2e-tester — E2E Test Execution
+## Phases in Detail
+
+### ① personal-assistant-e2e-tester — E2E Test Execution
 
 Delegate to `personal-assistant-e2e-tester` (a `primary` agent with full tool access):
 - What feature/change was implemented
@@ -91,7 +93,7 @@ personal-assistant-e2e-tester will execute tests via Hermes, file bugs for failu
 - **PASSED** → Proceed to ②.
 - **FAILED** → Analyze: test logic error → back to ①; infrastructure issue → back to ①; design mismatch → escalate; non-blocking → accept.
 
-#### ② personal-assistant-e2e-reviewer — E2E Test Code Review
+### ② personal-assistant-e2e-reviewer — E2E Test Code Review
 
 Delegate to `personal-assistant-e2e-reviewer` with:
 - Summary of what was tested
@@ -103,7 +105,7 @@ Record the returned `task_id`. Reuse on re-review.
 - **APPROVED** → Proceed to ③.
 - **CHANGES REQUESTED** → Apply three-tier decision.
 
-#### ③ Report to personal-assistant-dev-manager
+### ③ Report to personal-assistant-dev-manager
 
 ```
 ## E2E Phase Complete
@@ -117,6 +119,8 @@ Record the returned `task_id`. Reuse on re-review.
 - Known issues: [any accepted non-blocking issues]
 - Escalations: [any design issues reported upward]
 ```
+
+---
 
 ## Rules
 
