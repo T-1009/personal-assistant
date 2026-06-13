@@ -27,7 +27,14 @@ graph TD
 
     subgraph META["<b>Meta 领域</b> — personal-assistant-meta/"]
         MD["personal-assistant-meta-dev<br/>架构更新与并行分部计划撰写<br/>(Service/Client/Infra/Test)"]
-        PC["<b>panel-chair</b><br/>专家评审面板<br/>检视、评审并合成 Plan"]
+        PC["<b>panel-chair</b><br/>专家评审面板 · Issue 分析<br/>检视、评审并合成 Plan"]
+    end
+
+    subgraph PANEL["<b>Panel 成员</b> — panel-chair 调度"]
+        DS["panelist-deepseek<br/>DeepSeek V4 Flash"]
+        GM["panelist-gemini<br/>Gemini 3.5 Flash"]
+        GT["panelist-gpt<br/>GPT 5.5 Fast"]
+        HR["panelist-hermes<br/>DeepSeek V4 Pro + CLI"]
     end
 
     subgraph SERVICE["<b>Service 领域</b> — personal-assistant-service/"]
@@ -67,6 +74,11 @@ graph TD
     MM --> AM_C
     MM -.-> HUMAN
 
+    PC --> DS
+    PC --> GM
+    PC --> GT
+    PC --> HR
+
     DM --> SD_API
     DM --> CD_API
     DM --> SM
@@ -93,7 +105,7 @@ graph TD
     EM --> ER
 ```
 
-共 26 个 Agent。Meta 领域下的 personal-assistant-meta-service-dev / personal-assistant-meta-client-dev 移动到了 Dev 阶段的开头，但它们与 Service/Client 领域下的同名 Agent 仍是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：personal-assistant-e2e-manager 调度 personal-assistant-e2e-tester 编写测试、personal-assistant-e2e-reviewer 审查测试代码。Issue Analyzer 独立负责 issue 分析/创建/更新，通过三个不同模型的咨询 sub-agent 获取多角度建议。
+共 22 个 Agent。Meta 领域下的 personal-assistant-meta-service-dev / personal-assistant-meta-client-dev 移动到了 Dev 阶段的开头，但它们与 Service/Client 领域下的同名 Agent 仍是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：personal-assistant-e2e-manager 调度 personal-assistant-e2e-tester 编写测试、personal-assistant-e2e-reviewer 审查测试代码。Issue 分析与评审已合并到 `panel-chair`，不再有独立的 Issue Analyzer。
 
 ### 与 AnyWear 的结构差异
 
@@ -350,7 +362,7 @@ permission:
 
 其他未列出的内置工具（如 `read`、`grep`、`glob`、`write`、`question`）为所有 subagent 默认可用，无需显式声明。
 
-### 完整权限矩阵（22 个 Agent）
+### 完整权限矩阵（22 个 Pipeline Agent + 4 个 Panel Member）
 
 | Agent | task | edit | bash | skill | todowrite | webfetch | websearch | 设计理由 |
 |-------|:----:|:----:|:----:|:-----:|:---------:|:--------:|:---------:|---------|
@@ -376,10 +388,11 @@ permission:
 | `personal-assistant-e2e-manager` | allow | — | — | — | allow | — | — | 纯调度，管理 E2E Tester → Reviewer 闭环 |
 | `personal-assistant-e2e-tester` | — | allow | allow | allow | — | — | — | primary agent（mode: all），需要完整工具链；skill 用于加载 hermes-e2e-testing。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
 | `personal-assistant-e2e-reviewer` | — | deny | — | — | — | — | — | 审查 E2E 测试代码；审计 stale 测试移除 |
-| `personal-assistant-issue-analyzer` | allow | allow | — | — | allow | allow | allow | 管理 issue；task 用于 delegate 咨询 sub-agent；edit 用于创建/更新 issue 文件；webfetch/websearch 用于外部参考 |
-| `personal-assistant-issue-analyzer-deepseek` | — | — | — | — | — | allow | allow | 纯咨询，只读。webfetch/websearch 用于外部文档 |
-| `personal-assistant-issue-analyzer-gemini` | — | — | — | — | — | allow | allow | 纯咨询，只读。webfetch/websearch 用于外部文档 |
-| `personal-assistant-issue-analyzer-gpt` | — | — | — | — | — | allow | allow | 纯咨询，只读。webfetch/websearch 用于外部文档 |
+| `panelist-deepseek` | — | — | — | — | — | allow | allow | DeepSeek 模型 panelist，只读。webfetch/websearch 用于外部文档 |
+| `panelist-gemini` | — | — | — | — | — | allow | allow | Gemini 模型 panelist，只读。webfetch/websearch 用于外部文档 |
+| `panelist-gpt` | — | — | — | — | — | allow | allow | GPT 模型 panelist，只读。webfetch/websearch 用于外部文档 |
+| `panelist-hermes` | — | allow | — | — | — | allow | allow | Hermes CLI panelist，本地实证验证。edit 用于写入合成报告；webfetch/websearch 用于外部参考 |
+
 
 ### 按角色分类
 
@@ -391,6 +404,7 @@ permission:
 | Tester（测试者） | `edit: allow`, `bash: allow` | — | 写测试文件、移除 stale 测试 + 运行测试套件 |
 | Committer（提交者） | `bash: allow` | `edit: deny` | `git add/commit/push`，禁止修改源码 |
 | E2E Tester（端到端测试） | `edit: allow`, `bash: allow`, `skill: allow` | — | primary agent，完整工具链。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
+| Panelist（专家 panelist） | `webfetch: allow`, `websearch: allow` | — | panel-chair 的只读咨询成员，提供多模型视角的技术分析。`panelist-hermes` 额外具备 `edit: allow` 用于实证验证与报告合成 |
 
 ### 权限审计经验
 
@@ -399,7 +413,7 @@ permission:
 **审计方法**：
 
 1. 逐 agent 检查职责 → 列出所需操作 → 对照 permission block
-2. 用 script 批量 grep `permission:` 字段，确保 22 个 agent 都有显式声明
+2. 用 script 批量 grep `permission:` 字段，确保所有 agent 都有显式声明
 3. 修改后验证：每个 agent 文件 frontmatter 中必须存在 `permission:` 块
 
 **常见遗漏**：
@@ -544,6 +558,10 @@ OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_ta
 | personal-assistant-dev-manager | `personal-assistant-dev-manager.md` |
 | personal-assistant-meta-dev | `personal-assistant-meta-dev.md` |
 | panel-chair | `panel-chair.md` |
+| panelist-deepseek | `panelist-deepseek.md` |
+| panelist-gemini | `panelist-gemini.md` |
+| panelist-gpt | `panelist-gpt.md` |
+| panelist-hermes | `panelist-hermes.md` |
 | personal-assistant-meta-service-dev（API） | `personal-assistant-meta-service-dev.md` |
 | personal-assistant-meta-client-dev（API） | `personal-assistant-meta-client-dev.md` |
 | personal-assistant-service-manager | `personal-assistant-service-manager.md` |
@@ -562,9 +580,6 @@ OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_ta
 | personal-assistant-e2e-manager | `personal-assistant-e2e-manager.md` |
 | personal-assistant-e2e-tester | `personal-assistant-e2e-tester.md` |
 | personal-assistant-e2e-reviewer | `personal-assistant-e2e-reviewer.md` |
-| personal-assistant-issue-analyzer | `personal-assistant-issue-analyzer.md` |
-| personal-assistant-issue-analyzer-deepseek | `personal-assistant-issue-analyzer-deepseek.md` |
-| personal-assistant-issue-analyzer-gemini | `personal-assistant-issue-analyzer-gemini.md` |
-| personal-assistant-issue-analyzer-gpt | `personal-assistant-issue-analyzer-gpt.md` |
 
-命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester}。例外：`personal-assistant-committer.md`（统一 Committer，无 domain 限定）和 `personal-assistant-issue-analyzer*.md`（独立 issue 分析 Agent 及其咨询 sub-agent）。
+
+命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester}。例外：`personal-assistant-committer.md`（统一 Committer，无 domain 限定）、`panelist-*.md`（panel-chair 的 4 个专家 panelist）。
