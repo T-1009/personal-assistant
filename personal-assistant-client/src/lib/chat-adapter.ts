@@ -21,6 +21,17 @@ function extractUserIdFromToken(idToken: string): string | undefined {
   }
 }
 
+/** Check if token expires within the next 60 seconds */
+function isTokenExpiringSoon(idToken: string): boolean {
+  try {
+    const payload = JSON.parse(atob(idToken.split(".")[1]));
+    const exp = (payload as Record<string, unknown>).exp as number;
+    return Date.now() >= (exp - 60) * 1000;
+  } catch {
+    return true; // can't parse — assume expired
+  }
+}
+
 function getSessionId(): string {
   try {
     const existing = localStorage.getItem("agentarts-session-id");
@@ -58,8 +69,15 @@ export const chatAdapter: ChatModelAdapter = {
     let fullText = "";
 
     try {
-      // Get current idToken from auth store (plain object, use getState())
-      const idToken = useAuthStore.getState().idToken;
+      // Get current idToken and refresh if close to expiry
+      let idToken = useAuthStore.getState().idToken;
+      if (idToken && isTokenExpiringSoon(idToken)) {
+        const fresh = await acquireIdTokenSilently();
+        if (fresh) {
+          useAuthStore.getState().setIdToken(fresh);
+          idToken = fresh;
+        }
+      }
 
       const headers: Record<string, string> = {
         Accept: "text/event-stream",
