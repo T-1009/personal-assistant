@@ -14,7 +14,7 @@
 | Staleness | ✅ | 全新 feature，引用的 `frontend_architecture.md`、`DESIGN.md` 均存在且内容匹配 |
 | Feasibility | ✅ | 技术路径明确：AuthGuard（MSAL InteractionStatus）→ CSS theme 扩展 → 组件分层实现。所有依赖已就绪（MSAL、Tailwind CSS v4、shadcn Button、辅助 UI Thread） |
 | Completeness | ✅ | Issue 包含完整的组件规格、TypeScript prop 类型、CSS 变更、12 条验收标准 |
-| Impact Scope | ✅ | 纯 Client 侧变更。Service 侧零改动。影响范围：11 个新文件 + 3 个修改文件 + 1 个架构文档更新 |
+| Impact Scope | ✅ | 纯 Client 侧变更。Service 侧零改动。影响范围：12 个新文件 + 5 个修改文件 + 1 个架构文档更新 |
 | ADR 冲突 | ✅ | 与 ADR-008（Vite+React+Tailwind）、ADR-013（assistant-ui）、ADR-007（MSAL Entra ID）均无冲突。不修改 Thread 内部，不引入新路由框架 |
 
 **判定：ACCEPT** → 继续编写 Implementation Plan。
@@ -38,48 +38,49 @@
 
 ## 2. Files Changed
 
-### New Files（10 个，`personal-assistant-client/src/`）
+### New Files（11 个，`personal-assistant-client/src/`）
 
 | # | File Path | Type | Description |
 |---|-----------|------|-------------|
 | 1 | `components/landing/AuthGuard.tsx` | New | MSAL `InteractionStatus` 认证状态 gate；transition 期间渲染 LoadingState |
-| 2 | `components/landing/LoadingState.tsx` | New | Apple-style 简约 spinner，仅供 AuthGuard transition 和 Suspense fallback 使用 |
-| 3 | `components/landing/GlobalNav.tsx` | New | 44px 纯黑全局导航栏，右侧 "登录" 按钮触发 MSAL login redirect；≤833px 仅保留登录按钮 |
-| 4 | `components/landing/LandingPage.tsx` | New | Landing Page 顶层容器，编排 GlobalNav + 7-tile 序列，注入 login CTA handler |
-| 5 | `components/landing/LandingHero.tsx` | New | 首屏 Hero tile（typography-first，56px hero-display，双 CTA Pill Button） |
-| 6 | `components/landing/FeatureTile.tsx` | New | 可复用全出血 tile（variant: `light` / `parchment` / `dark` / `dark-2`） |
-| 7 | `components/landing/CapabilityCard.tsx` | New | 单张能力卡片（store-utility-card 样式，18px 圆角，hairline 边框） |
-| 8 | `components/landing/CapabilityGrid.tsx` | New | 响应式能力卡片网格（1/2/4 列自适应） |
-| 9 | `components/landing/ClosingCTA.tsx` | New | 薄包装组件：复用 `<FeatureTile variant="dark-2">` 渲染最后的 CTA tile |
-| 10 | `components/landing/LandingFooter.tsx` | New | 页脚（parchment 背景，链接列 + 法律信息） |
+| 2 | `components/landing/LoadingState.tsx` | New | Apple-style 简约 spinner（含 `role="status"` accessibility），供 AuthGuard / Suspense / hydration guard 使用 |
+| 3 | `components/landing/ChunkErrorBoundary.tsx` | New | React class-component Error Boundary：捕获 `React.lazy()` chunk 加载失败，降级 UI 提示刷新 |
+| 4 | `components/landing/GlobalNav.tsx` | New | 44px 纯黑全局导航栏（含 dev-mode guard），右侧 "登录" 按钮触发 MSAL login redirect；≤833px 仅保留登录按钮 |
+| 5 | `components/landing/LandingPage.tsx` | New | Landing Page 顶层容器，编排 GlobalNav + 7-tile 序列，注入 login CTA handler |
+| 6 | `components/landing/LandingHero.tsx` | New | 首屏 Hero tile（typography-first，56px hero-display，双 CTA Pill Button） |
+| 7 | `components/landing/FeatureTile.tsx` | New | 可复用全出血 tile（variant: `light` / `parchment` / `dark` / `dark-2`） |
+| 8 | `components/landing/CapabilityCard.tsx` | New | 单张能力卡片（store-utility-card 样式，18px 圆角，hairline 边框） |
+| 9 | `components/landing/CapabilityGrid.tsx` | New | 响应式能力卡片网格（1/2/4 列自适应） |
+| 10 | `components/landing/ClosingCTA.tsx` | New | 薄包装组件：复用 `<FeatureTile variant="dark-2">` 渲染最后的 CTA tile |
+| 11 | `components/landing/LandingFooter.tsx` | New | 页脚（parchment 背景，WCAG AA 合规颜色，链接列 + 法律信息） |
 
 ### New File（1 个，`personal-assistant-client/src/`）
 
 | # | File Path | Type | Description |
 |---|-----------|------|-------------|
-| 11 | `components/chat/ChatPage.tsx` | New | 从 `App.tsx` 提取的 Chat 页面（RuntimeProvider + TooltipProvider + Thread + 顶栏），用于 lazy loading |
+| 12 | `components/chat/ChatPage.tsx` | New | 从 `App.tsx` 提取的 Chat 页面（RuntimeProvider + TooltipProvider + Thread + 顶栏），用于 lazy loading |
 
-### Modified Files（3 个，`personal-assistant-client/src/`）
+### Modified Files（5 个，`personal-assistant-client/src/`）
 
 | # | File Path | Type | Description |
 |---|-----------|------|-------------|
-| 12 | `App.tsx` | Modified | 重构为 AuthGuard + Suspense + 条件渲染（LandingPage vs ChatPage lazy） |
-| 13 | `index.css` | Modified | `--primary → #0066cc`；新增 Apple 表面颜色 `@theme` token；body font-size 17px |
-| 14 | `components/ui/button.tsx` | Modified | CVA 变体新增 `apple-primary` 和 `apple-secondary` |
+| 13 | `main.tsx` | Modified | 在 `handleRedirectPromise().then()` 末尾新增一行 `useAuthStore.getState().setHydrated(true)` |
+| 14 | `App.tsx` | Modified | 重构为 AuthGuard + ChunkErrorBoundary + Suspense + hydrated guard + 条件渲染 |
+| 15 | `index.css` | Modified | `--primary → #0066cc`；新增 Apple 表面颜色 `@theme` token；新增 `.landing-page` scoped 排版规则 |
+| 16 | `components/ui/button.tsx` | Modified | CVA 变体新增 `apple-primary`（`bg-primary h-auto rounded-full`）和 `apple-secondary` |
+| 17 | `stores/auth-store.ts` | Modified | 新增 `hydrated: boolean` 状态和 `setHydrated` 方法 |
 
 ### Modified Meta File（1 个）
 
 | # | File Path | Type | Description |
 |---|-----------|------|-------------|
-| 15 | `personal-assistant-meta/architecture/frontend_architecture.md` | Modified | 新增 §2.1.3 Landing Page 小节 |
+| 18 | `personal-assistant-meta/architecture/frontend_architecture.md` | Modified | 新增 §2.1.3 Landing Page 小节 |
 
 ### Files NOT Changed
 
 | File | Reason |
 |------|--------|
-| `main.tsx` | MsalProvider 包裹结构不变 |
 | `lib/auth.ts` | MSAL 配置不变 |
-| `stores/auth-store.ts` | Zustand token store 不变 |
 | `components/LoginButton.tsx` | 登录按钮逻辑不变（移至 ChatPage 内使用） |
 | `components/RuntimeProvider.tsx` | 组件不变，仅调用位置从 App 移到 ChatPage |
 | `components/assistant-ui/thread.tsx` | 不修改 assistant-ui Thread 内部 |
@@ -96,7 +97,17 @@
 
 **Actions**:
 
-1. 将 `:root` 中的 `--primary` 从 `#007AFF` 改为 `210 100% 40%`（HSL，对应 `#0066cc`），同步更新 `--primary-foreground`、`--ring`、`--chart-1`、`--sidebar-primary`、`--sidebar-ring`
+1. 将 `:root` 中的 `--primary` 从 `#007AFF` 改为 `#0066cc`（hex 格式，与现有 `index.css` 风格一致，被 `@theme inline { --color-primary: var(--primary) }` 直接消费无需 `hsl()` 包裹），同步更新：
+   ```css
+   :root {
+     --primary: #0066cc;
+     --primary-foreground: #ffffff;
+     --ring: #0066cc;
+     --chart-1: #0066cc;
+     --sidebar-primary: #0066cc;
+     --sidebar-ring: #0066cc;
+   }
+   ```
 2. 在现有 `@theme inline { ... }` 块之后新增一个 `@theme { ... }` 块，定义 Apple 表面颜色 token：
    ```css
    @theme {
@@ -105,23 +116,21 @@
      --color-surface-tile-2: #2a2a2c;
      --color-surface-tile-3: #252527;
      --color-surface-black: #000000;
-     --font-weight-medium: 600;
    }
    ```
-3. 在 `@layer base` 块中追加全局排版覆写：
+   注意：**不**再覆写 `--font-weight-medium`——所有需要 weight 600 的地方使用 `font-semibold`（原生映射 600），不污染全局 `font-medium`（500→600 会影响所有 shadcn 组件）。
+3. **不**做全局 `html, body` 排版覆写。改为在文件中新增一个 scoped `.landing-page` 规则（见下方）。
+4. 在文件末尾新增 `.landing-page` scoped 排版规则：
    ```css
-   @layer base {
-     /* ... existing rules remain ... */
-     html, body {
-       font-size: 17px;
-       line-height: 1.47;
-       letter-spacing: -0.374px;
-     }
+   .landing-page {
+     font-size: 17px;
+     line-height: 1.47;
+     letter-spacing: -0.374px;
    }
    ```
-   ⚠️ **Risk note**: 此改动为全局生效。若 assistant-ui Thread 内部排版出现偏移，应在后续 issue 中通过 `.landing-page` scope 限制或对 Thread 内部做局部 reset。
+   Apple 排版仅作用于 Landing Page 内部，不污染 assistant-ui Thread 或 shadcn 组件的 rem 基准。
 
-**Verification**: `grep --color=always "210 100% 40%" index.css` 确认 primary 值已更新；`grep "canvas-parchment" index.css` 确认新 token 存在；`npm run dev` 启动无 CSS 编译错误。
+**Verification**: `grep --color=always "#0066cc" index.css` 确认 primary 值为 `#0066cc`；`grep "canvas-parchment" index.css` 确认新 surface token 存在；`grep "landing-page" index.css` 确认 scoped 规则存在；`npm run dev` 启动无 CSS 编译错误。
 
 ---
 
@@ -135,12 +144,16 @@
 
 ```ts
 apple-primary:
-  "bg-[#0066cc] text-white rounded-full px-[22px] py-[11px] text-[17px] leading-[1.47] tracking-[-0.374px] active:scale-95 transition-transform hover:bg-[#0071e3]",
+  "bg-primary text-primary-foreground rounded-full h-auto px-[22px] py-[11px] text-[17px] leading-[1.47] tracking-[-0.374px] active:scale-95 transition-transform hover:bg-primary/80",
 apple-secondary:
-  "bg-transparent text-[#0066cc] border border-[#0066cc] rounded-full px-[22px] py-[11px] text-[17px] leading-[1.47] tracking-[-0.374px] active:scale-95 transition-transform hover:bg-[#0066cc]/10",
+  "bg-transparent text-primary border border-primary rounded-full h-auto px-[22px] py-[11px] text-[17px] leading-[1.47] tracking-[-0.374px] active:scale-95 transition-transform hover:bg-primary/10",
 ```
 
-注意：`rounded-full` 覆盖基类 `rounded-lg`；`text-[17px]` 覆盖基类 `text-sm`；`hover:bg-[#0071e3]` 使用 Apple 的 `primary-focus` 色。`transition-transform` 有意覆盖基类 `transition-all`——Apple pill button 的 micro-interaction 仅需 scale transform 动画，不应有 color/background 的过渡。
+注意：
+- `rounded-full` 覆盖基类 `rounded-lg`；`text-[17px]` 覆盖基类 `text-sm`
+- `h-auto` 覆盖基类 `size="default"` 的 `h-8`（32px）固定高度约束——让 `py-[11px]`（22px 垂直内边距）自然定义按钮高度，避免文字被截断
+- `bg-primary`、`text-primary`、`border-primary` 全部引用 `--primary` CSS variable（现为 `#0066cc`），自动跟踪未来 primary 色变更，无需维护硬编码 hex
+- `transition-transform` 有意覆盖基类 `transition-all`——Apple pill button 的 micro-interaction 仅需 scale transform 动画，不应有 color/background 的过渡
 
 **Verification**: TypeScript 编译通过 — `variant="apple-primary"` 类型应在 `VariantProps<typeof buttonVariants>` 推断范围之内。
 
@@ -155,11 +168,13 @@ apple-secondary:
 - 一个简约的居中 spinner：Apple 风格用小号 `animate-spin` 圆环、颜色 `text-[#0066cc]/60`、尺寸 24×24px
 - 无文字，无额外 chrome
 - 无 props，纯展示组件
+- **Accessibility**：外层容器添加 `role="status"` + `aria-live="polite"` 使屏幕阅读器感知 loading 状态
 
 ```tsx
-function LoadingState() {
+export function LoadingState() {
   return (
-    <div className="flex h-dvh items-center justify-center bg-white">
+    <div className="flex h-dvh items-center justify-center bg-white"
+         role="status" aria-live="polite">
       <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#0066cc]/20 border-t-[#0066cc]/60" />
     </div>
   );
@@ -208,7 +223,51 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
 ---
 
-### Step 5 — `GlobalNav` 全局导航栏
+### Step 5 — `ChunkErrorBoundary` 组件
+
+**File**: `personal-assistant-client/src/components/landing/ChunkErrorBoundary.tsx` (New)
+
+**目的**：`React.lazy()` 在 chunk 加载失败时（网络错误、CDN 故障）会 throw，若无 Error Boundary 整个 React tree 卸载为白屏。此组件捕获 chunk 加载错误并提供友好的降级 UI。
+
+**Spec**：
+
+```tsx
+import { Component, type ReactNode, type ErrorInfo } from "react";
+
+interface Props { children: ReactNode; }
+interface State { hasError: boolean; }
+
+export class ChunkErrorBoundary extends Component<Props, State> {
+  state: State = { hasError: false };
+
+  static getDerivedStateFromError(): State {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("Chunk load failed:", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="flex h-dvh items-center justify-center bg-white">
+          <p className="text-[#333333]">加载失败，请刷新页面重试</p>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+```
+
+**机制**：class component 的 `getDerivedStateFromError` 在子组件（即 `React.lazy()` 组件）throw 时触发，设置 `hasError = true`，render 降级 UI。用户刷新页面后重新尝试加载 chunk。
+
+**Verification**: 模拟 chunk 加载失败（e.g., 在 DevTools 中 block 对应的 JS 文件），验证降级 UI 渲染而非白屏。
+
+---
+
+### Step 6 — `GlobalNav` 全局导航栏
 
 **File**: `personal-assistant-client/src/components/landing/GlobalNav.tsx` (New)
 
@@ -216,7 +275,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
-| `onLogin` | `() => void` | Yes | 点击 "登录" 按钮时触发，调用 MSAL `loginRedirect` |
+| `onLogin` | `() => void` | No | 点击 "登录" 按钮时触发，调用 MSAL `loginRedirect`。dev mode 下不传，组件自行处理 |
 
 **实现要点**:
 
@@ -228,41 +287,49 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
 2. 内部布局（`flex items-center justify-between`，水平内边距 ~20px）：
    - 左侧：品牌名 "Personal Assistant"（可选，白色文字，小号）
-   - 右侧："登录" 按钮 — 使用 shadcn `Button` 的 `variant="ghost"` + `size="sm"`（白色文字），`onClick` 触发 `onLogin`。或使用简化的纯文本按钮以贴近 Apple global-nav 的极简风格
+   - 右侧："登录" 按钮 — 使用 shadcn `Button` 的 `variant="ghost"` + `size="sm"`（白色文字），`onClick` 触发 `onLogin`
 
-3. 响应式折叠（≤833px）：简化处理——左侧品牌名可隐藏，右侧仅保留 "登录" 按钮
+3. 响应式折叠（≤833px）：简化处理——使用 `hidden lg:inline`（Tailwind `lg` 断点为 1024px，是满足 ≤833px 要求的最接近标准断点，无需自定义 CSS）隐藏左侧品牌名，右侧仅保留 "登录" 按钮
 
 4. 无阴影、无边框（Apple nav 是纯黑条，无底部阴影）
+
+5. **Dev-mode guard**：与 `LoginButton.tsx` 一致，检查 `import.meta.env.VITE_ENTRA_CLIENT_ID`。dev mode 下渲染 "Dev Mode" 文字指示器替代登录按钮
 
 ```tsx
 import { Button } from "@/components/ui/button";
 
 interface GlobalNavProps {
-  onLogin: () => void;
+  onLogin?: () => void;
 }
 
 export function GlobalNav({ onLogin }: GlobalNavProps) {
+  const isDev = !import.meta.env.VITE_ENTRA_CLIENT_ID;
+
   return (
     <nav className="sticky top-0 z-50 flex h-[44px] w-full items-center justify-between bg-surface-black px-5">
-      <span className="text-[12px] font-normal text-white/90 hidden sm:inline">
+      <span className="text-[12px] font-normal text-white/90 hidden lg:inline">
         Personal Assistant
       </span>
-      <div className="sm:ml-auto">
-        <Button variant="ghost" size="sm" onClick={onLogin}
-          className="text-[12px] text-white hover:text-white/80">
-          登录
-        </Button>
+      <div className="ml-auto">
+        {isDev ? (
+          <span className="text-[12px] text-white/60">Dev Mode</span>
+        ) : (
+          <Button variant="ghost" size="sm" onClick={onLogin}
+            className="text-[12px] text-white hover:text-white/80">
+            登录
+          </Button>
+        )}
       </div>
     </nav>
   );
 }
 ```
 
-**Verification**: 导航栏 44px 纯黑，右侧 "登录" 按钮可见，点击触发 MSAL redirect；缩小窗口至 ≤833px 时品牌名隐藏，登录按钮保留。
+**Verification**: 导航栏 44px 纯黑，右侧 "登录" 按钮可见（生产模式）或 "Dev Mode" 文字（dev 模式），点击触发 MSAL redirect；缩小窗口至 ≤1024px 时品牌名隐藏，登录按钮保留。
 
 ---
 
-### Step 6 — `FeatureTile` 可复用组件
+### Step 7 — `FeatureTile` 可复用组件
 
 **File**: `personal-assistant-client/src/components/landing/FeatureTile.tsx` (New)
 
@@ -291,7 +358,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 2. 全出血 tile：
    - `rounded-none` — 零圆角
    - 无 `shadow` — 零阴影
-   - `py-[80px]`（映射 `spacing.section` 80px）— 上下内边距。使用 px 绝对值而非 Tailwind 的 `py-20`（5rem），因为 Step 1 已将 root font-size 改为 17px，`py-20` = 85px 会产生 5px 偏差
+    - `py-[80px]`（映射 `spacing.section` 80px）— 上下内边距。使用 px 绝对值以保证与 DESIGN.md `spacing.section`（80px）精确一致，不受 root font-size 影响
    - 无 gap 与相邻 tile（颜色变化即为分割线）
 
 3. 内部布局：居中内容区，最大宽度参照 Apple 规范（~980px），左右自动居中。内容纵向排列：
@@ -304,7 +371,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 ---
 
-### Step 7 — `LandingHero` 组件
+### Step 8 — `LandingHero` 组件
 
 **File**: `personal-assistant-client/src/components/landing/LandingHero.tsx` (New)
 
@@ -330,7 +397,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 ---
 
-### Step 8 — `CapabilityCard` 组件
+### Step 9 — `CapabilityCard` 组件
 
 **File**: `personal-assistant-client/src/components/landing/CapabilityCard.tsx` (New)
 
@@ -346,15 +413,15 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 1. **映射 `store-utility-card`**：白色背景 + `rounded-[18px]` + 1px solid `border-[#e0e0e0]`（hairline）+ `p-6`（24px）+ **无 shadow**
 2. 内部纵向排列：
-   - 图标：`24×24px`，颜色 `text-[#0066cc]`
+    - 图标：`24×24px`，颜色 `text-primary`（引用 `--primary` CSS variable，现为 `#0066cc`）
    - 标题：`text-[17px] font-semibold leading-[1.24] tracking-[-0.374px] mt-4`（`body-strong`）
-   - 描述：`text-[17px] font-normal leading-[1.47] tracking-[-0.374px] mt-2 text-[#7a7a7a]`
+    - 描述：`text-[17px] font-normal leading-[1.47] tracking-[-0.374px] mt-2 text-[#333333]`（`ink-muted-80`，对比度 12.6:1 通过 WCAG AAA）
 
 **Verification**: 4 张能力卡渲染一致，圆角 18px，hairline 边框可见，无阴影。
 
 ---
 
-### Step 9 — `CapabilityGrid` 组件
+### Step 10 — `CapabilityGrid` 组件
 
 **File**: `personal-assistant-client/src/components/landing/CapabilityGrid.tsx` (New)
 
@@ -368,7 +435,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 **实现要点**:
 
 1. 全出血 parchment tile（`bg-canvas-parchment`，`rounded-none`，`py-[80px]`）
-2. Section 标题：`text-[40px] font-semibold leading-[1.1]`，居中
+2. Section 标题：`text-[40px] font-semibold leading-[1.1] text-center`，居中
 3. 响应式卡片网格：
    - `≤833px`：单列（`grid-cols-1`）
    - `834–1068px`：双列（`grid-cols-2`）
@@ -380,7 +447,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 ---
 
-### Step 10 — `ClosingCTA` 组件
+### Step 11 — `ClosingCTA` 组件
 
 **File**: `personal-assistant-client/src/components/landing/ClosingCTA.tsx` (New)
 
@@ -400,7 +467,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 ---
 
-### Step 11 — `LandingFooter` 组件
+### Step 12 — `LandingFooter` 组件
 
 **File**: `personal-assistant-client/src/components/landing/LandingFooter.tsx` (New)
 
@@ -408,9 +475,9 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 **实现要点**:
 
-1. `bg-canvas-parchment` 背景，`rounded-none`，`py-[64px]`（64px 纵向内边距，使用 px 绝对值避免 root font-size 17px 导致的 rem 偏差）
+1. `bg-canvas-parchment` 背景，`rounded-none`，`py-[64px]`（64px 纵向内边距，使用 px 绝对值以保证与 DESIGN.md 精确一致）
 2. 内容居中，`max-w-[980px] mx-auto`
-3. 文字：`text-[12px]`（`fine-print`），颜色 `text-[#7a7a7a]`（`ink-muted-48`）
+3. 文字：`text-[12px]`（`fine-print`），颜色 `text-[#333333]`（`ink-muted-80`，对比度 12.6:1 通过 WCAG AAA。注意：DESIGN.md 的 `ink-muted-48`（#7a7a7a）在 parchment 背景上对比度仅 2.97:1，不满足 WCAG AA 4.5:1 最低要求，此处使用更深的 `ink-muted-80` 替代以满足无障碍合规）
 4. 结构：
    - 品牌名 + 简要说明
    - 可选链接行（文档、隐私、条款）
@@ -420,7 +487,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 ---
 
-### Step 12 — `LandingPage` 容器组件
+### Step 13 — `LandingPage` 容器组件
 
 **File**: `personal-assistant-client/src/components/landing/LandingPage.tsx` (New)
 
@@ -430,12 +497,12 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 1. 使用 `useMsal().instance` 获取 MSAL instance，定义 `handleLogin`：
    ```tsx
-   import { useMsal } from "@azure/msal-react";
-   import { loginRequest } from "@/lib/auth";
+    import { useMsal } from "@azure/msal-react";
+    import { loginRequest } from "@/lib/auth";
 
-   function LandingPage() {
-     const { instance } = useMsal();
-     const handleLogin = () => instance.loginRedirect(loginRequest);
+    export default function LandingPage() {
+      const { instance } = useMsal();
+      const handleLogin = () => instance.loginRedirect(loginRequest);
      // ...
    }
    ```
@@ -461,7 +528,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 ---
 
-### Step 13 — 提取 `ChatPage` 组件
+### Step 14 — 提取 `ChatPage` 组件
 
 **File**: `personal-assistant-client/src/components/chat/ChatPage.tsx` (New)
 
@@ -470,22 +537,19 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 **实现**：将 `App.tsx` 的现有 return 内容原样搬入 ChatPage：
 
 ```tsx
-import { useIsAuthenticated } from "@azure/msal-react";
 import { Thread } from "@/components/assistant-ui/thread";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { RuntimeProvider } from "@/components/RuntimeProvider";
 import { LoginButton } from "@/components/LoginButton";
 
 function ChatPage() {
-  const isAuthenticated = useIsAuthenticated();
-
   return (
     <RuntimeProvider>
       <TooltipProvider>
         <div className="flex h-dvh flex-col bg-background">
           <div className="flex items-center justify-between px-4 py-2 border-b">
             <span className="text-sm text-muted-foreground">
-              {isAuthenticated ? "已登录" : "请登录以开始对话"}
+              Personal Assistant
             </span>
             <LoginButton />
           </div>
@@ -501,17 +565,24 @@ function ChatPage() {
 export default ChatPage;
 ```
 
-**注意**：保留 `useIsAuthenticated()` 在 ChatPage 内部——即使 AuthGuard 已确保认证通过才渲染 ChatPage，防御性编程更安全。
+**注意**：
+- 移除了原来的 `{isAuthenticated ? "已登录" : "请登录以开始对话"}` 三元——AuthGuard 已确保认证通过才渲染 ChatPage，这是 dead code
+- 替换为静态 "Personal Assistant" 品牌文字
+- 移除了 `useIsAuthenticated()` import（不再需要）
 
 **Verification**: `import()` 语句可正常解析；default export 存在。
 
 ---
 
-### Step 14 — 重构 `App.tsx`
+### Step 15 — 重构 `App.tsx` 并更新 `main.tsx`（hydration guard）
 
-**File**: `personal-assistant-client/src/App.tsx` (Modify)
+**File A**: `personal-assistant-client/src/App.tsx` (Modify)  
+**File B**: `personal-assistant-client/src/stores/auth-store.ts` (Minor modify — 新增 `hydrated` flag)  
+**File C**: `personal-assistant-client/src/main.tsx` (Minor modify — 新增一行 `setHydrated(true)`)
 
-**Actions**:
+**背景**：`useIsAuthenticated() === true` 可能在 zustand `idToken` 完成 hydration 之前返回，导致 ChatPage 挂载时 `idToken: null`，首次 API 调用缺少 Authorization header。需要引入 hydration guard。
+
+**Actions — File A (`App.tsx`)**:
 
 1. 移除现有所有 import 和 return 内容
 2. 新 `App.tsx` 结构：
@@ -519,20 +590,26 @@ export default ChatPage;
 ```tsx
 import { useIsAuthenticated } from "@azure/msal-react";
 import React, { Suspense } from "react";
+import { useAuthStore } from "@/stores/auth-store";
 import { AuthGuard } from "@/components/landing/AuthGuard";
 import { LoadingState } from "@/components/landing/LoadingState";
+import { ChunkErrorBoundary } from "@/components/landing/ChunkErrorBoundary";
 
 const ChatPage = React.lazy(() => import("./components/chat/ChatPage"));
 const LandingPage = React.lazy(() => import("./components/landing/LandingPage"));
 
 function App() {
   const isAuthenticated = useIsAuthenticated();
+  const hydrated = useAuthStore((s) => s.hydrated);
 
   return (
     <AuthGuard>
-      <Suspense fallback={<LoadingState />}>
-        {isAuthenticated ? <ChatPage /> : <LandingPage />}
-      </Suspense>
+      <ChunkErrorBoundary>
+        <Suspense fallback={<LoadingState />}>
+          {!hydrated ? <LoadingState /> :
+           isAuthenticated ? <ChatPage /> : <LandingPage />}
+        </Suspense>
+      </ChunkErrorBoundary>
     </AuthGuard>
   );
 }
@@ -540,24 +617,63 @@ function App() {
 export default App;
 ```
 
+**Actions — File B (`stores/auth-store.ts` — Minor modify)**:
+
+在 `AuthState` interface 中新增 `hydrated` flag：
+
+```ts
+interface AuthState {
+  idToken: string | null;
+  hydrated: boolean;
+  setIdToken: (token: string | null) => void;
+  setHydrated: (value: boolean) => void;
+  clearToken: () => void;
+}
+```
+
+`create()` 调用中新增默认值和方法：
+
+```ts
+export const useAuthStore = create<AuthState>((set) => ({
+  idToken: null,
+  hydrated: false,
+  setIdToken: (token) => set({ idToken: token }),
+  setHydrated: (value) => set({ hydrated: value }),
+  clearToken: () => set({ idToken: null, hydrated: false }),
+}));
+```
+
+**Actions — File C (`main.tsx` — Minor modify)**:
+
+在 `handleRedirectPromise().then(async (response) => { ... })` 链的末尾（`.then()` 回调的最后一个语句处），增加 hydration 标记：
+
+```ts
+// 在 handleRedirectPromise().then(...) 回调的最后：
+useAuthStore.getState().setHydrated(true);
+```
+
+即在 `createRoot(...)` 调用之前的 `.then()` 回调中，token sync 逻辑完成后，标记 store 已 hydration 完毕。
+
 **关键设计决策**：
 
 | 决策 | 理由 |
 |------|------|
 | `RuntimeProvider` 不放 App 层 | 避免未登录用户加载 assistant-ui 依赖（code splitting 的核心收益） |
-| `AuthGuard` 包裹 `Suspense` | MSAL transition 期间的 LoadingState 优先级高于 lazy chunk 加载的 LoadingState |
-| `LoadingState` 复用为 Suspense fallback | 减少组件碎片；AuthGuard 和 Suspense 不会同时触发（互斥时间窗口） |
+| `AuthGuard` 包裹 `ChunkErrorBoundary` | MSAL transition LoadingState 优先级最高；chunk 加载错误被 ErrorBoundary 捕获 |
+| `ChunkErrorBoundary` 包裹 `Suspense` | `React.lazy()` throw 时降级 UI 而非白屏 |
+| `!hydrated` → LoadingState | 防止 ChatPage 在 token 就绪前挂载，首次 API 调用不带 Authorization header |
+| `LoadingState` 复用为 Suspense fallback | 减少组件碎片；AuthGuard 和 `!hydrated` / Suspense 不会同时触发 |
 | 不引入 react-router | Issue scope 明确排除路由框架；条件渲染已足够 |
 
 **Verification**:
 - `npm run dev` 启动，未登录时展示 LoadingState → LandingPage
 - 点击 CTA 登录 → MSAL redirect → 回调时展示 LoadingState → 自动切换 ChatPage
-- 已登录用户刷新页面 → 短暂 LoadingState → ChatPage（含 Thread、RuntimeProvider 正常运行）
+- 已登录用户刷新页面 → 短暂 LoadingState（hydration guard）→ ChatPage（含 Thread、RuntimeProvider 正常运行，idToken 已就绪）
 - `npm run build` 成功，bundle 分析确认 ChatPage 和 LandingPage 为独立 chunk
 
 ---
 
-### Step 15 — 架构文档更新
+### Step 16 — 架构文档更新
 
 **File**: `personal-assistant-meta/architecture/frontend_architecture.md` (Modify)
 
@@ -630,7 +746,8 @@ flowchart TB
 | 组件 | 职责 |
 |------|------|
 | `AuthGuard` | MSAL InteractionStatus 认证状态 gate |
-| `LoadingState` | Apple-style 简约 spinner |
+| `LoadingState` | Apple-style 简约 spinner（含 `role="status"` accessibility） |
+| `ChunkErrorBoundary` | React.lazy() chunk 加载失败降级 UI（Error Boundary） |
 | `GlobalNav` | 44px 纯黑全局导航栏，右侧 "登录" 按钮 |
 | `LandingPage` | 顶层容器，编排 GlobalNav + tile 序列，注入 login CTA handler |
 | `LandingHero` | 首屏 typography-first hero（hero-display 56px + 双 CTA） |
@@ -643,13 +760,16 @@ flowchart TB
 
 **设计 Token**：
 
-- `--primary: 210 100% 40%`（#0066cc Action Blue）
+- `--primary: #0066cc`（Action Blue，hex 格式）
 - 新增 Tailwind CSS v4 `@theme` 表面颜色 token：`canvas-parchment`、`surface-tile-1`、`surface-tile-2`、`surface-tile-3`、`surface-black`
-- Body 基准字号 17px（非 16px）
+- Apple 排版通过 `.landing-page` scope 限制，不污染全局（不覆写 `html, body` 或 `font-weight-medium`）
+- Body 基准字号 17px（仅 `.landing-page` 作用域内）
 - 全出血 tile：`rounded-none`，无阴影，无渐变
-- shadcn Button 新增 `apple-primary` / `apple-secondary` pill 变体（`rounded-full`、`active:scale-95`）
+- shadcn Button 新增 `apple-primary` / `apple-secondary` pill 变体（`rounded-full`、`h-auto`、`active:scale-95`，使用 `bg-primary` CSS variable 引用）
 
 **设计系统依据**：[`DESIGN.md`](../../../personal-assistant-client/DESIGN.md)
+
+> **注意**：本节 §2.1 描述的 OAuth callback / JWT Cookie 认证模式反映的是早期后端驱动的 auth 流程，与当前 MSAL-based SPA 认证（`@azure/msal-react` redirect + zustand token store）不一致。应在 follow-up issue 中更新 §2.1 以反映当前的 MSAL + zustand 架构。
 ```
 
 ---
@@ -705,10 +825,10 @@ sequenceDiagram
 
 | 风险 | 等级 | 缓解措施 |
 |------|------|---------|
-| **Body 17px 全局覆写影响 assistant-ui Thread 排版** | Medium | 当前 issue 范围不修改 Thread 内部。若出现偏移，在后续 issue 中通过 `.landing-page` wrapper scope 限制 Apple 排版，或对 Thread 做局部 `font-size: 16px` reset。现有 CSS 中 Thread 依赖 `--font-sans` 和 shadcn 变量，不受 body font-size 直接影响 |
-| **`--font-weight-medium: 600` 全局覆写影响所有 `font-medium` utility** | Low-Medium | 此改动源于 DESIGN.md 体重梯度设计要求（绝不使用 500）。Shadcn UI 和 assistant-ui 中所有 `font-medium` 将从默认 500 变为 600。应在 implementation 阶段审计视觉影响：检查 Button、Label、Dialog title 等使用 `font-medium` 的 shadcn 组件。若特定组件出现视觉偏移，可局部用 `font-normal` override 回退 |
 | **两种蓝色并存（#007AFF → #0066cc）** | Low | `--primary` CSS variable 统一为 `#0066cc`。所有 shadcn 组件通过 `bg-primary` / `text-primary` 引用该变量，自动继承。唯一显式引用旧颜色的地方（如 LoginButton 的 `variant="default"` 使用 `bg-primary`）也会自动切换 |
 | **MSAL 状态机边缘情况** | Low | AuthGuard 使用 `InteractionStatus` 枚举 + `!isAuthenticated && inProgress !== None` 兜底逻辑，覆盖 `Login`、`Logout` 等状态。`acquireToken` 被显式排除 |
+| **Token hydration race** | Medium | `useIsAuthenticated()` 可能在 zustand `idToken` 就绪前返回 `true`。通过 `hydrated` flag + `!hydrated → LoadingState` guard 解决；`main.tsx` 在 `handleRedirectPromise` 完成后设置 `setHydrated(true)` |
+| **Chunk 加载失败导致白屏** | Low | `ChunkErrorBoundary`（class component Error Boundary）捕获 `React.lazy()` throw，渲染降级 UI "加载失败，请刷新页面重试" |
 | **Code splitting 导致首次 ChatPage 加载闪烁** | Low | ChatPage chunk 较小（仅 Thread + RuntimeProvider），且浏览器缓存后不再触发加载。`LoadingState` 简约设计不产生明显闪烁感 |
 | **非 Apple 平台字体回退** | Low | `Geist Variable` 已安装在 `@fontsource-variable/geist`，font stack 包含 `system-ui, -apple-system`。非 Apple 平台上 Geist 作为 SF Pro 的近似替代 |
 | **无产品摄影资产** | Low | typography-first hero 策略。56px headline + 28px tagline + 双 Pill CTA 已足以撑起视觉分量。若后续产出 UI mockup，可作为 hero 底部视觉元素加入 |
@@ -723,10 +843,10 @@ sequenceDiagram
 |------------|-------------|
 | `AuthGuard` | `InteractionStatus.Startup` → renders LoadingState；`InteractionStatus.HandleRedirect` → renders LoadingState；`InteractionStatus.None` + `isAuthenticated=false` → renders children；`InteractionStatus.None` + `isAuthenticated=true` → renders children；`InteractionStatus.AcquireToken` + authenticated → renders children（不触发 loading） |
 | `FeatureTile` | 4 个 variant 均渲染正确背景色 class；`rounded-none` 存在；children slot 正确渲染 |
-| `CapabilityCard` | icon/title/description 渲染；`rounded-[18px]` class 存在；hairline border class 存在；无 shadow |
+| `CapabilityCard` | icon/title/description 渲染；`rounded-[18px]` class 存在；hairline border class 存在；无 shadow；描述颜色 `text-[#333333]`（WCAG AA 合规） |
 | `LandingHero` | headline 56px class 存在；双 CTA 按钮存在；secondaryCta 为 undefined 时不渲染 |
 | `CapabilityGrid` | cards 数组正确映射为 CapabilityCard；响应式 grid class 存在 |
-| `Button` variants | `apple-primary` render output 包含 `rounded-full`、`bg-[#0066cc]`、`active:scale-95`；`apple-secondary` render output 包含 `border-[#0066cc]`、`rounded-full` |
+| `Button` variants | `apple-primary` render output 包含 `rounded-full`、`bg-primary`、`h-auto`、`active:scale-95`；`apple-secondary` render output 包含 `border-primary`、`text-primary`、`rounded-full`、`h-auto` |
 | `App` integration | isAuthenticated=false → LandingPage lazy chunk；isAuthenticated=true → ChatPage lazy chunk |
 
 ### Build Checks
