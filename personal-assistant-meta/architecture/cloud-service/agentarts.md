@@ -694,6 +694,21 @@ flowchart TB
 
 ---
 
+## 10. 注意事项
+
+- 部署 Agent 必须使用 **ARM64 架构**（`linux/arm64`），X86 镜像调用 Runtime 会失败。
+- 部署 Region 仅支持 **cn-southwest-2**（西南贵阳一）。
+- Python 版本需 **≥3.10**。
+- Docker 版本需 **≥18.06**。
+- SWR 不支持 OCI 镜像（Docker 27+ 需设置 `export BUILDKIT_USE_OCI_MEDIA_TYPES=0`）。
+- **Runtime 架构**：`runtime.arch` 默认值为 `x86_64`。部署 ARM64 镜像必须显式设为 `arm64`，否则容器调度到 x86 节点会静默失败（`stdout="" stderr=""`，无任何日志输出）。
+- **Gateway 路由**：AgentArts API Gateway 默认 `url_match_type: ACCURATE_MATCH`，仅转发 `/invocations`。需显式设为 `PREFIX_MATCH` 才能转发 `/invocations/*` 子路径。Gateway 不支持自定义路由表或 wildcard。
+- Memory Space 创建后 API Key 仅返回一次，务必保存。
+- 记忆生成有延迟（文档示例中使用 30s 等待）。
+- 使用 IAM 子账号时需确保有 SWR FullAccess 权限。
+
+---
+
 ## 11. CUSTOM_JWT 认证调试排障
 
 本节记录 CUSTOM_JWT（Microsoft Entra ID）认证模式的常见问题和调试经验（2026-06-13 实战总结）。
