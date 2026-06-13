@@ -223,3 +223,6 @@ __marimo__/
 
 # Chainlit
 .chainlit/
+
+# E2E artifacts (screenshots, temp output)
+**/.files/
