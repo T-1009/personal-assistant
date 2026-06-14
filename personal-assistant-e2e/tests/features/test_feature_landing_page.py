@@ -2,17 +2,17 @@
 
 Tests the Landing Page UI rendered for unauthenticated users:
 - Scenario 1: Landing Page renders all 7 tiles in correct order
-- Scenario 2: CTA buttons exist and are clickable, open LoginModal (Iteration 2)
-- Scenario 2b: LandingHero uses 60vh min-height (Iteration 2)
-- Scenario 2c: LoginModal renders correctly and handles all interactions (Iteration 2)
-- Scenario 2d: '了解更多' buttons scroll to #capabilities (Iteration 2)
+- Scenario 2: CTA buttons exist and are clickable, open LoginPage (full-page, not modal)
+- Scenario 2b: LandingHero uses 60vh min-height
+- Scenario 2c: LoginPage renders all provider rows, back button, brand icons
+- Scenario 2d: '了解更多' buttons scroll to #capabilities
 - Scenario 3: LoadingState accessibility attributes
 - Scenario 4: Responsive design at 5 breakpoints
 - Scenario 5: Accessibility checks (nav, headings, buttons, lang)
 - Scenario 6: GlobalNav content
-- Scenario 6b: GlobalNav '登录' opens LoginModal (Iteration 2)
+- Scenario 6b: GlobalNav '登录' opens LoginPage
 - Scenario 7: LandingFooter content
-- Scenario 7b: ClosingCTA '立即开始' opens LoginModal (Iteration 2)
+- Scenario 7b: ClosingCTA '立即开始' opens LoginPage
 - Regression: vitest unit tests still pass
 """
 
@@ -274,33 +274,32 @@ class TestCTALandingPage:
         )
 
     def test_cta_buttons_trigger_navigation_on_click(self, page: Page):
-        """Clicking '开始对话' opens LoginModal instead of triggering MSAL redirect.
+        """Clicking '开始对话' opens LoginPage (full-page, not modal).
 
-        In Iteration 2, '开始对话' opens a LoginModal with login provider options.
-        We verify the modal appears and the page does not crash.
+        In the redesign, '开始对话' navigates to a full-page LoginPage.
+        We verify the LoginPage heading appears and the page does not crash.
         """
         btn = page.get_by_role("button", name="开始对话")
         btn.click()
         page.wait_for_timeout(500)
-        # LoginModal should appear with "选择登录方式" header
-        modal_heading = page.get_by_text("选择登录方式")
-        assert modal_heading.is_visible(), (
-            "Expected LoginModal with '选择登录方式' to appear after clicking '开始对话'"
+        # LoginPage should appear with "登录 Personal Assistant" heading
+        heading = page.get_by_text("登录 Personal Assistant")
+        assert heading.is_visible(), (
+            "Expected LoginPage with '登录 Personal Assistant' after clicking '开始对话'"
         )
-        # Page should still be alive (no crash)
         assert page.locator("body").is_visible(), (
             "Page should still be alive after CTA click (no crash)"
         )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Scenario 2b: LandingHero height (Iteration 2 — 85vh → 60vh)
+# Scenario 2b: LandingHero height (60vh min-height)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.feature
 class TestHeroHeight:
-    """Verify LandingHero uses 60vh min-height (Iteration 2 change)."""
+    """Verify LandingHero uses 60vh min-height."""
 
     def test_hero_has_60vh_min_height(self, page: Page):
         """LandingHero <section> has min-height: ~60vh, not 85vh."""
@@ -321,108 +320,155 @@ class TestHeroHeight:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Scenario 2c: LoginModal (Iteration 2 — new component)
+# Scenario 2c: LoginPage (replaces LoginModal — full-page component)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.feature
-class TestLoginModal:
-    """Verify LoginModal renders correctly and handles all interactions."""
+class TestLoginPageRenders:
+    """Verify LoginPage full-page renders correctly."""
 
-    def _open_modal(self, page: Page) -> None:
-        """Helper: open LoginModal by clicking '开始对话'."""
-        btn = page.get_by_role("button", name="开始对话")
-        btn.click()
+    def _open_login_page(self, page: Page) -> None:
+        """Helper: click '开始对话' to navigate to LoginPage."""
+        page.get_by_role("button", name="开始对话").click()
         page.wait_for_timeout(300)
-        # Verify modal is open
-        assert page.get_by_text("选择登录方式").is_visible(), (
-            "LoginModal should be open after clicking '开始对话'"
+        # Verify we're on the LoginPage
+        assert page.get_by_text("登录 Personal Assistant").is_visible(), (
+            "LoginPage should be visible after clicking '开始对话'"
         )
 
-    def test_login_modal_opens_on_start_conversation(self, page: Page):
-        """Click '开始对话' → LoginModal appears with '选择登录方式' and 3 providers."""
-        self._open_modal(page)
-        # Verify 3 provider rows exist (Microsoft, GitHub, WeChat)
+    def test_login_page_opens_on_start_conversation(self, page: Page):
+        """Click '开始对话' → LoginPage renders with heading."""
+        self._open_login_page(page)
+
+    def test_login_page_has_back_button(self, page: Page):
+        """Back button '← 返回' visible, clicking returns to LandingPage."""
+        self._open_login_page(page)
+        # Verify back button exists
+        back_btn = page.get_by_text("返回")
+        assert back_btn.is_visible(), "Expected '返回' back button on LoginPage"
+        # Click back → should return to LandingPage
+        back_btn.click()
+        page.wait_for_timeout(300)
+        # LandingPage should be visible again
+        assert page.get_by_text("您的 AI 助手").is_visible(), (
+            "Should return to LandingPage after clicking '返回'"
+        )
+
+    def test_login_page_has_heading_and_subtitle(self, page: Page):
+        """Heading '登录 Personal Assistant' and subtitle visible."""
+        self._open_login_page(page)
+        assert page.get_by_text("登录 Personal Assistant").is_visible()
+        assert page.get_by_text("选择一种方式登录您的账号").is_visible()
+
+
+@pytest.mark.feature
+class TestLoginPageProviders:
+    """Verify all 3 provider rows are present."""
+
+    def _open_login_page(self, page: Page) -> None:
+        page.get_by_role("button", name="开始对话").click()
+        page.wait_for_timeout(300)
+
+    def test_three_providers_visible(self, page: Page):
+        """Microsoft, GitHub, WeChat rows all present."""
+        self._open_login_page(page)
         for label in ["Microsoft 账号", "GitHub 账号", "微信账号"]:
-            assert page.get_by_text(label).is_visible(), (
-                f"Expected '{label}' provider to be visible in LoginModal"
+            # Use .first to avoid strict mode: "使用 GitHub 账号登录"
+            # description also contains "GitHub 账号" as substring
+            assert page.get_by_text(label).first.is_visible(), (
+                f"Expected '{label}' provider to be visible on LoginPage"
             )
 
-    def test_login_modal_providers_display(self, page: Page):
-        """All 3 provider labels are visible when modal is open."""
-        self._open_modal(page)
-        for label in ["Microsoft 账号", "GitHub 账号", "微信账号"]:
-            assert page.get_by_text(label).is_visible(), (
-                f"Expected '{label}' provider to be visible in LoginModal"
+    def test_provider_descriptions_visible(self, page: Page):
+        """Each provider has a description line."""
+        self._open_login_page(page)
+        for desc in ["Entra ID", "GitHub 账号登录", "微信扫码登录"]:
+            assert page.get_by_text(desc, exact=False).is_visible(), (
+                f"Expected description containing '{desc}'"
             )
 
-    def test_login_modal_closes_on_cancel(self, page: Page):
-        """Click '取消' → modal disappears."""
-        self._open_modal(page)
-        page.get_by_role("button", name="取消").click()
-        page.wait_for_timeout(300)
-        assert not page.get_by_text("选择登录方式").is_visible(), (
-            "LoginModal should be closed after clicking '取消'"
-        )
 
-    def test_login_modal_closes_on_backdrop(self, page: Page):
-        """Click backdrop overlay → modal disappears."""
-        self._open_modal(page)
-        # Click the backdrop: the fixed overlay div, at a corner position
-        backdrop = page.locator(".fixed.inset-0").first
-        backdrop.click(position={"x": 10, "y": 10})
-        page.wait_for_timeout(300)
-        assert not page.get_by_text("选择登录方式").is_visible(), (
-            "LoginModal should be closed after clicking backdrop"
-        )
+@pytest.mark.feature
+class TestLoginPageMicrosoftLogin:
+    """Verify Microsoft row triggers login redirect."""
 
-    def test_login_modal_microsoft_provider_triggers_login(self, page: Page):
+    def test_microsoft_row_triggers_login(self, page: Page):
         """Click Microsoft row → page survives (MSAL redirect intercepted)."""
-        self._open_modal(page)
-        ms_row = page.get_by_text("Microsoft 账号")
-        ms_row.click()
+        page.get_by_role("button", name="开始对话").click()
+        page.wait_for_timeout(300)
+        # The Microsoft row is a <button> element
+        ms_btn = page.get_by_text("Microsoft 账号")
+        ms_btn.click()
         page.wait_for_timeout(500)
-        # Page should still be alive (MSAL redirect aborted by route interceptor)
         assert page.locator("body").is_visible(), (
             "Page should survive Microsoft login click (MSAL intercepted)"
         )
 
-    def test_login_modal_github_provider_disabled(self, page: Page):
-        """GitHub row shows '即将支持' badge — not clickable/available."""
-        self._open_modal(page)
-        # Find the GitHub row: a div containing both "GitHub 账号" and "即将支持"
-        github_row = page.locator("div").filter(
-            has=page.get_by_text("GitHub 账号")
-        ).filter(has=page.get_by_text("即将支持"))
-        assert github_row.count() > 0, (
-            "GitHub row should contain '即将支持' badge indicating it's disabled"
+
+@pytest.mark.feature
+class TestLoginPageDisabledProviders:
+    """Verify GitHub and WeChat are disabled with '即将支持' badges."""
+
+    def _open_login_page(self, page: Page) -> None:
+        page.get_by_role("button", name="开始对话").click()
+        page.wait_for_timeout(300)
+
+    def test_github_disabled_with_badge(self, page: Page):
+        """GitHub row: '即将支持' badge, not clickable."""
+        self._open_login_page(page)
+        # Find the disabled row: a div with cursor-not-allowed containing "GitHub 账号"
+        github_row = page.locator(".cursor-not-allowed").filter(has_text="GitHub 账号")
+        assert github_row.count() > 0, "GitHub row should contain '即将支持' badge"
+        # Verify the badge text is present within the row
+        assert github_row.first.get_by_text("即将支持").is_visible(), (
+            "GitHub row should show '即将支持' badge"
         )
 
-    def test_login_modal_wechat_provider_disabled(self, page: Page):
-        """WeChat row shows '即将支持' badge — not clickable/available."""
-        self._open_modal(page)
+    def test_wechat_disabled_with_badge(self, page: Page):
+        """WeChat row: '即将支持' badge."""
+        self._open_login_page(page)
         wechat_row = page.locator("div").filter(
             has=page.get_by_text("微信账号")
         ).filter(has=page.get_by_text("即将支持"))
-        assert wechat_row.count() > 0, (
-            "WeChat row should contain '即将支持' badge indicating it's disabled"
-        )
+        assert wechat_row.count() > 0, "WeChat row should contain '即将支持' badge"
 
-    def test_login_modal_closes_on_x_button(self, page: Page):
-        """Click X close button → modal disappears."""
-        self._open_modal(page)
-        # Find X button: sibling of the h2 "选择登录方式" heading
-        header_h2 = page.locator("h2").filter(has_text="选择登录方式")
-        x_button = header_h2.locator("..").locator("button").first
-        x_button.click()
+
+@pytest.mark.feature
+class TestLoginPageBrandIcons:
+    """Verify brand SVG icons render on provider rows."""
+
+    def test_svg_icons_present(self, page: Page):
+        """Each provider row has an SVG icon element."""
+        page.get_by_role("button", name="开始对话").click()
         page.wait_for_timeout(300)
-        assert not page.get_by_text("选择登录方式").is_visible(), (
-            "LoginModal should be closed after clicking X button"
+        # All 3 provider rows should contain SVG icons
+        svgs = page.locator("svg").count()
+        assert svgs >= 3, f"Expected at least 3 SVG icons, found {svgs}"
+
+
+@pytest.mark.feature
+class TestLoginPageNoModalBackdrop:
+    """Verify LoginPage is a full page, NOT a modal with backdrop."""
+
+    def test_no_modal_overlay(self, page: Page):
+        """No bg-black/30 overlay, no fixed.inset-0 backdrop."""
+        page.get_by_role("button", name="开始对话").click()
+        page.wait_for_timeout(300)
+        # Should NOT have a modal overlay
+        overlay = page.locator(".bg-black\\/30")
+        assert overlay.count() == 0, (
+            "LoginPage should not have bg-black/30 modal backdrop"
+        )
+        # Should be a full page (min-h-dvh)
+        html_content = page.content()
+        assert "min-h-dvh" in html_content, (
+            "LoginPage should have min-h-dvh class (full-page, not modal)"
         )
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Scenario 2d: Scroll to Capabilities (Iteration 2 — '了解更多' buttons)
+# Scenario 2d: Scroll to Capabilities ('了解更多' buttons)
 # ═══════════════════════════════════════════════════════════════════════════
 
 
@@ -658,32 +704,28 @@ class TestGlobalNav:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Scenario 6b: GlobalNav '登录' opens LoginModal (Iteration 2)
+# Scenario 6b: GlobalNav '登录' opens LoginPage
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.feature
-class TestGlobalNavLoginModal:
-    """Verify GlobalNav '登录' button opens LoginModal (Iteration 2)."""
+class TestGlobalNavLoginPage:
+    """Verify GlobalNav '登录' button opens LoginPage."""
 
-    def test_globalnav_login_opens_modal(self, page: Page):
-        """GlobalNav '登录' button opens LoginModal; handles Dev Mode fallback."""
+    def test_globalnav_login_opens_login_page(self, page: Page):
+        """GlobalNav '登录' button opens LoginPage; handles Dev Mode fallback."""
         has_login = page.get_by_text("登录").is_visible()
         has_dev_mode = page.get_by_text("Dev Mode").is_visible()
-
         if has_login:
             login_btn = page.get_by_role("button", name="登录")
-            assert login_btn.is_visible(), "'登录' text is visible but not clickable as button"
+            assert login_btn.is_visible()
             login_btn.click()
             page.wait_for_timeout(300)
-            assert page.get_by_text("选择登录方式").is_visible(), (
-                "LoginModal should open when clicking GlobalNav '登录' button"
+            assert page.get_by_text("登录 Personal Assistant").is_visible(), (
+                "LoginPage should open when clicking GlobalNav '登录' button"
             )
         elif has_dev_mode:
-            # In dev mode, "Dev Mode" text is shown instead of login button
-            assert page.get_by_text("Dev Mode").is_visible(), (
-                "Expected 'Dev Mode' text in GlobalNav"
-            )
+            assert page.get_by_text("Dev Mode").is_visible()
         else:
             pytest.fail("GlobalNav shows neither '登录' button nor 'Dev Mode' text")
 
@@ -724,26 +766,24 @@ class TestLandingFooter:
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# Scenario 7b: ClosingCTA '立即开始' opens LoginModal (Iteration 2)
+# Scenario 7b: ClosingCTA '立即开始' opens LoginPage
 # ═══════════════════════════════════════════════════════════════════════════
 
 
 @pytest.mark.feature
-class TestClosingCTALoginModal:
-    """Verify ClosingCTA '立即开始' opens LoginModal."""
+class TestClosingCTALoginPage:
+    """Verify ClosingCTA '立即开始' opens LoginPage."""
 
-    def test_closing_cta_opens_login_modal(self, page: Page):
-        """Scroll to bottom → click '立即开始' → LoginModal appears."""
-        # Scroll to bottom to ensure ClosingCTA is in view
+    def test_closing_cta_opens_login_page(self, page: Page):
+        """Scroll to bottom → click '立即开始' → LoginPage appears."""
         page.evaluate("() => window.scrollTo(0, document.body.scrollHeight)")
         page.wait_for_timeout(500)
-        # Click "立即开始"
         cta_btn = page.get_by_role("button", name="立即开始")
-        assert cta_btn.is_visible(), "ClosingCTA '立即开始' button not visible"
+        assert cta_btn.is_visible()
         cta_btn.click()
         page.wait_for_timeout(300)
-        assert page.get_by_text("选择登录方式").is_visible(), (
-            "LoginModal should open when clicking ClosingCTA '立即开始'"
+        assert page.get_by_text("登录 Personal Assistant").is_visible(), (
+            "LoginPage should open when clicking ClosingCTA '立即开始'"
         )
 
 
@@ -780,7 +820,7 @@ class TestClientUnitTests:
             f"--- stderr (last 1000 chars) ---\n{stderr[-1000:]}"
         )
 
-        # Verify we got test output and test count >= 95 (Iteration 2)
+        # Verify we got test output and test count >= 95
         assert "Tests" in stdout or "tests" in stdout.lower(), (
             f"Expected test summary in vitest output. Got: {stdout[:500]}"
         )
@@ -788,7 +828,7 @@ class TestClientUnitTests:
         if match:
             test_count = int(match.group(1))
             assert test_count >= 95, (
-                f"Expected at least 95 vitest tests (Iteration 2), got {test_count}.\n"
+                f"Expected at least 95 vitest tests, got {test_count}.\n"
                 f"--- stdout (last 1000 chars) ---\n{stdout[-1000:]}"
             )
 
