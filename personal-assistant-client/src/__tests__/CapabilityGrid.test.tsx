@@ -59,4 +59,13 @@ describe("CapabilityGrid", () => {
     const cards = container.querySelectorAll(".rounded-\\[18px\\]");
     expect(cards).toHaveLength(0);
   });
+
+  it("outermost section element has id='capabilities'", () => {
+    const { container } = render(
+      <CapabilityGrid headline="核心能力" cards={mockCards} />
+    );
+    const section = container.querySelector("section");
+    expect(section).not.toBeNull();
+    expect(section!.id).toBe("capabilities");
+  });
 });

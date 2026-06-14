@@ -112,4 +112,31 @@ describe("LandingHero", () => {
     await user.click(screen.getByRole("button", { name: "了解更多" }));
     expect(onClick).toHaveBeenCalledTimes(1);
   });
+
+  it("section element has min-h-[60vh] class", () => {
+    const { container } = render(
+      <LandingHero
+        headline="Test"
+        tagline="Tagline"
+        primaryCta={primaryCta}
+      />
+    );
+    const section = container.querySelector("section");
+    expect(section).not.toBeNull();
+    expect(section!.className).toContain("min-h-[60vh]");
+  });
+
+  it("section element has flex and items-center classes", () => {
+    const { container } = render(
+      <LandingHero
+        headline="Test"
+        tagline="Tagline"
+        primaryCta={primaryCta}
+      />
+    );
+    const section = container.querySelector("section");
+    expect(section).not.toBeNull();
+    expect(section!.className).toContain("flex");
+    expect(section!.className).toContain("items-center");
+  });
 });

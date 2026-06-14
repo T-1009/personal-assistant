@@ -14,7 +14,7 @@ export function LandingHero({
   secondaryCta,
 }: LandingHeroProps) {
   return (
-    <section className="rounded-none min-h-[85vh] bg-white">
+    <section className="rounded-none min-h-[60vh] bg-white flex items-center">
       <div className="max-w-[980px] mx-auto py-[80px]">
         <h1 className="text-[56px] font-semibold leading-[1.07] tracking-[-0.28px]">
           {headline}

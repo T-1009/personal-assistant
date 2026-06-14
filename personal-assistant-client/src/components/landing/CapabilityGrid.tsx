@@ -8,7 +8,7 @@ interface CapabilityGridProps {
 
 export function CapabilityGrid({ headline, cards }: CapabilityGridProps) {
   return (
-    <section className="rounded-none bg-canvas-parchment py-[80px]">
+    <section id="capabilities" className="rounded-none bg-canvas-parchment py-[80px]">
       <div className="max-w-[980px] mx-auto">
         <h2 className="text-[40px] font-semibold leading-[1.1] text-center">
           {headline}
