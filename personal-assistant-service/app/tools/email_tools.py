@@ -1,0 +1,344 @@
+import logging
+import os
+from typing import Any
+
+import httpx
+from agentarts.sdk import IdentityClient, require_access_token
+from agentarts.sdk.identity.types import OAuth2Vendor
+
+logger = logging.getLogger(__name__)
+
+_PROVIDER_INITIALIZED = False
+
+GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
+
+
+def _ensure_provider():
+    """Ensure the m365-provider exists in AgentArts Identity Service.
+
+    Called lazily on first tool invocation, NOT at module import time.
+    Reads M365_CLIENT_ID, M365_CLIENT_SECRET, M365_TENANT_ID from env.
+    Idempotent — skips if already initialized this process lifetime.
+    """
+    global _PROVIDER_INITIALIZED
+    if _PROVIDER_INITIALIZED:
+        return
+    client_id = os.environ.get("M365_CLIENT_ID")
+    client_secret = os.environ.get("M365_CLIENT_SECRET")
+    tenant_id = os.environ.get("M365_TENANT_ID")
+    if not all([client_id, client_secret, tenant_id]):
+        logger.warning(
+            "M365_CLIENT_ID, M365_CLIENT_SECRET, or M365_TENANT_ID not set. "
+            "Email tools will be registered but may fail at runtime."
+        )
+        _PROVIDER_INITIALIZED = True
+        return
+    try:
+        region = os.environ.get("AGENTARTS_REGION", "cn-southwest-2")
+        client = IdentityClient(region=region)
+        client.create_oauth2_credential_provider(
+            name="m365-provider",
+            vendor=OAuth2Vendor.MICROSOFTOAUTH2,
+            client_id=client_id,
+            client_secret=client_secret,
+            tenant_id=tenant_id,
+        )
+        logger.info("m365-provider created successfully.")
+    except Exception as e:
+        logger.error(f"Failed to create m365-provider: {e}")
+    _PROVIDER_INITIALIZED = True
+
+
+# ── 1. list_emails ──
+
+@require_access_token(
+    provider_name="m365-provider",
+    scopes=["https://graph.microsoft.com/Mail.Read"],
+    auth_flow="USER_FEDERATION",
+)
+async def list_emails(
+    folder: str = "inbox",
+    limit: int = 10,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    """列出指定文件夹中的邮件。
+
+    Args:
+        folder: 邮件文件夹名（inbox, sentitems, drafts 等），默认为 inbox
+        limit: 返回邮件数量上限，默认 10
+        access_token: AgentArts Identity SDK 自动注入的 Microsoft Graph access token
+
+    Returns:
+        dict with keys: emails (list of {id, subject, from, receivedDateTime,
+        isRead, importance}), count (int), folder (str)
+    """
+    _ensure_provider()
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{GRAPH_BASE_URL}/mailFolders/{folder}/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "$top": limit,
+                "$select": (
+                    "id,subject,from,receivedDateTime,isRead,importance,bodyPreview"
+                ),
+                "$orderby": "receivedDateTime desc",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        emails = [
+            {
+                "id": m.get("id"),
+                "subject": m.get("subject"),
+                "from": (
+                    (m.get("from") or {})
+                    .get("emailAddress", {})
+                    .get("name", "Unknown")
+                ),
+                "receivedDateTime": m.get("receivedDateTime"),
+                "isRead": m.get("isRead"),
+                "importance": m.get("importance", "normal"),
+                "bodyPreview": m.get("bodyPreview", ""),
+            }
+            for m in data.get("value", [])
+        ]
+        return {"emails": emails, "count": len(emails), "folder": folder}
+
+
+# ── 2. get_email ──
+
+@require_access_token(
+    provider_name="m365-provider",
+    scopes=["https://graph.microsoft.com/Mail.Read"],
+    auth_flow="USER_FEDERATION",
+)
+async def get_email(
+    email_id: str,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    """获取单封邮件的完整详情。
+
+    Args:
+        email_id: Microsoft Graph 邮件 ID
+        access_token: AgentArts Identity SDK 自动注入
+
+    Returns:
+        dict with: id, subject, body (plain text), from, toRecipients,
+        ccRecipients, receivedDateTime, attachments (list of {name, size, contentType})
+    """
+    _ensure_provider()
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{GRAPH_BASE_URL}/messages/{email_id}",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Prefer": 'outlook.body-content-type="text"',
+            },
+            params={
+                "$select": (
+                    "id,subject,body,from,toRecipients,ccRecipients,receivedDateTime"
+                ),
+                "$expand": "attachments($select=name,contentType,size)",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "id": data.get("id"),
+            "subject": data.get("subject"),
+            "body": data.get("body", {}).get("content", ""),
+            "from": (data.get("from") or {}).get("emailAddress", {}),
+            "toRecipients": [
+                r.get("emailAddress", {})
+                for r in data.get("toRecipients", [])
+            ],
+            "ccRecipients": [
+                r.get("emailAddress", {})
+                for r in data.get("ccRecipients", [])
+            ],
+            "receivedDateTime": data.get("receivedDateTime"),
+            "attachments": [
+                {
+                    "name": a.get("name"),
+                    "size": a.get("size"),
+                    "contentType": a.get("contentType"),
+                }
+                for a in data.get("attachments", [])
+            ],
+        }
+
+
+# ── 3. search_emails ──
+
+@require_access_token(
+    provider_name="m365-provider",
+    scopes=["https://graph.microsoft.com/Mail.Read"],
+    auth_flow="USER_FEDERATION",
+)
+async def search_emails(
+    query: str,
+    limit: int = 10,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    """按关键词搜索邮件。
+
+    使用 Microsoft Graph API $search 参数进行全文搜索。
+
+    Args:
+        query: 搜索关键词（支持 KQL 语法）
+        limit: 返回结果数量上限，默认 10
+        access_token: AgentArts Identity SDK 自动注入
+
+    Returns:
+        dict with keys: results (list of {id, subject, from, receivedDateTime, isRead}),
+        count (int), query (str)
+    """
+    _ensure_provider()
+    async with httpx.AsyncClient() as client:
+        resp = await client.get(
+            f"{GRAPH_BASE_URL}/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "$search": f'"{query}"',
+                "$top": limit,
+                "$select": "id,subject,from,receivedDateTime,isRead,bodyPreview",
+                "$orderby": "receivedDateTime desc",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = [
+            {
+                "id": m.get("id"),
+                "subject": m.get("subject"),
+                "from": (
+                    (m.get("from") or {})
+                    .get("emailAddress", {})
+                    .get("name", "Unknown")
+                ),
+                "receivedDateTime": m.get("receivedDateTime"),
+                "isRead": m.get("isRead"),
+                "bodyPreview": m.get("bodyPreview", ""),
+            }
+            for m in data.get("value", [])
+        ]
+        return {"results": results, "count": len(results), "query": query}
+
+
+# ── 4. send_email (Guard protected) ──
+
+@require_access_token(
+    provider_name="m365-provider",
+    scopes=["https://graph.microsoft.com/Mail.Send"],
+    auth_flow="USER_FEDERATION",
+)
+async def send_email(
+    to: list[str],
+    subject: str,
+    body: str,
+    cc: list[str] | None = None,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    """发送邮件。
+
+    此操作为敏感写操作，调用前 Agent 应通过 Guard 机制向用户展示预览
+    并等待 explicit 确认。本函数不做 confirmation 检查 — 由 Agent 层处理。
+
+    Args:
+        to: 收件人邮箱地址列表
+        subject: 邮件主题
+        body: 邮件正文（纯文本）
+        cc: 抄送邮箱地址列表，可选
+        access_token: AgentArts Identity SDK 自动注入
+
+    Returns:
+        dict with: sent (bool), message_id (str or None), error (str or None)
+    """
+    if not to:
+        return {
+            "sent": False,
+            "message_id": None,
+            "error": "At least one recipient is required",
+        }
+    _ensure_provider()
+    message: dict[str, Any] = {
+        "subject": subject,
+        "body": {
+            "contentType": "Text",
+            "content": body,
+        },
+        "toRecipients": [
+            {"emailAddress": {"address": addr}} for addr in to
+        ],
+    }
+    if cc:
+        message["ccRecipients"] = [
+            {"emailAddress": {"address": addr}} for addr in cc
+        ]
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{GRAPH_BASE_URL}/sendMail",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"message": message, "saveToSentItems": True},
+        )
+        if resp.status_code == 202:
+            return {"sent": True, "message_id": None, "error": None}
+        error_detail = resp.text
+        return {"sent": False, "message_id": None, "error": error_detail}
+
+
+# ── 5. reply_to_email ──
+
+@require_access_token(
+    provider_name="m365-provider",
+    scopes=["https://graph.microsoft.com/Mail.Send"],
+    auth_flow="USER_FEDERATION",
+)
+async def reply_to_email(
+    email_id: str,
+    body: str,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    """直接回复邮件 — 使用 Graph API POST /messages/{id}/reply 发送回复。
+
+    此 API 立即发送回复（不创建草稿），因此调用前必须通过 Guard 确认。
+    Agent 应在对话中先展示回复预览（收件人、主题、正文），等待用户
+    explicit 确认后再调用此函数。
+
+    Args:
+        email_id: 要回复的原始邮件 ID
+        body: 回复正文（纯文本），将插入原邮件内容上方
+        access_token: AgentArts Identity SDK 自动注入
+
+    Returns:
+        dict with: sent (bool), error (str or None)
+    """
+    _ensure_provider()
+    async with httpx.AsyncClient() as client:
+        resp = await client.post(
+            f"{GRAPH_BASE_URL}/messages/{email_id}/reply",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"message": {"body": {"contentType": "Text", "content": body}}},
+        )
+        if resp.status_code == 202:
+            return {"sent": True, "error": None}
+        return {"sent": False, "error": resp.text}
+
+
+# ── Module-level tool list (no side-effects at import time) ──
+
+EMAIL_TOOLS = [
+    list_emails,
+    get_email,
+    search_emails,
+    send_email,
+    reply_to_email,
+]
