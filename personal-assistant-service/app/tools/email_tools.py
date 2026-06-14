@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 from agentarts.sdk import IdentityClient, require_access_token
+from agentarts.sdk.identity.config import Config
 from agentarts.sdk.identity.types import OAuth2Vendor
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,20 @@ def ensure_provider_sync() -> bool:
     if _PROVIDER_INITIALIZED:
         logger.debug("m365-provider already initialized, skipping.")
         return True
+
+    # Ensure the correct workload identity is configured in .agent_identity.json.
+    # The SDK auto-generates a random name during local auth setup, but the
+    # agent-personal-assistant identity is pre-configured in the AgentArts console.
+    workload_name = os.environ.get("AGENTARTS_WORKLOAD_IDENTITY_NAME")
+    if workload_name:
+        config = Config.load()
+        if config.workload_identity_name != workload_name:
+            logger.info(
+                "Setting workload identity from env: %s (was: %s)",
+                workload_name, config.workload_identity_name,
+            )
+            config.workload_identity_name = workload_name
+            config.save()
 
     client_id = os.environ.get("M365_CLIENT_ID")
     client_secret = os.environ.get("M365_CLIENT_SECRET")
