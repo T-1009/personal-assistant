@@ -17,12 +17,12 @@ _client: httpx.AsyncClient | None = None
 
 
 def _handle_provider_error(fn):
-    """Wrap a tool function to gracefully handle provider-not-found errors.
+    """Wrap a tool function to gracefully handle AgentArts Identity errors.
 
     The @require_access_token decorator fires BEFORE the function body,
-    so a missing provider throws ClientRequestException before our code runs.
-    This wrapper catches that and returns a user-friendly error message
-    instead of crashing the frontend.
+    so any Identity service error (404 provider not found, 500 internal error,
+    network timeout, etc.) would crash the frontend via the SSE stream.
+    This wrapper catches all such errors and returns a user-friendly message.
     """
 
     @functools.wraps(fn)
@@ -31,8 +31,12 @@ def _handle_provider_error(fn):
             return await fn(*args, **kwargs)
         except Exception as e:
             error_msg = str(e)
+            error_type = type(e).__name__
+            logger.error(
+                "Email tool failed — %s: %s. Tool: %s, args: %s",
+                error_type, error_msg, fn.__name__, args,
+            )
             if "m365-provider" in error_msg or "Resource not found" in error_msg:
-                logger.error("Email tool failed — m365-provider not found: %s", e)
                 return {
                     "error": (
                         "邮件功能暂不可用：M365 Provider 未配置。"
@@ -41,7 +45,22 @@ def _handle_provider_error(fn):
                     ),
                     "setup_required": True,
                 }
-            raise
+            if "500" in error_msg or "internal server error" in error_msg.lower():
+                return {
+                    "error": (
+                        "邮件功能暂时不可用：AgentArts Identity 服务返回内部错误 (500)。"
+                        "请稍后重试。如果持续出现，请检查 M365 Provider 在华为云控制台的配置。"
+                    ),
+                    "retryable": True,
+                }
+            # Generic fallback — return error dict instead of crashing
+            return {
+                "error": (
+                    f"邮件工具执行失败：{error_msg[:300]}。"
+                    "请检查 AgentArts Identity 服务和 M365 凭据配置。"
+                ),
+                "detail": error_type,
+            }
 
     return wrapper
 
@@ -71,15 +90,23 @@ def ensure_provider_sync() -> bool:
     """
     global _PROVIDER_INITIALIZED
     if _PROVIDER_INITIALIZED:
+        logger.debug("m365-provider already initialized, skipping.")
         return True
 
     client_id = os.environ.get("M365_CLIENT_ID")
     client_secret = os.environ.get("M365_CLIENT_SECRET")
     tenant_id = os.environ.get("M365_TENANT_ID")
     if not all([client_id, client_secret, tenant_id]):
+        missing = [v for v in ("M365_CLIENT_ID", "M365_CLIENT_SECRET", "M365_TENANT_ID")
+                   if not os.environ.get(v)]
+        logger.warning("m365-provider skipped — missing env vars: %s", ", ".join(missing))
         return False
 
     region = os.environ.get("AGENTARTS_REGION", "cn-southwest-2")
+    logger.info(
+        "Creating m365-provider (region=%s, tenant=%s, client_id=%s...%s)...",
+        region, tenant_id, client_id[:8], client_id[-4:],
+    )
     try:
         client = IdentityClient(region=region)
         client.create_oauth2_credential_provider(
@@ -93,8 +120,10 @@ def ensure_provider_sync() -> bool:
         _PROVIDER_INITIALIZED = True
         return True
     except Exception as e:
+        err_str = str(e)
+        logger.warning("create_oauth2_credential_provider response: %s", err_str[:500])
         # Provider might already exist — that's fine, treat as success
-        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+        if "already exists" in err_str.lower() or "duplicate" in err_str.lower():
             logger.info("m365-provider already exists, reusing.")
             _PROVIDER_INITIALIZED = True
             return True
