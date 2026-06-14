@@ -26,6 +26,7 @@
 当前 `App.tsx` 直接渲染 `RuntimeProvider → Thread`，未登录用户仅看到"请登录以开始对话"一行提示。本次变更为 Web Chat 添加遵循 Apple Design Language（[`DESIGN.md`](../../../personal-assistant-client/DESIGN.md)）的 Landing Page：
 
 - **7-tile 序列**：LandingHero → CapabilityGrid → FeatureTile (Dark) → FeatureTile (Light) → FeatureTile (Parchment) → ClosingCTA → LandingFooter
+- **LoginPage**：全屏登录方式选择页（3 枚品牌 SVG 图标内联），主 CTA 点击切换至 LoginPage，次 CTA 平滑滚动至 CapabilityGrid
 - **AuthGuard**：基于 MSAL `InteractionStatus` 防止 redirect 回调期间 Landing Page 闪现
 - **Code Splitting**：`React.lazy()` + `<Suspense>` 分离 Landing Page 和 Chat Page 代码块
 - **RuntimeProvider 延迟挂载**：仅在 ChatPage 中挂载，避免未登录用户加载 assistant-ui 依赖
@@ -45,14 +46,14 @@
 | 1 | `components/landing/AuthGuard.tsx` | New | MSAL `InteractionStatus` 认证状态 gate；transition 期间渲染 LoadingState |
 | 2 | `components/landing/LoadingState.tsx` | New | Apple-style 简约 spinner（含 `role="status"` accessibility），供 AuthGuard / Suspense / hydration guard 使用 |
 | 3 | `components/landing/ChunkErrorBoundary.tsx` | New | React class-component Error Boundary：捕获 `React.lazy()` chunk 加载失败，降级 UI 提示刷新 |
-| 4 | `components/landing/GlobalNav.tsx` | New | 44px 纯黑全局导航栏（含 dev-mode guard），右侧 "登录" 按钮打开 LoginModal；≤833px 仅保留登录按钮 |
-| 5 | `components/landing/LandingPage.tsx` | New | Landing Page 顶层容器，编排 GlobalNav + 7-tile 序列 + LoginModal，注入 login CTA routing |
+| 4 | `components/landing/GlobalNav.tsx` | New | 44px 纯黑全局导航栏（含 dev-mode guard），右侧 "登录" 按钮打开 LoginPage；≤833px 仅保留登录按钮 |
+| 5 | `components/landing/LandingPage.tsx` | New | Landing Page 顶层容器，编排 GlobalNav + 7-tile 序列 + LoginPage 条件渲染，注入 login CTA routing |
 | 6 | `components/landing/LandingHero.tsx` | New | 首屏 Hero tile（typography-first，56px hero-display，60vh min-height，双 CTA Pill Button） |
 | 7 | `components/landing/FeatureTile.tsx` | New | 可复用全出血 tile（variant: `light` / `parchment` / `dark` / `dark-2`） |
 | 8 | `components/landing/CapabilityCard.tsx` | New | 单张能力卡片（store-utility-card 样式，18px 圆角，hairline 边框） |
 | 9 | `components/landing/CapabilityGrid.tsx` | New | 响应式能力卡片网格（1/2/4 列自适应），带 `id="capabilities"` 锚点 |
 | 10 | `components/landing/ClosingCTA.tsx` | New | 薄包装组件：复用 `<FeatureTile variant="dark-2">` 渲染最后的 CTA tile |
-| 11 | `components/landing/LoginModal.tsx` | New | Apple-style 登录方式选择弹窗（Microsoft 活跃 + GitHub/微信 disabled "即将支持"），底部弹出式 dialog |
+| 11 | `components/landing/LoginPage.tsx` | New | 全屏登录方式选择页（3 枚品牌 SVG 图标内联，Microsoft 活跃 + GitHub/微信 disabled "即将支持"），通过 LandingPage 条件渲染切换 |
 | 12 | `components/landing/LandingFooter.tsx` | New | 页脚（parchment 背景，WCAG AA 合规颜色，链接列 + 法律信息） |
 
 ### New File（1 个，`personal-assistant-client/src/`）
@@ -276,7 +277,7 @@ export class ChunkErrorBoundary extends Component<Props, State> {
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
-| `onLogin` | `() => void` | No | 点击 "登录" 按钮时触发，打开 LoginModal（不再直接调用 MSAL redirect）。dev mode 下不传，组件自行处理 |
+| `onLogin` | `() => void` | No | 点击 "登录" 按钮时触发，打开 LoginPage（全屏登录选择页，不再直接调用 MSAL redirect）。dev mode 下不传，组件自行处理 |
 
 **实现要点**:
 
@@ -326,7 +327,7 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 }
 ```
 
-**Verification**: 导航栏 44px 纯黑，右侧 "登录" 按钮点击打开 LoginModal（而非直接跳转 MSAL）；缩小窗口至 ≤1024px 时品牌名隐藏，登录按钮保留。
+**Verification**: 导航栏 44px 纯黑，右侧 "登录" 按钮点击打开 LoginPage（而非直接跳转 MSAL）；缩小窗口至 ≤1024px 时品牌名隐藏，登录按钮保留。
 
 ---
 
@@ -468,100 +469,159 @@ export function GlobalNav({ onLogin }: GlobalNavProps) {
 
 ---
 
-### Step 12 — `LoginModal` 组件
+### Step 12 — `LoginPage` 组件
 
-**File**: `personal-assistant-client/src/components/landing/LoginModal.tsx` (New)
+**File**: `personal-assistant-client/src/components/landing/LoginPage.tsx` (New, replaces former `LoginModal.tsx`)
 
-**目的**：用户点击主 CTA（"开始对话"、"立即开始"、GlobalNav "登录"）时，弹出 Apple-style 登录方式选择弹窗，让用户选择 Microsoft/GitHub/微信登录。当前仅 Microsoft 可用，GitHub 和微信显示 "即将支持" disabled 状态。
+**目的**：用户点击主 CTA（"开始对话"、"立即开始"、GlobalNav "登录"）时，切换至全屏登录方式选择页。当前仅 Microsoft 可用，GitHub 和微信显示 "即将支持" disabled 状态。
 
 **Props**:
 
 | Prop | Type | Required | Description |
 |------|------|----------|-------------|
-| `open` | `boolean` | Yes | 是否展示弹窗 |
-| `onClose` | `() => void` | Yes | 关闭弹窗回调（点击 "取消" 或背景时触发） |
-| `onMicrosoftLogin` | `() => void` | Yes | Microsoft 登录回调（触发 MSAL `loginRedirect`） |
+| `onBack` | `() => void` | Yes | 返回 LandingPage 回调 |
+
+不再是 modal（无 `open`/`onClose`/`onMicrosoftLogin` props）。通过 LandingPage 的条件渲染切换页面。
 
 **实现要点**:
 
-1. `open=false` 时 `return null`（不渲染任何 DOM）
-2. 全屏半透明 overlay（`fixed inset-0 z-50 bg-black/30`），点击 overlay 触发 `onClose`
-3. 底部弹出式白色 dialog（`bg-white rounded-xl w-full max-w-md mx-4 mb-8 p-6 shadow-lg`），`onClick stopPropagation` 防止冒泡关闭
-4. 三行 provider（每行 `flex items-center justify-between p-4`）：
-   - **Microsoft 账号**（活跃）：`Windows` 图标注色 `text-primary`，右侧显示 "登录" action 文字，`cursor-pointer hover:bg-gray-50`，`onClick={onMicrosoftLogin}`
-   - **GitHub 账号**（disabled）：`Github` 图标，右侧 "即将支持" badge（`text-[12px] text-[#7a7a7a] bg-gray-100 px-2 py-0.5 rounded`），`opacity-50 cursor-not-allowed`
-   - **微信账号**（disabled）：`MessageCircle` 图标注近似，右侧 "即将支持" badge，`opacity-50 cursor-not-allowed`
-5. 行之间用 `border-b border-[#e0e0e0]` 分割线
-6. 底部 "取消" 按钮：`Button variant="outline" className="w-full mt-6" onClick={onClose}`
-7. 顶部标题栏：`flex items-center justify-between mb-6`，"选择登录方式" 标题 + `X` 关闭按钮
+1. 全屏布局（`min-h-dvh`），白色背景，纵向 flex 三区：
+   - **Top bar**（44px）：左侧 "← 返回" 按钮（`ArrowLeft` 图标，`text-[#0066cc]`），点击触发 `onBack`
+   - **Centered content**（`flex-1 flex items-center justify-center`）：max-w-[420px] 居中内容区，包含标题 "登录 Personal Assistant"（28px/600）+ 副标题 + 三行 provider card
+   - **Bottom branding**（`pb-8 text-center`）："Personal Assistant" 12px 灰色水印
 
-**TSX 骨架**：
+2. 三行 provider card（每行 `w-full flex items-center gap-4 p-5 rounded-xl border border-[#e0e0e0]`）：
+   - **Microsoft**（活跃）：无 `opacity` 限制，`hover:bg-[#f5f5f7] transition-colors cursor-pointer`，`onClick` 直接调用 MSAL `loginRedirect`。左侧 MicrosoftIcon SVG；中间标题 "Microsoft 账号" + 副标题 "使用 Entra ID 或 Microsoft 365 账号"
+   - **GitHub**（disabled）：`opacity-50 cursor-not-allowed`，右侧 `rounded-full` badge "即将支持"，标题 "GitHub 账号" + 副标题 "使用 GitHub 账号登录"
+   - **WeChat**（disabled）：`opacity-50 cursor-not-allowed`，右侧 badge，标题 "微信账号" + 副标题 "使用微信扫码登录"
+
+3. 三枚内联品牌 SVG 图标（24×24px，`shrink-0`），定义在同一文件中：
+
+**MicrosoftIcon** — 四色方块 2×2 网格：
+```tsx
+function MicrosoftIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" className="shrink-0">
+      <rect x="1" y="1" width="10" height="10" fill="#f25022" rx="1.5" />
+      <rect x="13" y="1" width="10" height="10" fill="#7fba00" rx="1.5" />
+      <rect x="1" y="13" width="10" height="10" fill="#00a4ef" rx="1.5" />
+      <rect x="13" y="13" width="10" height="10" fill="#ffb900" rx="1.5" />
+    </svg>
+  );
+}
+```
+
+**GitHubIcon** — Octocat mark，fill `#1d1d1f`：
+```tsx
+function GitHubIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" className="shrink-0" fill="#1d1d1f">
+      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
+    </svg>
+  );
+}
+```
+
+**WeChatIcon** — 两个重叠聊天气泡，fill `#00c800`：
+```tsx
+function WeChatIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="24" height="24" className="shrink-0" fill="#00c800">
+      <path d="M8.691 2.188C3.891 2.188 0 5.476 0 9.53c0 2.212 1.17 4.203 3.002 5.55a.59.59 0 01.213.665l-.39 1.48c-.019.07-.048.141-.048.213 0 .163.13.295.29.295a.326.326 0 00.167-.054l1.903-1.114a.864.864 0 01.717-.098 10.16 10.16 0 002.837.403c.276 0 .543-.027.811-.05-.857-2.578.157-4.972 1.932-6.446 1.703-1.415 3.882-1.98 5.853-1.838-.576-3.583-4.196-6.348-8.596-6.348zM5.785 5.991c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178A1.17 1.17 0 014.623 7.17c0-.651.52-1.18 1.162-1.18zm5.813 0c.642 0 1.162.529 1.162 1.18a1.17 1.17 0 01-1.162 1.178 1.17 1.17 0 01-1.162-1.178c0-.651.52-1.18 1.162-1.18zm3.91 3.508c-2.476 0-4.492 2.053-4.492 4.576 0 1.442.67 2.777 1.816 3.654a.44.44 0 01.155.497l-.286 1.1a.222.222 0 00.338.236l1.414-.828a.655.655 0 01.542-.073c.985.326 1.99.327 2.498.327 2.476 0 4.492-2.053 4.492-4.577 0-2.523-2.016-4.576-4.492-4.576-.646 0-1.098.05-1.643.17a4.861 4.861 0 00-.898.005zm-2.162 2.359c.486 0 .88.4.88.892a.886.886 0 01-.88.891.886.886 0 01-.88-.891c0-.492.394-.892.88-.892zm4.326 0c.487 0 .88.4.88.892a.886.886 0 01-.88.891.886.886 0 01-.88-.891c0-.492.394-.892.88-.892z"/>
+    </svg>
+  );
+}
+```
+
+4. **完整 TSX 骨架**：
 
 ```tsx
-import { Button } from "@/components/ui/button";
-import { Windows, Github, MessageCircle, X } from "lucide-react";
+import { useMsal } from "@azure/msal-react";
+import { loginRequest } from "@/lib/auth";
+import { ArrowLeft } from "lucide-react";
 
-interface LoginModalProps {
-  open: boolean;
-  onClose: () => void;
-  onMicrosoftLogin: () => void;
+function MicrosoftIcon() { /* SVG as above */ }
+function GitHubIcon() { /* SVG as above */ }
+function WeChatIcon() { /* SVG as above */ }
+
+interface LoginPageProps {
+  onBack: () => void;
 }
 
-export function LoginModal({ open, onClose, onMicrosoftLogin }: LoginModalProps) {
-  if (!open) return null;
+export function LoginPage({ onBack }: LoginPageProps) {
+  const { instance } = useMsal();
+
+  const handleMicrosoftLogin = () => {
+    instance.loginRedirect(loginRequest);
+  };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/30"
-         onClick={onClose}>
-      <div className="bg-white rounded-xl w-full max-w-md mx-4 mb-8 p-6 shadow-lg"
-           onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-[17px] font-semibold">选择登录方式</h2>
-          <button onClick={onClose} className="text-[#7a7a7a] hover:text-[#333333]">
-            <X className="w-5 h-5" />
+    <div className="min-h-dvh bg-white flex flex-col">
+      {/* Top bar */}
+      <div className="h-[44px] flex items-center px-5">
+        <button onClick={onBack} className="flex items-center gap-1 text-[#0066cc] text-[15px] hover:opacity-80">
+          <ArrowLeft className="w-4 h-4" />
+          返回
+        </button>
+      </div>
+
+      {/* Centered content */}
+      <div className="flex-1 flex items-center justify-center px-8">
+        <div className="max-w-[420px] w-full">
+          <h2 className="text-[28px] font-semibold text-center mb-2">登录 Personal Assistant</h2>
+          <p className="text-[15px] text-[#7a7a7a] text-center mb-10">选择一种方式登录您的账号</p>
+
+          {/* Microsoft — active */}
+          <button
+            onClick={handleMicrosoftLogin}
+            className="w-full flex items-center gap-4 p-5 rounded-xl border border-[#e0e0e0] hover:bg-[#f5f5f7] transition-colors mb-3"
+          >
+            <MicrosoftIcon />
+            <div className="text-left flex-1">
+              <span className="text-[17px] font-medium text-[#1d1d1f]">Microsoft 账号</span>
+              <p className="text-[13px] text-[#7a7a7a]">使用 Entra ID 或 Microsoft 365 账号</p>
+            </div>
           </button>
-        </div>
 
-        {/* Microsoft — active */}
-        <div
-          className="flex items-center justify-between p-4 rounded-lg hover:bg-gray-50 cursor-pointer border-b border-[#e0e0e0]"
-          onClick={onMicrosoftLogin}
-        >
-          <div className="flex items-center gap-3">
-            <Windows className="w-5 h-5 text-primary" />
-            <span className="text-[15px]">Microsoft 账号</span>
+          {/* GitHub — disabled */}
+          <div className="w-full flex items-center gap-4 p-5 rounded-xl border border-[#e0e0e0] opacity-50 cursor-not-allowed mb-3">
+            <GitHubIcon />
+            <div className="text-left flex-1">
+              <span className="text-[17px] font-medium text-[#1d1d1f]">GitHub 账号</span>
+              <p className="text-[13px] text-[#7a7a7a]">使用 GitHub 账号登录</p>
+            </div>
+            <span className="text-[12px] text-[#7a7a7a] bg-[#f5f5f7] px-2 py-0.5 rounded-full whitespace-nowrap">即将支持</span>
           </div>
-          <span className="text-[13px] text-primary">登录</span>
-        </div>
 
-        {/* GitHub — disabled */}
-        <div className="flex items-center justify-between p-4 border-b border-[#e0e0e0] opacity-50 cursor-not-allowed">
-          <div className="flex items-center gap-3">
-            <Github className="w-5 h-5" />
-            <span className="text-[15px]">GitHub 账号</span>
+          {/* WeChat — disabled */}
+          <div className="w-full flex items-center gap-4 p-5 rounded-xl border border-[#e0e0e0] opacity-50 cursor-not-allowed">
+            <WeChatIcon />
+            <div className="text-left flex-1">
+              <span className="text-[17px] font-medium text-[#1d1d1f]">微信账号</span>
+              <p className="text-[13px] text-[#7a7a7a]">使用微信扫码登录</p>
+            </div>
+            <span className="text-[12px] text-[#7a7a7a] bg-[#f5f5f7] px-2 py-0.5 rounded-full whitespace-nowrap">即将支持</span>
           </div>
-          <span className="text-[12px] text-[#7a7a7a] bg-gray-100 px-2 py-0.5 rounded">即将支持</span>
         </div>
+      </div>
 
-        {/* WeChat — disabled */}
-        <div className="flex items-center justify-between p-4 opacity-50 cursor-not-allowed">
-          <div className="flex items-center gap-3">
-            <MessageCircle className="w-5 h-5" />
-            <span className="text-[15px]">微信账号</span>
-          </div>
-          <span className="text-[12px] text-[#7a7a7a] bg-gray-100 px-2 py-0.5 rounded">即将支持</span>
-        </div>
-
-        <Button variant="outline" className="w-full mt-6" onClick={onClose}>
-          取消
-        </Button>
+      {/* Bottom branding */}
+      <div className="text-center pb-8">
+        <p className="text-[12px] text-[#7a7a7a]">Personal Assistant</p>
       </div>
     </div>
   );
 }
 ```
 
-**Verification**: `open=true` 渲染 modal overlay + dialog；Microsoft 行 `onClick` 触发 `onMicrosoftLogin`；GitHub/微信行不可点击（`cursor-not-allowed opacity-50`）；点击 "取消" 或 overlay 背景触发 `onClose`。
+**关键设计决策**：
+- LoginPage 是一个**全屏页面**而非 modal overlay。通过 LandingPage 的条件渲染切换（`showLogin` state），无需 `z-index` 层级管理
+- MSAL `loginRedirect` 直接在 LoginPage 内调用（拒绝通过回调 props 传递——LoginPage 直接 `useMsal`）
+- 品牌 SVG 图标内联在同一文件（零外部依赖），设计精度高于 lucide-react 通用图标
+- "即将支持" badge 使用 Apple 风格 `rounded-full` + `bg-[#f5f5f7]`（parchment 底色）
+- `onBack` 仅负责返回 LandingPage，不承载 MSAL 调用
+
+**Verification**: 点击 "开始对话" CTA → 切换至 LoginPage 全屏视图；三枚品牌 SVG 图标渲染正确色彩；Microsoft 行点击触发 MSAL `loginRedirect`；GitHub/微信行 opacity-50 且不可点击；点击 "返回" 恢复 LandingPage。
 
 ---
 
@@ -594,7 +654,7 @@ export function LoginModal({ open, onClose, onMicrosoftLogin }: LoginModalProps)
 **实现要点**:
 
 1. CTA routing 分为三类：
-   - **打开 LoginModal**（主 CTA）：GlobalNav "登录"、LandingHero "开始对话"、ClosingCTA "立即开始"
+   - **切换到 LoginPage**（主 CTA）：GlobalNav "登录"、LandingHero "开始对话"、ClosingCTA "立即开始"
    - **平滑滚动到 CapabilityGrid**（次 CTA）：LandingHero "了解更多"、FeatureTile Dark/Light "了解更多"
    - **无 CTA**：FeatureTile Parchment（纯展示）
 
@@ -602,8 +662,6 @@ export function LoginModal({ open, onClose, onMicrosoftLogin }: LoginModalProps)
 
 ```tsx
 import { useState } from "react";
-import { useMsal } from "@azure/msal-react";
-import { loginRequest } from "@/lib/auth";
 import { Calendar, Mail, StickyNote, CheckSquare } from "lucide-react";
 import { GlobalNav } from "./GlobalNav";
 import { LandingHero } from "./LandingHero";
@@ -611,20 +669,20 @@ import { FeatureTile } from "./FeatureTile";
 import { CapabilityGrid } from "./CapabilityGrid";
 import { ClosingCTA } from "./ClosingCTA";
 import { LandingFooter } from "./LandingFooter";
-import { LoginModal } from "./LoginModal";
+import { LoginPage } from "./LoginPage";
 
 export default function LandingPage() {
-  const { instance } = useMsal();
-  const [loginModalOpen, setLoginModalOpen] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
 
-  const handleOpenLogin = () => setLoginModalOpen(true);
-  const handleMicrosoftLogin = () => {
-    instance.loginRedirect(loginRequest);
-  };
-
+  const handleOpenLogin = () => setShowLogin(true);
   const handleScrollToCapabilities = () => {
     document.getElementById("capabilities")?.scrollIntoView({ behavior: "smooth" });
   };
+
+  // When showLogin is true, render LoginPage instead of the landing content
+  if (showLogin) {
+    return <LoginPage onBack={() => setShowLogin(false)} />;
+  }
 
   return (
     <div className="landing-page">
@@ -653,31 +711,33 @@ export default function LandingPage() {
         cta={{ label: "立即开始", onClick: handleOpenLogin }}
       />
       <LandingFooter />
-      <LoginModal
-        open={loginModalOpen}
-        onClose={() => setLoginModalOpen(false)}
-        onMicrosoftLogin={handleMicrosoftLogin}
-      />
     </div>
   );
 }
 ```
 
+**Key changes from LoginModal approach**:
+- Removed `useMsal()` from LandingPage — MSAL is now called inside LoginPage directly
+- Removed `loginRequest` import — no longer needed here
+- `loginModalOpen` → `showLogin`
+- `<LoginModal open={...} onClose={...} onMicrosoftLogin={...} />` → conditional render: `if (showLogin) return <LoginPage onBack={...} />`
+- Removed LoginModal import, added LoginPage import
+
 3. **CTA routing 行为总结**：
 
 | CTA | Label | Action |
 |-----|-------|--------|
-| GlobalNav "登录" | 登录 | `handleOpenLogin` → opens LoginModal |
-| LandingHero `primaryCta` | "开始对话" | `handleOpenLogin` → opens LoginModal |
+| GlobalNav "登录" | 登录 | `handleOpenLogin` → opens LoginPage (full-page view) |
+| LandingHero `primaryCta` | "开始对话" | `handleOpenLogin` → opens LoginPage (full-page view) |
 | LandingHero `secondaryCta` | "了解更多" | `handleScrollToCapabilities` → smooth scroll to `#capabilities` |
 | FeatureTile Dark CTA | "了解更多" | `handleScrollToCapabilities` |
 | FeatureTile Light CTA | "了解更多" | `handleScrollToCapabilities` |
 | FeatureTile Parchment | (无 CTA) | — |
-| ClosingCTA | "立即开始" | `handleOpenLogin` → opens LoginModal |
+| ClosingCTA | "立即开始" | `handleOpenLogin` → opens LoginPage (full-page view) |
 
 4. 顶层 `className="landing-page"` wrapper div 作为 Apple 排版 scope（仅 Landing Page 内部生效 17px body 基准）
 
-**Verification**: 主 CTA 点击打开 LoginModal；次 CTA "了解更多" 平滑滚动至 CapabilityGrid；FeatureTile Parchment 无 CTA 按钮；LoginModal 中点击 Microsoft 触发 `loginRedirect`；点击 "取消" 或背景关闭 modal 返回 Landing Page。
+**Verification**: 主 CTA 点击切换到全屏 LoginPage；次 CTA "了解更多" 平滑滚动至 CapabilityGrid；FeatureTile Parchment 无 CTA 按钮；LoginPage 中点击 Microsoft 触发 `loginRedirect`；点击 "返回" 恢复 LandingPage。
 
 ---
 
@@ -890,7 +950,7 @@ flowchart TB
 
 **CTA 路由**：
 
-主 CTA（"开始对话"、"立即开始"、GlobalNav "登录"）点击后打开 `LoginModal`，用户选择 Microsoft 登录后触发 MSAL `loginRedirect`。次 CTA（"了解更多"）通过 `handleScrollToCapabilities` 平滑滚动到 CapabilityGrid（`id="capabilities"` 锚点）。
+主 CTA（"开始对话"、"立即开始"、GlobalNav "登录"）点击后切换到全屏 `LoginPage`，用户选择 Microsoft 登录后触发 MSAL `loginRedirect`。次 CTA（"了解更多"）通过 `handleScrollToCapabilities` 平滑滚动到 CapabilityGrid（`id="capabilities"` 锚点）。
 
 **Code Splitting 策略**：
 
@@ -912,7 +972,7 @@ flowchart TB
 | `CapabilityCard` | 单张能力卡片（store-utility-card 样式，18px 圆角，hairline 边框） |
 | `CapabilityGrid` | 响应式能力卡片网格（1/2/4 列） |
 | `ClosingCTA` | FeatureTile dark-2 变体包装 |
-| `LoginModal` | 登录方式选择弹窗（Microsoft 活跃 + GitHub/微信 disabled "即将支持"），底部弹出式 dialog |
+| `LoginPage` | 全屏登录方式选择页（3 枚品牌 SVG 图标内联，Microsoft 活跃 + GitHub/微信 disabled），通过 LandingPage 条件渲染切换 |
 | `LandingFooter` | parchment 背景页脚 |
 | `ChatPage` | RuntimeProvider + Thread（从 App.tsx 提取） |
 
@@ -942,7 +1002,7 @@ sequenceDiagram
     participant AuthGuard as AuthGuard
     participant MSAL as MSAL
     participant LP as LandingPage (lazy)
-    participant LM as LoginModal
+    participant LPg as LoginPage
     participant CP as ChatPage (lazy)
     participant Login as Microsoft Entra ID
 
@@ -965,9 +1025,9 @@ sequenceDiagram
 
     Note over User,Login: === 用户点击 CTA 登录 ===
     User->>LP: 点击 "开始对话" / GlobalNav "登录"
-    LP-->>User: 打开 LoginModal（3 种登录方式）
-    User->>LM: 点击 Microsoft 账号
-    LM->>MSAL: loginRedirect()
+    LP-->>User: 切换至全屏 LoginPage（3 种登录方式）
+    User->>LPg: 点击 Microsoft 账号
+    LPg->>MSAL: loginRedirect()
     MSAL->>Login: redirect → Microsoft 登录页
     Login-->>MSAL: redirect back with #code
     MSAL-->>AuthGuard: inProgress = "HandleRedirect"
@@ -1008,8 +1068,8 @@ sequenceDiagram
 | `LandingHero` | headline 56px class 存在；双 CTA 按钮存在；secondaryCta 为 undefined 时不渲染 |
 | `CapabilityGrid` | cards 数组正确映射为 CapabilityCard；响应式 grid class 存在 |
 | `Button` variants | `apple-primary` render output 包含 `rounded-full`、`bg-primary`、`h-auto`、`active:scale-95`；`apple-secondary` render output 包含 `border-primary`、`text-primary`、`rounded-full`、`h-auto` |
-| `LoginModal` | `open=true` → renders modal；`open=false` → returns null；Microsoft row clickable triggers `onMicrosoftLogin`；GitHub/WeChat rows disabled (`cursor-not-allowed opacity-50`)；"取消" button calls `onClose`；backdrop click calls `onClose` |
-| `LandingPage` integration | `primaryCta` onClick opens LoginModal（`loginModalOpen=true`）；`secondaryCta` onClick calls `handleScrollToCapabilities`（scrolls to `#capabilities`）；LoginModal `onMicrosoftLogin` triggers `instance.loginRedirect` |
+| `LoginPage` | `onBack` 触发返回 LandingPage；Microsoft 行点击触发 `loginRedirect`；GitHub/微信行 `opacity-50 cursor-not-allowed`；3 枚品牌 SVG 图标渲染（MicrosoftIcon 四色方块、GitHubIcon octocat、WeChatIcon 聊天气泡+绿色） |
+| `LandingPage` integration | `primaryCta` onClick 切换到 LoginPage（`showLogin=true`）；`secondaryCta` onClick 平滑滚动到 `#capabilities`；LoginPage `onBack` 恢复 LandingPage |
 | `App` integration | isAuthenticated=false → LandingPage lazy chunk；isAuthenticated=true → ChatPage lazy chunk |
 
 ### Build Checks
@@ -1023,9 +1083,9 @@ sequenceDiagram
 | Scenario | Verification |
 |----------|-------------|
 | 未登录用户首次访问 | 展示 Landing Page（GlobalNav + 7 tiles 自上而下渲染） |
-| 点击 LandingHero CTA "开始对话" | 打开 LoginModal（非直接跳转 MSAL） |
-| 在 LoginModal 中点击 Microsoft 账号 | 触发 MSAL login redirect |
-| 在 LoginModal 中点击"取消"或背景 | 关闭 LoginModal，返回 Landing Page |
+| 点击 LandingHero CTA "开始对话" | 切换至全屏 LoginPage（非 modal 弹窗） |
+| 在 LoginPage 中点击 Microsoft 账号 | 触发 MSAL login redirect |
+| 在 LoginPage 中点击 "返回" | 恢复 LandingPage |
 | CapabilityGrid "了解更多" CTA | 平滑滚动到 CapabilityGrid（`#capabilities`）区域 |
 | MSAL 回调期间 | 展示 LoadingState（非 LandingPage 闪现） |
 | 回调完成后 | 自动切换到 ChatPage（含 Thread UI） |
