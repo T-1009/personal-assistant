@@ -237,7 +237,7 @@ flowchart TD
 
         S12 --> S12A
 
-        S12B --> S12C["⑩ 调度 panel-chair 专家会商<br/>深度评审 E2E 测试代码"]
+        S12B --> S12C["⑩ 调度 panel-chair 专家会商<br/>深度评审 Dev 阶段全量代码修改"]
     end
 
     S12C --> S13["⑪ 调度 personal-assistant-committer<br/>E2E Tests & Final Fixes Commit"]
@@ -252,7 +252,7 @@ flowchart TD
 - **分部计划串并行**：仅让 Service、Client、Infra Plan 并行设计，随后在前三者产出后再由 `meta-dev` 撰写 Test Plan，提高测试用例设计的准确性。
 - **Plan Commit 纳入 Control Loop**：步骤 ⑤ 的 Plan Commit 动作移至了 Test Plan 完成后、`panel-chair` 会商合成之前。这使得专家评审面板拿到的直接就是已经提交到 feature branch 上的版本化草稿，提高了评审和版本锁定的严密性。
 - **API 同步移动 to Dev 阶段**：原在 Meta 阶段（对实际代码文件产生修改），现移动到 Dev 阶段的开头，使 Meta 阶段真正做到"设计不落地、代码零修改"，所有实际代码改动均局限在 Dev 阶段内部。
-- **E2E 联调、会商与提交**：开发都完成后进行一次 Implementation Commit 再开始联调。E2E 领域内部完成测试编写 and 初审后，**由 Dev 阶段的顶层编排器 `personal-assistant-dev-manager` 调度 `panel-chair` 组织专家对 E2E 测试代码和测试用例进行深度会商评审（E2E Code Spec Review）**，确保整体交付质量合格。全部通过后再由 Committer 统一进行 **E2E Tests & Final Fixes Commit（E2E 测试与最终修复提交）**，以确保联调测试中发现的任何缺陷修复与测试用例一同合入版本库。
+- **E2E 联调、会商与提交**：开发都完成后进行一次 Implementation Commit 再开始联调。E2E 领域内部完成测试编写和初审后，**由 Dev 阶段的顶层编排器 `personal-assistant-dev-manager` 调度 `panel-chair` 组织专家对 Dev 阶段全量代码修改（Service + Client + Infra + E2E）进行深度会商评审**，确保整体交付质量合格。全部通过后再由 Committer 统一进行 **E2E Tests & Final Fixes Commit（E2E 测试与最终修复提交）**，以确保联调测试中发现的任何缺陷修复与测试用例一同合入版本库。
 
 ## Control Loop
 
