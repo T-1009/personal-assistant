@@ -46,8 +46,10 @@
 | **User Federation** | Outbound 模式之一。Agent 以**用户身份**调用外部 API（如查 GitHub Issues）。底层走 OAuth2，用户需完成一次授权 |
 | **M2M (Machine-to-Machine)** | Outbound 模式之一。Agent 以**自身服务身份**调用 API（如企业内部 CRM）。底层走 API Key |
 | **STS Token** | Outbound 模式之一。Agent 获取**云资源临时凭证**（如访问 OBS）。底层走华为云 STS |
-| **Credential Provider** | Identity Service 中配置的凭据提供方。如 `github-provider`（OAuth2）、`internal-api-provider`（API Key） |
+| **Credential Provider** | Identity Service 中配置的凭据提供方。如 `github-provider`（OAuth2）、`m365-provider`（OAuth2，Microsoft 365 邮件/日历）、`internal-api-provider`（API Key） |
+| **m365-provider** | Microsoft 365 OAuth2 Credential Provider。用于 Agent 以 User Federation 模式调用 Microsoft Graph API（邮件、日历）。创建时需提供 `client_id`、`client_secret`、`tenant_id`，vendor 为 `OAuth2Vendor.MICROSOFTOAUTH2`。详见 Feature 10a |
 | **Workload Identity** | Agent 在 Identity Service 中的工作负载身份标识 |
+| **Guard 机制** | 敏感操作（如发送邮件、删除数据）的二次确认机制。Agent 在执行写操作前必须向用户展示操作预览并等待 explicit 确认，防止 LLM 幻觉导致误操作。由 `send_email` 等工具标记 `requires_confirmation=True` 触发 |
 
 ---
 
@@ -92,8 +94,9 @@
 
 | 术语 | 定义 |
 |------|------|
+| **Email Tools** | Agent 以 User Federation 模式调用 Microsoft Graph API 处理邮件。包含 `list_emails`（列表）、`get_email`（详情）、`search_emails`（搜索）、`send_email`（发送，Guard 保护）、`draft_reply`（草拟回复）。通过 `m365-provider` OAuth2 Provider 注入凭据。详见 Feature 10a |
+| **Microsoft 365 Tools** | Agent 以 User Federation 模式调用 Microsoft 365 API（Outlook 邮件、Calendar 等）。邮件部分由 Feature 10a 实现（`email_tools.py`），Calendar 部分待后续 Feature |
 | **GitHub Tools** | Agent 以 User Federation 模式调用 GitHub API（查 Issues/PR） |
-| **Microsoft 365 Tools** | Agent 以 User Federation 模式调用 Microsoft 365 API（Outlook/Calendar） |
 | **Internal Tools** | Agent 以 M2M 模式调用企业内部 API（CRM/OA 等） |
 | **Cloud Tools** | Agent 以 STS 模式访问华为云资源（OBS/RDS 等） |
 | **Guard Check** | 敏感操作（如发送邮件）的二次确认机制，防止 Agent 误操作 |

@@ -672,18 +672,19 @@ personal-assistant/
 ├── uv.lock                           # 确定性锁文件
 ├── app/                              # （位于 personal-assistant-service/）
 │   ├── main.py                      # FastAPI 应用入口 + 路由定义 ✅ 已实现
-│   ├── agent_handler.py             # Agent 处理逻辑（deepagents）✅ 已实现
+│   ├── agent_handler.py             # Agent 处理逻辑（deepagents + ToolNode）✅ 已实现
 │   ├── llm_config.py                # LLM Provider 配置加载 ✅ 已实现
 │   ├── auth.py                      # Inbound 认证中间件 ✅ 已实现
 │   ├── playground.py                # Chainlit Playground ✅ 已实现
 │   ├── memory.py                    # Memory 集成 [Planned — Feature 2]
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复 [Planned — Feature 5]
-│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID) [Planned — not yet implemented]
-│   └── tools/                       # 外部工具集成 [Planned — Feature 6-8]
-│       ├── github_tools.py          # GitHub 工具 (OAuth2 User Federation)
-│       ├── m365_tools.py            # Microsoft 365 工具 (OAuth2 User Federation)
-│       ├── internal_tools.py        # 内部 API 工具 (API Key M2M)
-│       └── cloud_tools.py           # 云资源工具 (STS M2M)
+│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID) [已废弃 — Feature 4 改由前端 PKCE]
+│   └── tools/                       # 外部工具集成
+│       ├── __init__.py              # 工具目录初始化 + ToolNode 工厂 ✅ Feature 10a
+│       ├── email_tools.py           # Microsoft 365 邮件工具 (OAuth2 User Federation) ✅ Feature 10a
+│       ├── github_tools.py          # GitHub 工具 (OAuth2 User Federation) [Planned — Feature 6]
+│       ├── internal_tools.py        # 内部 API 工具 (API Key M2M) [Planned — Feature 7]
+│       └── cloud_tools.py           # 云资源工具 (STS M2M) [Planned — Feature 8]
 ├── personal-assistant-client/        # Web Chat 前端 ✅ 已实现（独立目录，Vite + React + assistant-ui）
 │   └── ...
 └── README.md
@@ -697,6 +698,7 @@ personal-assistant/
 
 | 用户身份 | Inbound 方式 | Outbound 目标 | Outbound 方式 | Auth Flow |
 |----------|-------------|---------------|---------------|-----------|
+| Microsoft 用户 | JWT (Microsoft Entra ID) | Outlook Mail (Microsoft Graph) | OAuth 2.0 | USER_FEDERATION |
 | Microsoft 用户 | JWT (Microsoft Entra ID) | GitHub API | OAuth 2.0 | USER_FEDERATION |
 | Microsoft 用户 | JWT (Microsoft Entra ID) | Outlook Calendar | OAuth 2.0 | USER_FEDERATION |
 | 企业员工 | JWT (Okta/Entra ID) | 内部 CRM | API Key | M2M |
