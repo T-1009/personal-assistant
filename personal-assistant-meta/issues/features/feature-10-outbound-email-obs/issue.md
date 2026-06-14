@@ -28,7 +28,7 @@ Personal Assistant 已完成 Feature 4（Inbound Identity — Microsoft Entra ID
   - `list_emails(folder, limit, access_token)` — 列出收件箱/指定文件夹邮件
   - `get_email(email_id, access_token)` — 获取单封邮件详情（正文、附件列表）
   - `send_email(to, subject, body, cc, attachments, access_token)` — 发送邮件（需 Guard 二次确认）
-  - `reply_to_email(email_id, comment, access_token)` — 直接回复邮件
+  - `reply_to_email(email_id, body, access_token)` — 直接回复邮件
   - `search_emails(query, access_token)` — 按关键词搜索邮件
 - 工具注册到 LangGraph ToolNode，更新 system prompt
 - 敏感操作 Guard：发送邮件→用户确认
@@ -65,7 +65,7 @@ Personal Assistant 已完成 Feature 4（Inbound Identity — Microsoft Entra ID
 - [ ] 通过 AgentArts Python SDK 创建 `m365-provider` OAuth2 Credential Provider
   ```python
   from agentarts.sdk import IdentityClient
-  from agentarts.sdk.identity import OAuth2Vendor
+  from agentarts.sdk.identity.types import OAuth2Vendor
 
   client = IdentityClient(region="cn-southwest-2")
   client.create_oauth2_credential_provider(
@@ -144,6 +144,6 @@ Personal Assistant 已完成 Feature 4（Inbound Identity — Microsoft Entra ID
 - SDK 导入：
   ```python
   from agentarts.sdk import IdentityClient, require_access_token, require_sts_token, require_api_key
-  from agentarts.sdk.identity import OAuth2Vendor, StsCredentials
+  from agentarts.sdk.identity.types import OAuth2Vendor, StsCredentials
   ```
 - Microsoft Graph API: [List messages](https://learn.microsoft.com/en-us/graph/api/user-list-messages)

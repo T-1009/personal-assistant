@@ -37,7 +37,7 @@
 ```python
 # 该代码在 personal-assistant-service/ 中执行，非 personal-assistant-infra/
 from agentarts.sdk import IdentityClient
-from agentarts.sdk.identity import OAuth2Vendor
+from agentarts.sdk.identity.types import OAuth2Vendor
 
 client = IdentityClient(region="cn-southwest-2")
 client.create_oauth2_credential_provider(
@@ -151,7 +151,7 @@ runtime:
 ```python
 import os
 from agentarts.sdk import IdentityClient
-from agentarts.sdk.identity import OAuth2Vendor
+from agentarts.sdk.identity.types import OAuth2Vendor
 
 client = IdentityClient(region="cn-southwest-2")
 client.create_oauth2_credential_provider(

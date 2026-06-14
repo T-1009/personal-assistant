@@ -405,7 +405,7 @@ async def send_email(
 )
 async def reply_to_email(
     email_id: str,
-    comment: str,
+    body: str,
     access_token: str | None = None,
 ) -> dict[str, Any]:
     """直接回复邮件 — 使用 Graph API POST /messages/{id}/reply 发送回复。
@@ -416,7 +416,7 @@ async def reply_to_email(
 
     Args:
         email_id: 要回复的原始邮件 ID
-        comment: 回复正文（纯文本），将插入原邮件内容上方
+        body: 回复正文（纯文本），将插入原邮件内容上方
         access_token: AgentArts Identity SDK 自动注入
 
     Returns:
@@ -430,7 +430,7 @@ async def reply_to_email(
                 "Authorization": f"Bearer {access_token}",
                 "Content-Type": "application/json",
             },
-            json={"comment": comment},
+            json={"message": {"body": {"contentType": "Text", "content": body}}},
         )
         if resp.status_code == 202:
             return {"sent": True, "error": None}
@@ -708,10 +708,10 @@ sequenceDiagram
     Agent-->>User: "草拟如下：收件人：张三，主题：Re: ..., 正文：... 需要发送吗？"
     User->>Agent: "发送"
     Agent->>Agent: ✅ Guard: 用户 explicit 确认
-    Agent->>ToolNode: tool_call: reply_to_email(email_id="...", comment="...")
+    Agent->>ToolNode: tool_call: reply_to_email(email_id="...", body="...")
     ToolNode->>IdSvc: get_resource_oauth2_token(provider="m365-provider", scopes=["Mail.Send"])
     IdSvc-->>ToolNode: access_token (JWT)
-    ToolNode->>GraphAPI: POST /me/messages/{id}/reply {comment: "..."}
+    ToolNode->>GraphAPI: POST /me/messages/{id}/reply {message: {body: {contentType: "Text", content: "..."}}}
     GraphAPI-->>ToolNode: 202 Accepted
     ToolNode-->>Agent: {sent: true}
     Agent-->>User: "邮件已回复 ✅"

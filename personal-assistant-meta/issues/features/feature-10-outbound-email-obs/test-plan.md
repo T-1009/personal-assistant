@@ -107,11 +107,11 @@ def mock_identity_client():
 
 | # | 测试函数 | 场景 | 输入 | Mock Graph API 响应 | 预期输出 |
 |---|---------|------|------|---------------------|---------|
-| UT-RE-01 | `test_reply_to_email_success` | 回复发送成功 | `email_id="msg-1", comment="Thanks", access_token="mock_token"` | `202 Accepted` | `{"sent": True, "error": None}` |
+| UT-RE-01 | `test_reply_to_email_success` | 回复发送成功 | `email_id="msg-1", body="Thanks", access_token="mock_token"` | `202 Accepted` | `{"sent": True, "error": None}` |
 | UT-RE-02 | `test_reply_to_email_failure` | 回复发送失败（如权限不足） | 同上 | `403 Forbidden`，非 202 | `{"sent": False, "error": "..."}` |
-| UT-RE-03 | `test_reply_to_email_calls_reply_endpoint` | 验证调用 `POST /messages/{id}/reply` 端点 | `email_id="msg-1", comment="Thanks"` | `202 Accepted`，验证 request body | URL 为 `/me/messages/msg-1/reply`，request body `{"comment": "Thanks"}` |
+| UT-RE-03 | `test_reply_to_email_calls_reply_endpoint` | 验证调用 `POST /messages/{id}/reply` 端点，request body 含 `message.body` 富文本结构 | `email_id="msg-1", body="Thanks"` | `202 Accepted`，验证 request body | URL 为 `/me/messages/msg-1/reply`，request body `{"message": {"body": {"contentType": "Text", "content": "Thanks"}}}` |
 | UT-RE-04 | `test_reply_to_email_no_access_token` | access_token 为 None | `access_token=None` | 预期 Bearer header 为 `Bearer None`（装饰器 passthrough 后显式传入） | 可调用（Bearer None），由 Graph API 返回 401 |
-| UT-RE-05 | `test_reply_to_email_formats_comment` | 验证 `comment` 字段被正确放入 request body | `comment="Hello world"` | `202 Accepted`，验证 request body | `json={"comment": "Hello world"}`，不含多余字段 |
+| UT-RE-05 | `test_reply_to_email_formats_body` | 验证 `body` 参数被正确包装为 `message.body` 富文本结构 | `body="Hello world"` | `202 Accepted`，验证 request body | `json={"message": {"body": {"contentType": "Text", "content": "Hello world"}}}`，`contentType` 固定为 `"Text"` |
 
 #### 1.2.7 Provider 初始化测试（惰性 `_ensure_provider()`）
 
