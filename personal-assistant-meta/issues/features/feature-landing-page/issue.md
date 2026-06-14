@@ -278,14 +278,14 @@ function AuthGuard({ children }: { children: ReactNode }) {
 - [ ] Landing Page 包含以下 tile（自上而下）：LandingHero → CapabilityGrid → FeatureTile（Dark）→ FeatureTile（Light）→ FeatureTile（Parchment）→ ClosingCTA → LandingFooter
 - [ ] CapabilityGrid 包含 4 张 CapabilityCard：日程、邮件、笔记、任务（或等价的 4 项核心能力）
 - [ ] MSAL redirect 回调期间显示简约 loading 状态（非 LandingPage 闪现），处理完成后自动切换到 Chat
-- [ ] **"开始对话" CTA** 点击 → 弹出 LoginModal（多 provider 选择），非直接跳转微软登录
+- [ ] **"开始对话" CTA** 点击 → 页面切换至 LoginPage（全页面视图），非弹窗
 - [ ] **"了解更多" CTA** 点击 → 平滑滚动至下方内容介绍区域（`#capabilities`），不触发登录流程
 - [ ] LandingHero 高度适当，不过度留白（`min-h-[60vh]` 或类似），内容垂直居中
 - [ ] Tailwind v4 `@theme` 包含 DESIGN.md 定义的表面颜色 token
 - [ ] `--primary` CSS variable 值为 `#0066cc`
 - [ ] Body 基础字号为 17px，headline 带负字间距（限制在 `.landing-page` scope 内）
 - [ ] 全出血 tile 无圆角（`rounded-none`）、无阴影、无装饰性渐变
-- [ ] LoginModal 包含：Microsoft 账号登录（可用）、GitHub 账号登录（disabled + "即将支持"）、微信账号登录（disabled + "即将支持"）
+- [ ] LoginPage 包含三个 provider（MS ✅ + GitHub 🔒 + 微信 🔒），每个左侧有品牌 SVG 图标，右侧 "即将支持" badge
 - [ ] 页面在 480px–1440px 范围内响应式正常，导航栏在 ≤833px 折叠
 - [ ] 现有 Chat 功能不受影响，登录后对话正常工作
 - [ ] TypeScript 编译无错误，`npm run build` 成功
@@ -330,23 +330,29 @@ const handleScrollToCapabilities = () => {
 
 **问题**：当前点击 "登录" 或 "开始对话" 直接跳转到 Microsoft Entra ID 登录页。未来需要支持 GitHub、微信等多种登录方式，用户应在登录前看到一个 provider 选择界面。
 
-**方案**：新增 `LoginModal` 组件 —— Apple 风格的底部 Sheet / 居中 Dialog，列出可用的登录方式：
+**方案**：将登录方式选择设计为**独立全页面视图**（而非弹窗 / Dialog）。用户点击登录后整体页面切换至 LoginPage，包含返回按钮可回到 Landing Page。
 
 | Provider | 状态 | 图标 | 行为 |
 |----------|------|------|------|
 | Microsoft 账号 | ✅ 可用 | `Microsoft` 图标 | `instance.loginRedirect(loginRequest)` |
 | GitHub 账号 | 🔒 即将支持 | `GitHub` 图标 + 灰色 | 不触发任何操作，显示 "即将支持" badge |
-| 微信账号 | 🔒 即将支持 | `MessageCircle` 图标 + 灰色 | 不触发任何操作，显示 "即将支持" badge |
+| 微信账号 | 🔒 即将支持 | 微信气泡 SVG 图标 + 灰色 | 不触发任何操作，显示 "即将支持" badge |
+
+**Icon 要求**：每个 provider 左侧使用**品牌原生 SVG 图标**（非 lucide-react 通用图标）：
+- Microsoft：四色方块（红 #f25022 / 绿 #7fba00 / 蓝 #00a4ef / 黄 #ffb900），2×2 网格
+- GitHub：Octocat mark，单色 #1d1d1f
+- 微信：双气泡，单色 #00c800
 
 **交互流程变更**：
 
 ```mermaid
 flowchart TD
-    A["用户点击 '登录' / '开始对话' / '立即开始'"] --> B["弹出 LoginModal"]
+    A["用户点击 '登录' / '开始对话' / '立即开始'"] --> B["页面切换至 LoginPage（全页面）"]
     B --> C{"选择登录方式"}
     C -->|"Microsoft 账号"| D["MSAL loginRedirect → Entra ID"]
     C -->|"GitHub 账号 (disabled)"| E["无操作，灰色提示"]
     C -->|"微信账号 (disabled)"| F["无操作，灰色提示"]
+    C -->|"← 返回"| G["回到 Landing Page"]
 ```
 
 **受影响的入口点**：
@@ -355,31 +361,31 @@ flowchart TD
 - `ClosingCTA` "立即开始" → 打开 LoginModal
 - `LandingHero` `secondaryCta` "了解更多" → 平滑滚动（不受影响，见改进②）
 
-**LoginModal 组件规格**：
+**LoginPage 组件规格**（全页面视图，非弹窗）：
 
 | Prop | Type | 说明 |
 |------|------|------|
-| `open` | `boolean` | 是否显示 |
-| `onClose` | `() => void` | 关闭回调 |
-| `onMicrosoftLogin` | `() => void` | Microsoft 登录回调 |
+| `onBack` | `() => void` | 返回 Landing Page 回调 |
 
-- 底部 Sheet 样式（移动端）或居中 Dialog（桌面端）
-- Apple 风格：白色背景、圆角 20px、subtle backdrop blur
-- 每个 provider 一行：图标 + 名称 + 状态标签
-- 可用的 provider：可点击，hover 高亮
-- 不可用的 provider：`opacity-50`、`cursor-not-allowed`、右侧灰色 "即将支持" badge
-- 底部 "取消" 按钮关闭 Modal
+- **全页面布局**：独立页面，`min-h-dvh` 白色背景
+- **顶部导航**：44px 高度，左侧 "← 返回" 按钮（ArrowLeft icon + 文字，颜色 `#0066cc`）
+- **内容区**：flex 垂直居中，最大宽度 420px
+- **标题**："登录 Personal Assistant"（28px semibold）
+- **副标题**："选择一种方式登录您的账号"（15px，`#7a7a7a`）
+- **Provider 行**：每个 provider 一行，左侧 24×24px 品牌 SVG 图标，右侧信息
+  - 可用 provider：可点击，hover 变灰背景
+  - 不可用 provider：`opacity-50`、`cursor-not-allowed`、右侧 "即将支持" badge
+- **底部**："Personal Assistant" 品牌文字（12px, `#7a7a7a`）
 
 ### 受影响的文件
 
 | 文件 | 变更 |
 |------|------|
 | `LandingHero.tsx` | `min-h-[85vh]` → `min-h-[60vh]` + `flex items-center` |
-| `LandingPage.tsx` | 新增 `handleOpenLogin` / `handleScrollToCapabilities`；CTA 分流 |
-| `LoginModal.tsx`（新） | provider 选择 Modal |
-| `GlobalNav.tsx` | "登录" 按钮 `onClick` 打开 LoginModal（非直跳 MSAL） |
+| `LandingPage.tsx` | `loginModalOpen` → `showLogin`；条件渲染 LoginPage 或 Landing 内容 |
+| `LoginPage.tsx`（重写 `LoginModal.tsx`）| 从弹窗改为**全页面视图**："← 返回" 导航 + 垂直居中内容 + 品牌 SVG 图标 |
+| `GlobalNav.tsx` | "登录" 按钮 → `showLogin = true` |
 | `CapabilityGrid.tsx` | 外层 section 加 `id="capabilities"` |
-| `FeatureTile.tsx` | "了解更多" CTA onClick 改为 scroll（由 LandingPage 传入） |
 
 ## Four-Question Gate
 
