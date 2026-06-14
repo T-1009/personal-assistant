@@ -278,15 +278,108 @@ function AuthGuard({ children }: { children: ReactNode }) {
 - [ ] Landing Page 包含以下 tile（自上而下）：LandingHero → CapabilityGrid → FeatureTile（Dark）→ FeatureTile（Light）→ FeatureTile（Parchment）→ ClosingCTA → LandingFooter
 - [ ] CapabilityGrid 包含 4 张 CapabilityCard：日程、邮件、笔记、任务（或等价的 4 项核心能力）
 - [ ] MSAL redirect 回调期间显示简约 loading 状态（非 LandingPage 闪现），处理完成后自动切换到 Chat
-- [ ] 所有 CTA 按钮点击触发 MSAL 登录流程
+- [ ] **"开始对话" CTA** 点击 → 弹出 LoginModal（多 provider 选择），非直接跳转微软登录
+- [ ] **"了解更多" CTA** 点击 → 平滑滚动至下方内容介绍区域（`#capabilities`），不触发登录流程
+- [ ] LandingHero 高度适当，不过度留白（`min-h-[60vh]` 或类似），内容垂直居中
 - [ ] Tailwind v4 `@theme` 包含 DESIGN.md 定义的表面颜色 token
 - [ ] `--primary` CSS variable 值为 `#0066cc`
-- [ ] Body 基础字号为 17px，headline 带负字间距
+- [ ] Body 基础字号为 17px，headline 带负字间距（限制在 `.landing-page` scope 内）
 - [ ] 全出血 tile 无圆角（`rounded-none`）、无阴影、无装饰性渐变
+- [ ] LoginModal 包含：Microsoft 账号登录（可用）、GitHub 账号登录（disabled + "即将支持"）、微信账号登录（disabled + "即将支持"）
 - [ ] 页面在 480px–1440px 范围内响应式正常，导航栏在 ≤833px 折叠
 - [ ] 现有 Chat 功能不受影响，登录后对话正常工作
 - [ ] TypeScript 编译无错误，`npm run build` 成功
 - [ ] 现有测试全部通过
+
+---
+
+## Iteration 2 — 设计改进（2026-06-14）
+
+基于首次实现的 Feedback，对 Landing Page 进行以下三项设计改进：
+
+### 改进 ①：Hero 留白缩减
+
+**问题**：当前 `LandingHero` 使用 `min-h-[85vh]`，导致首屏上半段空白面积过大。
+
+**方案**：将 `min-h-[85vh]` 缩减为 `min-h-[60vh]`，并将内部内容垂直居中。`py-[80px]` 保持不变作为上下呼吸空间。60vh 既保留了 Hero 的视觉分量（不显得局促），又消除了过度的空白区域。
+
+```diff
+- <section className="rounded-none min-h-[85vh] bg-white">
++ <section className="rounded-none min-h-[60vh] bg-white flex items-center">
+```
+
+### 改进 ②："了解更多" 平滑滚动
+
+**问题**：当前所有 CTA 按钮（包括 "了解更多"）均直接触发 MSAL 登录跳转，用户点击 "了解更多" 时期望的是向下翻看页面介绍，而非直接跳到聊天窗口。
+
+**方案**：
+
+1. 给 `CapabilityGrid` 的 section 添加 `id="capabilities"`
+2. `LandingHero` 的 `secondaryCta`（"了解更多"）→ `onClick` 改为 `scrollTo('#capabilities')`
+3. `FeatureTile` 的 "了解更多" CTA → 同样改为滚动到下一个 tile
+4. 只有 `primaryCta`（"开始对话"）和 `ClosingCTA`（"立即开始"）才触发登录流程
+
+```tsx
+// LandingPage.tsx
+const handleScrollToCapabilities = () => {
+  document.getElementById("capabilities")?.scrollIntoView({ behavior: "smooth" });
+};
+```
+
+### 改进 ③：登录方式选择中间页
+
+**问题**：当前点击 "登录" 或 "开始对话" 直接跳转到 Microsoft Entra ID 登录页。未来需要支持 GitHub、微信等多种登录方式，用户应在登录前看到一个 provider 选择界面。
+
+**方案**：新增 `LoginModal` 组件 —— Apple 风格的底部 Sheet / 居中 Dialog，列出可用的登录方式：
+
+| Provider | 状态 | 图标 | 行为 |
+|----------|------|------|------|
+| Microsoft 账号 | ✅ 可用 | `Microsoft` 图标 | `instance.loginRedirect(loginRequest)` |
+| GitHub 账号 | 🔒 即将支持 | `GitHub` 图标 + 灰色 | 不触发任何操作，显示 "即将支持" badge |
+| 微信账号 | 🔒 即将支持 | `MessageCircle` 图标 + 灰色 | 不触发任何操作，显示 "即将支持" badge |
+
+**交互流程变更**：
+
+```mermaid
+flowchart TD
+    A["用户点击 '登录' / '开始对话' / '立即开始'"] --> B["弹出 LoginModal"]
+    B --> C{"选择登录方式"}
+    C -->|"Microsoft 账号"| D["MSAL loginRedirect → Entra ID"]
+    C -->|"GitHub 账号 (disabled)"| E["无操作，灰色提示"]
+    C -->|"微信账号 (disabled)"| F["无操作，灰色提示"]
+```
+
+**受影响的入口点**：
+- `GlobalNav` "登录" 按钮 → `onLogin` 改为打开 LoginModal
+- `LandingHero` `primaryCta` "开始对话" → 打开 LoginModal
+- `ClosingCTA` "立即开始" → 打开 LoginModal
+- `LandingHero` `secondaryCta` "了解更多" → 平滑滚动（不受影响，见改进②）
+
+**LoginModal 组件规格**：
+
+| Prop | Type | 说明 |
+|------|------|------|
+| `open` | `boolean` | 是否显示 |
+| `onClose` | `() => void` | 关闭回调 |
+| `onMicrosoftLogin` | `() => void` | Microsoft 登录回调 |
+
+- 底部 Sheet 样式（移动端）或居中 Dialog（桌面端）
+- Apple 风格：白色背景、圆角 20px、subtle backdrop blur
+- 每个 provider 一行：图标 + 名称 + 状态标签
+- 可用的 provider：可点击，hover 高亮
+- 不可用的 provider：`opacity-50`、`cursor-not-allowed`、右侧灰色 "即将支持" badge
+- 底部 "取消" 按钮关闭 Modal
+
+### 受影响的文件
+
+| 文件 | 变更 |
+|------|------|
+| `LandingHero.tsx` | `min-h-[85vh]` → `min-h-[60vh]` + `flex items-center` |
+| `LandingPage.tsx` | 新增 `handleOpenLogin` / `handleScrollToCapabilities`；CTA 分流 |
+| `LoginModal.tsx`（新） | provider 选择 Modal |
+| `GlobalNav.tsx` | "登录" 按钮 `onClick` 打开 LoginModal（非直跳 MSAL） |
+| `CapabilityGrid.tsx` | 外层 section 加 `id="capabilities"` |
+| `FeatureTile.tsx` | "了解更多" CTA onClick 改为 scroll（由 LandingPage 传入） |
 
 ## Four-Question Gate
 
