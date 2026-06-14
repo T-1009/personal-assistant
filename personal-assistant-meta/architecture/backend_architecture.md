@@ -172,12 +172,13 @@ class AgentHandler:
 
     def __init__(self):
         from app.llm_config import get_model
+        from app.tools import build_tools  # ✅ Feature 10a: 工具注册工厂
         self.model = get_model()
         self.checkpointer = self._init_checkpointer()  # 新增
         self.agent = create_deep_agent(
             model=self.model,
             system_prompt="你是 Personal Assistant...",
-            tools=[...],
+            tools=build_tools(),  # ✅ Feature 10a: 动态加载工具
             checkpointer=self.checkpointer,  # ✅ 注入 Checkpointer
         )
 
@@ -312,7 +313,7 @@ async def list_github_issues(owner: str, repo: str, access_token: str = None):
 ```
 
 支持三种 Outbound 模式：
-- **USER_FEDERATION**：以用户身份调 GitHub/Microsoft 365（OAuth2）
+- **USER_FEDERATION**：以用户身份调 GitHub/Microsoft 365（OAuth2）。邮件部分（`m365-provider`）由 Feature 10a 实现，详见 [overall_architecture.md §4.2](overall_architecture.md#42-outbound--agent-代表用户调用外部服务)。
 - **M2M**：以 Agent 自身身份调企业内部 API（API Key）
 - **STS**：获取云资源临时凭证（STS Token）
 
@@ -361,10 +362,11 @@ personal-assistant/
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
 │   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
 │   └── tools/
-│       ├── github_tools.py          # GitHub 工具 (OAuth2)
-│       ├── m365_tools.py            # Microsoft 365 工具 (OAuth2)
-│       ├── internal_tools.py        # 内部 API 工具 (API Key)
-│       └── cloud_tools.py           # 云资源工具 (STS)
+│       ├── __init__.py              # 工具目录初始化 + ToolNode 工厂 ✅ Feature 10a
+│       ├── email_tools.py           # Microsoft 365 邮件工具 (OAuth2) ✅ Feature 10a
+│       ├── github_tools.py          # GitHub 工具 (OAuth2) [Planned]
+│       ├── internal_tools.py        # 内部 API 工具 (API Key) [Planned]
+│       └── cloud_tools.py           # 云资源工具 (STS) [Planned]
 ```
 
 ---

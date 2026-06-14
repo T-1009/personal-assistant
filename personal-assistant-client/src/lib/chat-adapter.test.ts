@@ -426,6 +426,83 @@ describe("chatAdapter", () => {
     });
   });
 
+  describe("proactive token refresh (CT-AUTH-02)", () => {
+    it("refreshes token before fetch when token is expiring soon", async () => {
+      // Token that expires in 30 seconds (within the 60s threshold)
+      useAuthStore.getState().setIdToken(makeTestJWT(30));
+      mockAcquireIdTokenSilently.mockResolvedValue("fresh-proactive-token");
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("proactive refresh test");
+
+      // acquireIdTokenSilently should have been called proactively (before fetch)
+      expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
+
+      // The fresh token should be in the store
+      expect(useAuthStore.getState().idToken).toBe("fresh-proactive-token");
+
+      // The Authorization header should contain the fresh token
+      const init = mockFetch.mock.calls[0][1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers).toHaveProperty("Authorization");
+      expect(headers["Authorization"]).toBe("Bearer fresh-proactive-token");
+    });
+
+    it("does not refresh token when token is not expiring soon", async () => {
+      // Token that expires in 1 hour (well outside the 60s threshold)
+      useAuthStore.getState().setIdToken(makeTestJWT(3600));
+      mockAcquireIdTokenSilently.mockResolvedValue("should-not-be-called");
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("no-refresh-needed test");
+
+      // acquireIdTokenSilently should NOT have been called
+      expect(mockAcquireIdTokenSilently).not.toHaveBeenCalled();
+
+      // Original token should still be in the store
+      expect(useAuthStore.getState().idToken).toBeTruthy();
+      expect(useAuthStore.getState().idToken).not.toBe("should-not-be-called");
+    });
+
+    it("keeps existing token when proactive refresh returns null", async () => {
+      // Token expiring soon, but refresh fails — the adapter sends the
+      // original token and lets the backend return 401 for handling.
+      const nearExpiryToken = makeTestJWT(30);
+      useAuthStore.getState().setIdToken(nearExpiryToken);
+      mockAcquireIdTokenSilently.mockResolvedValue(null);
+
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([]),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      await collectResults("refresh-fails test");
+
+      // acquireIdTokenSilently should have been called
+      expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
+
+      // Token remains unchanged (not cleared by proactive refresh path)
+      expect(useAuthStore.getState().idToken).toBe(nearExpiryToken);
+
+      // Authorization header still contains the original token
+      const init = mockFetch.mock.calls[0][1] as RequestInit;
+      const headers = init.headers as Record<string, string>;
+      expect(headers).toHaveProperty("Authorization");
+      expect(headers["Authorization"]).toBe(`Bearer ${nearExpiryToken}`);
+    });
+  });
+
   describe("empty query", () => {
     it("handles empty query string gracefully", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
