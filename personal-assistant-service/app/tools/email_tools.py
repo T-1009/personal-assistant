@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import logging
 import os
 from typing import Any
@@ -15,6 +16,36 @@ _provider_lock = asyncio.Lock()
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
 
 _client: httpx.AsyncClient | None = None
+
+
+def _handle_provider_error(fn):
+    """Wrap a tool function to gracefully handle provider-not-found errors.
+
+    The @require_access_token decorator fires BEFORE the function body,
+    so a missing provider throws ClientRequestException before our code runs.
+    This wrapper catches that and returns a user-friendly error message
+    instead of crashing the frontend.
+    """
+
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except Exception as e:
+            error_msg = str(e)
+            if "m365-provider" in error_msg or "Resource not found" in error_msg:
+                logger.error("Email tool failed — m365-provider not found: %s", e)
+                return {
+                    "error": (
+                        "邮件功能暂不可用：M365 Provider 未配置。"
+                        "请设置环境变量 M365_CLIENT_ID, M365_CLIENT_SECRET, M365_TENANT_ID，"
+                        "并确保 AgentArts Identity 服务可用。"
+                    ),
+                    "setup_required": True,
+                }
+            raise
+
+    return wrapper
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -72,6 +103,7 @@ async def _ensure_provider():
 
 # ── 1. list_emails ──
 
+@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
@@ -129,6 +161,7 @@ async def list_emails(
 
 # ── 2. get_email ──
 
+@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
@@ -192,6 +225,7 @@ async def get_email(
 
 # ── 3. search_emails ──
 
+@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
@@ -249,6 +283,7 @@ async def search_emails(
 
 # ── 4. send_email (Guard protected) ──
 
+@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Send"],
@@ -331,6 +366,7 @@ async def send_email(
 
 # ── 5. reply_to_email ──
 
+@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Send"],
