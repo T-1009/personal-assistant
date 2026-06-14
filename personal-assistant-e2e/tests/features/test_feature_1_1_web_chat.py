@@ -13,12 +13,11 @@ Tests the full application stack:
 Test scenarios from plan:
   1. Dev Mode Startup — Vite dev server starts, serves assistant-ui interface
   2. SSE Streaming Chat — Proper SSE format with token events
-  3. Markdown Rendering (Static) — Production build serves assistant-ui HTML
   4. Multi-turn Conversation — Multiple streaming requests succeed
   5. Error Handling — Empty query returns proper error
   6. Production Build — npm run build generates dist/
   7. Chainlit Coexistence — /playground endpoint availability
-  8. StaticFiles Mount — /, /ping, /invocations stream mode all work
+  8. StaticFiles Mount — API routes work correctly (StaticFiles removed in refactor-2)
 """
 
 import json
@@ -397,111 +396,6 @@ class TestScenario2_SSEStreamingChat:
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
 
-# ── Scenario 3: Markdown Rendering (Static) ────────────────────────────
-# NOTE (refactor-2): This entire scenario is now OBSOLETE. refactor-2
-# removed the StaticFiles mount; GET / no longer serves dist/index.html.
-# Tests are skipped but preserved as historical documentation.
-
-
-@pytest.mark.feature
-@pytest.mark.slow
-class TestScenario3_MarkdownRenderingStatic:
-    """Verify production build serves assistant-ui frontend with chat interface.
-
-    ALL TESTS SKIPPED after refactor-2: StaticFiles mount removed.
-    GET / now returns 404 — dist/ is no longer served by the backend.
-    """
-
-    PORT = 18711
-
-    @pytest.mark.skip(
-        reason="Obsolete after refactor-2: StaticFiles mount removed, "
-               "GET / now returns 404 by design."
-    )
-    def test_build_and_serve_dist(self, http_client):
-        """Build client, start service with dist/, verify HTML contains assistant-ui elements."""
-        # Ensure dist/ exists (run build if needed)
-        if not (DIST_DIR / "index.html").exists():
-            result = subprocess.run(
-                ["npm", "run", "build"],
-                cwd=str(CLIENT_DIR),
-                capture_output=True,
-                text=True,
-                timeout=120,
-            )
-            if result.returncode != 0:
-                pytest.fail(
-                    f"npm run build failed with code {result.returncode}:\n"
-                    f"stdout: {result.stdout[-500:]}\n"
-                    f"stderr: {result.stderr[-500:]}"
-                )
-
-        assert DIST_DIR.is_dir(), f"dist/ directory not found at {DIST_DIR}"
-        assert (DIST_DIR / "index.html").exists(), "dist/index.html not found"
-
-        # Find JS/CSS assets
-        assets_dir = DIST_DIR / "assets"
-        js_files = list(assets_dir.glob("*.js")) if assets_dir.is_dir() else []
-        css_files = list(assets_dir.glob("*.css")) if assets_dir.is_dir() else []
-        assert len(js_files) > 0, f"No JS bundle found in {assets_dir}"
-        assert len(css_files) > 0, f"No CSS bundle found in {assets_dir}"
-
-        # Start service and verify it serves the built frontend
-        proc = _start_service(self.PORT)
-        try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/")
-            assert resp.status_code == 200
-
-            content_type = resp.headers.get("content-type", "").lower()
-            assert "text/html" in content_type, f"Expected HTML, got: {content_type}"
-
-            body = resp.text
-            # Verify it's the assistant-ui chat interface:
-            # - Root div for React
-            assert '<div id="root"></div>' in body or 'id="root"' in body, (
-                f"Expected React root div in HTML. Body preview: {body[:500]}"
-            )
-            # - Script tags for bundled JS
-            assert '<script type="module"' in body or '<script src=' in body or '<script ' in body, (
-                f"Expected script tags in HTML. Body preview: {body[:500]}"
-            )
-            # - Title or app name
-            assert "Personal Assistant" in body or "personal-assistant" in body.lower(), (
-                f"Expected app name in HTML. Body preview: {body[:500]}"
-            )
-        finally:
-            _stop_service(proc)
-
-    @pytest.mark.skip(
-        reason="Obsolete after refactor-2: StaticFiles mount removed, "
-               "static assets are no longer served by the backend."
-    )
-    def test_static_assets_are_served(self, http_client):
-        """Bundled JS and CSS assets are served from /assets/.
-
-        SKIPPED: refactor-2 removed StaticFiles.
-        """
-        # Verify dist exists first
-        if not (DIST_DIR / "index.html").exists():
-            pytest.skip("dist/ not built — run npm run build first")
-
-        assets_dir = DIST_DIR / "assets"
-        if not assets_dir.is_dir():
-            pytest.skip("No assets directory in dist/")
-
-        proc = _start_service(self.PORT)
-        try:
-            # Verify the index page references assets
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/")
-            body = resp.text
-
-            # Check that assets are referenced in HTML
-            assert "/assets/" in body, (
-                f"Expected /assets/ reference in HTML. Body preview: {body[:500]}"
-            )
-        finally:
-            _stop_service(proc)
-
 
 # ── Scenario 4: Multi-turn Conversation ────────────────────────────────
 
@@ -797,43 +691,13 @@ class TestScenario7_ChainlitCoexistence:
 @pytest.mark.feature
 @pytest.mark.slow
 class TestScenario8_StaticFilesMount:
-    """Verify StaticFiles mount serves dist/ and API routes take priority.
+    """Verify API routes work correctly (StaticFiles mount was removed in refactor-2).
 
-    NOTE (refactor-2): The StaticFiles mount is removed. `test_root_serves_index_html`
-    and `test_spa_fallback_serves_index_html` are skipped. The remaining API-level
-    tests (ping, stream, invocations) still pass because API routes continue to work.
+    NOTE (refactor-2): The StaticFiles mount is removed. The remaining
+    API-level tests (ping, stream, invocations) continue to pass.
     """
 
     PORT = 18713
-
-    # NOTE (refactor-2): _ensure_dist fixture removed — the 2 dist-dependent
-    # tests are skipped, and the remaining 3 API tests don't need dist/.
-
-    @pytest.mark.skip(
-        reason="Obsolete after refactor-2: StaticFiles mount removed, "
-               "GET / now returns 404 by design."
-    )
-    def test_root_serves_index_html(self, http_client):
-        """GET / returns dist/index.html with 200 and text/html.
-
-        SKIPPED: refactor-2 removed StaticFiles. GET / now returns 404.
-        """
-        proc = _start_service(self.PORT)
-        try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/")
-            assert resp.status_code == 200, (
-                f"GET / failed with {resp.status_code}: {resp.text[:200]}"
-            )
-
-            content_type = resp.headers.get("content-type", "").lower()
-            assert "text/html" in content_type, f"Expected HTML, got: {content_type}"
-
-            body = resp.text
-            assert "<!doctype html>" in body.lower()
-            assert "Personal Assistant" in body
-            assert '<div id="root"></div>' in body
-        finally:
-            _stop_service(proc)
 
     def test_api_ping_takes_priority_over_static(self, http_client):
         """GET /ping returns 200 JSON — API routes override static mount."""
@@ -865,31 +729,6 @@ class TestScenario8_StaticFilesMount:
             assert resp.status_code in (200, 500), (
                 f"Expected 200 or 500, got {resp.status_code}: {resp.text[:200]}"
             )
-        finally:
-            _stop_service(proc)
-
-    @pytest.mark.skip(
-        reason="Obsolete after refactor-2: StaticFiles/SPA fallback removed. "
-               "Bug-2 (SPA fallback) is now invalid by design — GET /chat returns 404."
-    )
-    def test_spa_fallback_serves_index_html(self, http_client):
-        """SPA fallback: verify /chat path serves index.html.
-
-        SKIPPED: refactor-2 removed StaticFiles and SPA fallback entirely.
-        Bug-2 is now invalid — SPA fallback was removed by design.
-        """
-        proc = _start_service(self.PORT)
-        try:
-            resp = http_client.get(f"http://127.0.0.1:{self.PORT}/chat")
-            # Strict: bug-2 causes 404. When fixed, expect 200 with index.html.
-            assert resp.status_code == 200, (
-                f"Expected SPA fallback to serve index.html, got {resp.status_code}"
-            )
-            content_type = resp.headers.get("content-type", "").lower()
-            assert "text/html" in content_type
-            body = resp.text
-            assert "Personal Assistant" in body
-            assert '<div id="root"></div>' in body
         finally:
             _stop_service(proc)
 

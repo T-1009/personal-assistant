@@ -665,29 +665,31 @@ curl -X POST https://<runtime-domain>/invocations \
 
 ```
 personal-assistant/
-├── .agentarts_config.yaml          # AgentArts 部署配置
-├── Dockerfile                       # ARM64 镜像
-├── config.yaml                      # LLM Provider 配置（新增）
-├── pyproject.toml                   # Python 依赖 + ruff 配置
+├── .agentarts_config.yaml          # AgentArts 部署配置（位于 personal-assistant-service/）
+├── Dockerfile                       # ARM64 镜像（位于 personal-assistant-service/）
+├── config.yaml                      # LLM Provider 配置 ✅ 已实现
+├── pyproject.toml                   # Python 依赖 + ruff 配置（位于 personal-assistant-service/）
 ├── uv.lock                           # 确定性锁文件
-├── app/
-│   ├── main.py                      # FastAPI 应用入口 + 路由定义
-│   ├── agent_handler.py             # Agent 处理逻辑（deepagents + Identity SDK）
-│   ├── llm_config.py                # LLM Provider 配置加载（新增）
-│   ├── memory.py                    # Memory 集成
-│   ├── feishu_adapter.py            # 飞书消息解析 + 回复
-│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
-│   └── tools/
+├── app/                              # （位于 personal-assistant-service/）
+│   ├── main.py                      # FastAPI 应用入口 + 路由定义 ✅ 已实现
+│   ├── agent_handler.py             # Agent 处理逻辑（deepagents）✅ 已实现
+│   ├── llm_config.py                # LLM Provider 配置加载 ✅ 已实现
+│   ├── auth.py                      # Inbound 认证中间件 ✅ 已实现
+│   ├── playground.py                # Chainlit Playground ✅ 已实现
+│   ├── memory.py                    # Memory 集成 [Planned — Feature 2]
+│   ├── feishu_adapter.py            # 飞书消息解析 + 回复 [Planned — Feature 5]
+│   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID) [Planned — not yet implemented]
+│   └── tools/                       # 外部工具集成 [Planned — Feature 6-8]
 │       ├── github_tools.py          # GitHub 工具 (OAuth2 User Federation)
 │       ├── m365_tools.py            # Microsoft 365 工具 (OAuth2 User Federation)
 │       ├── internal_tools.py        # 内部 API 工具 (API Key M2M)
 │       └── cloud_tools.py           # 云资源工具 (STS M2M)
-├── web/                              # Web Chat 前端（独立项目）
+├── personal-assistant-client/        # Web Chat 前端 ✅ 已实现（独立目录，Vite + React + assistant-ui）
 │   └── ...
 └── README.md
 ```
 
-> 前端不再作为 `adapters/` 目录放在同一仓库。Web Chat 前端为独立项目，飞书和 OfficeClaw 走各自平台的配置。
+> 注：`personal-assistant-service/` 和 `personal-assistant-client/` 为独立子目录，非服务端子目录。标 `[Planned]` 的文件尚未实现，将在对应 Feature 中交付。
 
 ---
 

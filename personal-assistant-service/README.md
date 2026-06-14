@@ -2,8 +2,6 @@
 
 基于 [AgentArts](https://www.huaweicloud.com/product/agentarts.html) 平台的 AI Agent 后端服务。处理对话逻辑、日程/邮件/笔记/任务管理，支持非流式与 SSE 流式两种对话模式。
 
-当前为 **Feature 1**（Agent 骨架 + Web Chat 渠道）——最小可运行骨架。
-
 ## 目录结构
 
 ```
@@ -13,13 +11,19 @@ personal-assistant-service/
 │   ├── main.py              # FastAPI 应用入口 + 路由定义
 │   ├── agent_handler.py     # deepagents Agent 编排 + MaaS 模型连接
 │   ├── llm_config.py        # LLM 多模型配置管理
+│   ├── auth.py              # Inbound 认证中间件（JWT / API Key）
 │   └── playground.py        # Chainlit Playground 挂载
 ├── tests/
 │   ├── __init__.py
 │   ├── test_main.py         # FastAPI 端点集成测试
 │   ├── test_agent_handler.py # AgentHandler 单元测试
 │   ├── test_llm_config.py   # LLM 配置管理测试
+│   ├── test_auth.py         # 认证中间件测试
+│   ├── test_checkpointer.py # Checkpoint 持久化测试
 │   └── test_playground.py   # Chainlit Playground 测试
+├── scripts/                 # 运维脚本（部署、冒烟测试等）
+├── config.yaml              # LLM Provider 配置（多 provider 声明式管理）
+├── openapi.json             # OpenAPI 规范（自动生成）
 ├── pyproject.toml           # 项目元数据 + 依赖 (uv)
 ├── uv.lock                  # 确定性依赖锁定
 ├── Dockerfile               # ARM64 容器镜像
@@ -44,14 +48,16 @@ uv sync
 ### 2. 设置环境变量
 
 ```bash
-export MODEL_API_KEY="<your-maas-api-key>"
+export MAAS_API_KEY="<your-maas-api-key>"
 ```
 
-可选变量（已提供默认值）：
+> 当 `config.yaml` 存在时，LLM Provider 配置由 `config.yaml` 管理（详见 [ADR-011](../personal-assistant-meta/architecture/ADR/ADR-011-multi-llm-provider.md)），此时需设置 `MAAS_API_KEY`（maas provider）或 `DEEPSEEK_API_KEY`（deepseek provider）。
+>
+> 若无 `config.yaml`，系统会 fallback 读取旧版环境变量：
 
 | 变量 | 默认值 | 说明 |
 |------|--------|------|
-| `MODEL_API_KEY` | **必需** | MaaS API Key |
+| `MODEL_API_KEY` | **必需**（fallback 模式） | MaaS API Key |
 | `MODEL_NAME` | `deepseek-v4-pro` | 模型名称 |
 | `MODEL_URL` | `https://api.modelarts-maas.com/openai/v1` | MaaS API 地址 |
 
@@ -170,10 +176,10 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
 
 ## 后续 Feature
 
-| Feature | 内容 |
-|---------|------|
-| Feature 2 | Memory 集成（跨 Session 记忆） |
-| Feature 3 | OfficeClaw 渠道 |
-| Feature 4 | 用户认证 / OAuth |
-| Feature 5 | 飞书 Client Adapter（飞书 Bot 接入） |
-| Feature 6-8 | 外部工具集成（日历/邮件/笔记/任务） |
+| Feature | 内容 | 状态 |
+|---------|------|------|
+| Feature 2 | Memory 集成（跨 Session 记忆） | [Planned — not yet implemented] |
+| Feature 3 | OfficeClaw 渠道 | [Planned — not yet implemented] |
+| Feature 4 | 用户认证 / OAuth（Inbound Identity） | 已实现 |
+| Feature 5 | 飞书 Client Adapter（飞书 Bot 接入） | [Planned — not yet implemented] |
+| Feature 6-8 | 外部工具集成（日历/邮件/笔记/任务） | [Planned — not yet implemented] |
