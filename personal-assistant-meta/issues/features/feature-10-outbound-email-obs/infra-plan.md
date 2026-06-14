@@ -67,7 +67,7 @@ flowchart TB
         OBS["OBS Bucket<br/>personal-assistant-web-chat<br/>（Web Chat 静态托管）"]
 
         subgraph Feature10a["Feature 10a 新增（Service 层，非 Infra）"]
-            Tools["app/tools/email_tools.py<br/>list_emails / get_email / send_email<br/>draft_reply / search_emails"]
+            Tools["app/tools/email_tools.py<br/>list_emails / get_email / send_email<br/>reply_to_email / search_emails"]
             Decorator["@require_access_token<br/>provider=m365-provider<br/>auth_flow=USER_FEDERATION"]
         end
 

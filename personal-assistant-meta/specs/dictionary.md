@@ -49,7 +49,7 @@
 | **Credential Provider** | Identity Service 中配置的凭据提供方。如 `github-provider`（OAuth2）、`m365-provider`（OAuth2，Microsoft 365 邮件/日历）、`internal-api-provider`（API Key） |
 | **m365-provider** | Microsoft 365 OAuth2 Credential Provider。用于 Agent 以 User Federation 模式调用 Microsoft Graph API（邮件、日历）。创建时需提供 `client_id`、`client_secret`、`tenant_id`，vendor 为 `OAuth2Vendor.MICROSOFTOAUTH2`。详见 Feature 10a |
 | **Workload Identity** | Agent 在 Identity Service 中的工作负载身份标识 |
-| **Guard 机制** | 敏感操作（如发送邮件）的二次确认机制，防止 LLM 幻觉导致误操作。**当前实现（Feature 10a）**：Text-based Conversation Guard — Agent 草拟操作预览展示给用户，用户通过自然语言回复"确认"/"发送"后，Agent 在下一次 tool call 中执行写操作。`send_email` 工具本身为只展示草稿的提示性工具，实际发送由 Agent 在收到用户确认后调用底层 Graph API。**Planned Enhancement**：Tool-level interrupt — `requires_confirmation=True` 标记，由 LangGraph `interrupt()` 暂停 graph 执行等待用户确认后 resume，提供更强的安全保证和更少的 token 消耗 |
+| **Guard 机制** | 敏感操作（如发送邮件）的二次确认机制，防止 LLM 幻觉导致误操作。**当前实现（Feature 10a）**：Text-based Conversation Guard — Agent 先在对话中生成操作预览（收件人、主题、正文），仅在用户给出明确的肯定回复（如"发送"、"确认"）后，才在后续 ReAct loop 中调用 `send_email` 或 `reply_to_email` 工具执行写操作。`send_email` 和 `reply_to_email` 工具直接调用 Microsoft Graph API 执行实际操作。**Planned Enhancement**：Tool-level interrupt — `requires_confirmation=True` 标记，由 LangGraph `interrupt()` 暂停 graph 执行等待用户确认后 resume，提供更强的安全保证和更少的 token 消耗 |
 
 ---
 
@@ -94,7 +94,7 @@
 
 | 术语 | 定义 |
 |------|------|
-| **Email Tools** | Agent 以 User Federation 模式调用 Microsoft Graph API 处理邮件。包含 `list_emails`（列表）、`get_email`（详情）、`search_emails`（搜索）、`send_email`（发送，Guard 保护）、`draft_reply`（草拟回复）。通过 `m365-provider` OAuth2 Provider 注入凭据。详见 Feature 10a |
+| **Email Tools** | Agent 以 User Federation 模式调用 Microsoft Graph API 处理邮件。包含 `list_emails`（列表）、`get_email`（详情）、`search_emails`（搜索）、`send_email`（发送，Guard 保护）、`reply_to_email`（直接回复邮件）。通过 `m365-provider` OAuth2 Provider 注入凭据。详见 Feature 10a |
 | **Microsoft 365 Tools** | Agent 以 User Federation 模式调用 Microsoft 365 API（Outlook 邮件、Calendar 等）。邮件部分由 Feature 10a 实现（`email_tools.py`），Calendar 部分待后续 Feature |
 | **GitHub Tools** | Agent 以 User Federation 模式调用 GitHub API（查 Issues/PR） |
 | **Internal Tools** | Agent 以 M2M 模式调用企业内部 API（CRM/OA 等） |

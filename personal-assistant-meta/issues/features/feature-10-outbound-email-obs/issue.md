@@ -28,7 +28,7 @@ Personal Assistant 已完成 Feature 4（Inbound Identity — Microsoft Entra ID
   - `list_emails(folder, limit, access_token)` — 列出收件箱/指定文件夹邮件
   - `get_email(email_id, access_token)` — 获取单封邮件详情（正文、附件列表）
   - `send_email(to, subject, body, cc, attachments, access_token)` — 发送邮件（需 Guard 二次确认）
-  - `draft_reply(email_id, body, access_token)` — 草拟回复
+  - `reply_to_email(email_id, comment, access_token)` — 直接回复邮件
   - `search_emails(query, access_token)` — 按关键词搜索邮件
 - 工具注册到 LangGraph ToolNode，更新 system prompt
 - 敏感操作 Guard：发送邮件→用户确认
@@ -60,7 +60,7 @@ Personal Assistant 已完成 Feature 4（Inbound Identity — Microsoft Entra ID
 ### 10a.2 Microsoft 365 OAuth2 Provider
 
 - [ ] Azure Portal → Microsoft Entra ID → 应用注册（或复用 Feature 4 的 App Registration）
-  - 添加 Microsoft Graph API 权限：`Mail.Read`, `Mail.Send`, `Mail.ReadWrite`
+  - 添加 Microsoft Graph API 权限：`Mail.Read`, `Mail.Send`
   - 获取 client_id / client_secret
 - [ ] 通过 AgentArts Python SDK 创建 `m365-provider` OAuth2 Credential Provider
   ```python
@@ -101,17 +101,17 @@ Personal Assistant 已完成 Feature 4（Inbound Identity — Microsoft Entra ID
             )
             return resp.json()
     ```
-  - 读操作 scopes：`Mail.Read`；写操作 scopes：`Mail.ReadWrite`, `Mail.Send`
+  - 读操作 scopes：`Mail.Read`；写操作 scopes：`Mail.Send`
 - [ ] `list_emails` — 邮件列表（支持 folder、limit、$filter）
 - [ ] `get_email` — 邮件详情（正文、发件人、收件人、附件列表）
 - [ ] `search_emails` — 关键词搜索（Graph API `$search`）
 - [ ] `send_email` — 发送邮件（写操作 + Guard 二次确认）
-- [ ] `draft_reply` — 草拟回复（返回回复草稿，由 Agent 展示给用户）
+- [ ] `reply_to_email` — 直接回复邮件（返回回复预览，由 Agent 展示给用户）
 - [ ] 单元测试：mock Graph API response
 
 ### 10a.4 工具注册与 System Prompt
 
-- [ ] LangGraph ToolNode 注册 `list_emails`, `get_email`, `send_email`, `draft_reply`, `search_emails`
+- [ ] LangGraph ToolNode 注册 `list_emails`, `get_email`, `send_email`, `reply_to_email`, `search_emails`
 - [ ] 更新 system prompt，新增邮件能力描述（Agent 知道何时/如何使用邮件工具）
 - [ ] Guard 机制：`send_email` 标记为需要用户确认的写操作
 
@@ -119,7 +119,7 @@ Personal Assistant 已完成 Feature 4（Inbound Identity — Microsoft Entra ID
 
 - [ ] Web Chat：用户对话 "帮我看看收件箱" → Agent 返回邮件列表
 - [ ] Web Chat：用户对话 "帮我查一下最近关于项目进度的邮件" → Agent 搜索并返回
-- [ ] Web Chat：用户对话 "帮我回张三的邮件，说收到" → Agent 草拟回复内容，用户确认后发送
+- [ ] Web Chat：用户对话 "帮我回张三的邮件，说收到" → Agent 展示回复预览，用户确认后发送
 - [ ] 写操作 Guard：发送邮件 → 弹出确认 → 用户确认后执行
 - [ ] 跨 Session：第二次对话直接查邮件，无需重新授权
 

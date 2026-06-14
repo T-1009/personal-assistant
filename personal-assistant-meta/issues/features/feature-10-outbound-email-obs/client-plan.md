@@ -8,7 +8,7 @@
 
 ## 变更概述
 
-本 Feature 10a 的邮件工具（`list_emails`、`get_email`、`search_emails`、`send_email`、`draft_reply`）全部在后端 Agent 层实现。前端作为纯消息通道，**不需要任何代码变更**。
+本 Feature 10a 的邮件工具（`list_emails`、`get_email`、`search_emails`、`send_email`、`reply_to_email`）全部在后端 Agent 层实现。前端作为纯消息通道，**不需要任何代码变更**。
 
 核心原因：
 - **Guard（二次确认）** 由 Agent system prompt 驱动，以自然语言对话形式实现 —— Agent 先展示邮件预览，等待用户回复"确认"/"发送"后再调用 `send_email`
@@ -273,7 +273,7 @@ flowchart TB
     subgraph Backend["☁️ 后端（personal-assistant-service）"]
         FastAPI["POST /invocations<br/>SSE Streaming"]
         Agent["deepagents Agent<br/>ReAct Loop"]
-        Tools["Email Tools<br/>list_emails / get_email / search_emails<br/>send_email / draft_reply"]
+        Tools["Email Tools<br/>list_emails / get_email / search_emails<br/>send_email / reply_to_email"]
         Identity["@require_access_token<br/>AgentArts Identity SDK<br/>USER_FEDERATION"]
         GraphAPI["Microsoft Graph API<br/>/me/messages / /me/sendMail"]
     end
