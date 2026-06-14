@@ -24,10 +24,11 @@ def build_tools() -> list[Any]:
         from app.tools.email_tools import EMAIL_TOOLS
 
         tools.extend(EMAIL_TOOLS)
-    except ImportError:
+    except ImportError as e:
         logger.warning(
-            "Email tools not available (import failed). "
+            "Email tools not available (import failed): %s. "
             "Email functionality will be disabled for this session.",
+            e,
             exc_info=True,
         )
 

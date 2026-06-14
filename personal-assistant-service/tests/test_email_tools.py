@@ -4,6 +4,7 @@ Feature 10a: Outbound Email — tests all 5 tool functions plus
 provider initialization (_ensure_provider).
 """
 
+import asyncio
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -51,11 +52,17 @@ def mock_identity_client():
 
 
 @pytest.fixture(autouse=True)
-def reset_provider_state():
-    """Reset _PROVIDER_INITIALIZED before and after each test."""
-    et._PROVIDER_INITIALIZED = False
+def reset_provider_and_client():
+    """Reset provider state and shared client before/after each test."""
+    import app.tools.email_tools as _et
+
+    _et._PROVIDER_INITIALIZED = False
+    _et._provider_lock = asyncio.Lock()
+    _et._client = None
     yield
-    et._PROVIDER_INITIALIZED = False
+    _et._PROVIDER_INITIALIZED = False
+    _et._provider_lock = asyncio.Lock()
+    _et._client = None
 
 
 # ── Helpers ──
@@ -75,7 +82,7 @@ def _make_resp(
 
 @contextmanager
 def _mock_httpx(method: str, resp: MagicMock):
-    """Context manager that mocks httpx.AsyncClient, yields inner mock client.
+    """Mock _get_client() to return a mock client with the given method/response.
 
     Usage:
         with _mock_httpx("get", resp) as mock_client:
@@ -85,13 +92,7 @@ def _mock_httpx(method: str, resp: MagicMock):
     mock_client = AsyncMock()
     getattr(mock_client, method).return_value = resp
 
-    mock_httpx_class = MagicMock()
-    mock_httpx_class.return_value.__aenter__ = AsyncMock(
-        return_value=mock_client
-    )
-    mock_httpx_class.return_value.__aexit__ = AsyncMock(return_value=None)
-
-    with patch("httpx.AsyncClient", mock_httpx_class):
+    with patch("app.tools.email_tools._get_client", return_value=mock_client):
         yield mock_client
 
 
@@ -304,6 +305,7 @@ class TestGetEmail:
                 "toRecipients": [],
                 "ccRecipients": [],
                 "receivedDateTime": "2026-06-14T10:00:00Z",
+                "hasAttachments": True,
                 "attachments": [
                     {
                         "name": "report.pdf",
@@ -431,7 +433,7 @@ class TestSearchEmails:
 
     @pytest.mark.asyncio
     async def test_search_emails_uses_search_param(self):
-        """UT-SE-03: $search param is properly quoted."""
+        """UT-SE-03: $search param is properly quoted (simple query)."""
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
@@ -474,6 +476,33 @@ class TestSearchEmails:
                 query="test", access_token="mock-token"
             )
 
+    @pytest.mark.asyncio
+    async def test_search_emails_escapes_quotes(self):
+        """UT-SE-06: double-quotes in query are escaped for KQL safety."""
+        resp = _make_resp(200, {"value": []})
+
+        with _mock_httpx("get", resp) as mock_client:
+            await et.search_emails(
+                query='hello "world"', access_token="mock-token"
+            )
+            params = mock_client.get.call_args[1]["params"]
+
+        # Double-quotes inside the query should be backslash-escaped
+        assert params["$search"] == '"hello \\"world\\""'
+
+    @pytest.mark.asyncio
+    async def test_search_emails_no_orderby_param(self):
+        """UT-SE-07: $orderby param is not sent (Graph API incompatibility)."""
+        resp = _make_resp(200, {"value": []})
+
+        with _mock_httpx("get", resp) as mock_client:
+            await et.search_emails(
+                query="test", access_token="mock-token"
+            )
+            params = mock_client.get.call_args[1]["params"]
+
+        assert "$orderby" not in params
+
 
 # ═══════════════════════════════════════════════════════════════
 # send_email tests
@@ -493,6 +522,7 @@ class TestSendEmail:
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
+                confirm=True,
                 access_token="mock-token",
             )
 
@@ -511,6 +541,7 @@ class TestSendEmail:
                 subject="Hello",
                 body="Hi",
                 cc=["cc@x.com"],
+                confirm=True,
                 access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
@@ -531,6 +562,7 @@ class TestSendEmail:
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
+                confirm=True,
                 access_token="mock-token",
             )
 
@@ -549,6 +581,7 @@ class TestSendEmail:
                 subject="Test",
                 body="Body",
                 cc=["c@x.com"],
+                confirm=True,
                 access_token="mock-token",
             )
             msg = mock_client.post.call_args[1]["json"]["message"]
@@ -571,6 +604,7 @@ class TestSendEmail:
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
+                confirm=True,
                 access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
@@ -587,6 +621,7 @@ class TestSendEmail:
                 to=["bob@x.com"],
                 subject="Hello",
                 body="plain text",
+                confirm=True,
                 access_token="mock-token",
             )
             msg = mock_client.post.call_args[1]["json"]["message"]
@@ -596,18 +631,55 @@ class TestSendEmail:
 
     @pytest.mark.asyncio
     async def test_send_email_empty_to_list(self):
-        """UT-SND-07: empty 'to' list returns error without making HTTP call."""
+        """UT-SND-07: empty 'to' list returns error without HTTP call."""
         with _mock_httpx("post", _make_resp(202)) as mock_client:
             result = await et.send_email(
                 to=[],
                 subject="Hello",
                 body="Hi",
+                confirm=True,
                 access_token="mock-token",
             )
 
         assert result["sent"] is False
         assert result["message_id"] is None
         assert "At least one recipient" in result["error"]
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_email_confirm_false_returns_preview(self):
+        """UT-SND-08: confirm=False returns preview, does not send."""
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
+            result = await et.send_email(
+                to=["bob@x.com"],
+                subject="Hello",
+                body="Hi",
+                confirm=False,
+                access_token="mock-token",
+            )
+
+        assert result["sent"] is False
+        assert result["requires_confirmation"] is True
+        assert "preview" in result
+        assert result["preview"]["to"] == ["bob@x.com"]
+        assert result["preview"]["subject"] == "Hello"
+        assert "body_preview" in result["preview"]
+        assert "请确认" in result["error"]
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_email_confirm_default_is_false(self):
+        """UT-SND-09: default confirm=False (not passed) returns preview."""
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
+            result = await et.send_email(
+                to=["bob@x.com"],
+                subject="Hello",
+                body="Hi",
+                access_token="mock-token",
+            )
+
+        assert result["sent"] is False
+        assert result["requires_confirmation"] is True
         mock_client.post.assert_not_called()
 
 
@@ -628,6 +700,7 @@ class TestReplyToEmail:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
+                confirm=True,
                 access_token="mock-token",
             )
 
@@ -644,6 +717,7 @@ class TestReplyToEmail:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
+                confirm=True,
                 access_token="mock-token",
             )
 
@@ -659,6 +733,7 @@ class TestReplyToEmail:
             await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
+                confirm=True,
                 access_token="mock-token",
             )
             call_url = mock_client.post.call_args[0][0]
@@ -677,6 +752,7 @@ class TestReplyToEmail:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
+                confirm=True,
                 access_token=None,
             )
             headers = mock_client.post.call_args[1]["headers"]
@@ -693,6 +769,7 @@ class TestReplyToEmail:
             await et.reply_to_email(
                 email_id="msg-1",
                 body="Hello world",
+                confirm=True,
                 access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
@@ -706,6 +783,84 @@ class TestReplyToEmail:
             }
         }
 
+    @pytest.mark.asyncio
+    async def test_reply_to_email_confirm_false_returns_preview(self):
+        """UT-RE-06: confirm=False returns preview, does not send."""
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
+            result = await et.reply_to_email(
+                email_id="msg-1",
+                body="Thanks for the info",
+                confirm=False,
+                access_token="mock-token",
+            )
+
+        assert result["sent"] is False
+        assert result["requires_confirmation"] is True
+        assert "preview" in result
+        assert result["preview"]["email_id"] == "msg-1"
+        assert "body_preview" in result["preview"]
+        assert "请确认" in result["error"]
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reply_to_email_confirm_default_is_false(self):
+        """UT-RE-07: default confirm=False returns preview."""
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
+            result = await et.reply_to_email(
+                email_id="msg-1",
+                body="Thanks",
+                access_token="mock-token",
+            )
+
+        assert result["sent"] is False
+        assert result["requires_confirmation"] is True
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reply_to_email_empty_email_id(self):
+        """UT-RE-08: empty email_id returns error without HTTP call."""
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
+            result = await et.reply_to_email(
+                email_id="",
+                body="Thanks",
+                confirm=True,
+                access_token="mock-token",
+            )
+
+        assert result["sent"] is False
+        assert "email_id" in result["error"]
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reply_to_email_empty_body(self):
+        """UT-RE-09: empty body returns error without HTTP call."""
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
+            result = await et.reply_to_email(
+                email_id="msg-1",
+                body="",
+                confirm=True,
+                access_token="mock-token",
+            )
+
+        assert result["sent"] is False
+        assert "body" in result["error"]
+        mock_client.post.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_reply_to_email_whitespace_email_id(self):
+        """UT-RE-10: whitespace-only email_id returns error."""
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
+            result = await et.reply_to_email(
+                email_id="   ",
+                body="Thanks",
+                confirm=True,
+                access_token="mock-token",
+            )
+
+        assert result["sent"] is False
+        assert "email_id" in result["error"]
+        mock_client.post.assert_not_called()
+
 
 # ═══════════════════════════════════════════════════════════════
 # Provider initialization tests
@@ -715,20 +870,23 @@ class TestReplyToEmail:
 class TestProviderInit:
     """Tests for _ensure_provider()."""
 
-    def test_provider_init_skips_if_env_vars_missing(
+    @pytest.mark.asyncio
+    async def test_provider_init_skips_if_env_vars_missing(
         self, mock_identity_client, monkeypatch
     ):
-        """UT-PI-01: skips initialization when M365 env vars are not set."""
+        """UT-PI-01: skips when M365 env vars not set; flag stays False."""
         monkeypatch.delenv("M365_CLIENT_ID", raising=False)
         monkeypatch.delenv("M365_CLIENT_SECRET", raising=False)
         monkeypatch.delenv("M365_TENANT_ID", raising=False)
 
-        et._ensure_provider()
+        await et._ensure_provider()
 
         mock_identity_client.assert_not_called()
-        assert et._PROVIDER_INITIALIZED is True
+        # On missing env vars, _PROVIDER_INITIALIZED stays False
+        assert et._PROVIDER_INITIALIZED is False
 
-    def test_provider_init_with_valid_env(
+    @pytest.mark.asyncio
+    async def test_provider_init_with_valid_env(
         self, mock_identity_client, monkeypatch
     ):
         """UT-PI-02: creates provider with correct arguments."""
@@ -740,7 +898,7 @@ class TestProviderInit:
         mock_client_instance = MagicMock()
         mock_identity_client.return_value = mock_client_instance
 
-        et._ensure_provider()
+        await et._ensure_provider()
 
         mock_identity_client.assert_called_once_with(region="test-region")
         mock_client_instance.create_oauth2_credential_provider.assert_called_once_with(
@@ -750,8 +908,11 @@ class TestProviderInit:
             client_secret="test-client-secret",
             tenant_id="test-tenant-id",
         )
+        # On success, _PROVIDER_INITIALIZED is set to True
+        assert et._PROVIDER_INITIALIZED is True
 
-    def test_provider_only_initialized_once(
+    @pytest.mark.asyncio
+    async def test_provider_only_initialized_once(
         self, mock_identity_client, monkeypatch
     ):
         """UT-PI-03: create_oauth2_credential_provider called exactly once."""
@@ -762,16 +923,17 @@ class TestProviderInit:
         mock_client_instance = MagicMock()
         mock_identity_client.return_value = mock_client_instance
 
-        et._ensure_provider()
-        et._ensure_provider()
-        et._ensure_provider()
+        await et._ensure_provider()
+        await et._ensure_provider()
+        await et._ensure_provider()
 
         mock_client_instance.create_oauth2_credential_provider.assert_called_once()
 
-    def test_provider_init_handles_identity_client_error(
+    @pytest.mark.asyncio
+    async def test_provider_init_handles_identity_client_error(
         self, mock_identity_client, monkeypatch
     ):
-        """UT-PI-04: IdentityClient error is caught; flag is set."""
+        """UT-PI-04: IdentityClient error is caught; flag stays False."""
         monkeypatch.setenv("M365_CLIENT_ID", "test-client-id")
         monkeypatch.setenv("M365_CLIENT_SECRET", "test-client-secret")
         monkeypatch.setenv("M365_TENANT_ID", "test-tenant-id")
@@ -783,6 +945,7 @@ class TestProviderInit:
         mock_identity_client.return_value = mock_client_instance
 
         # Should not raise
-        et._ensure_provider()
+        await et._ensure_provider()
 
-        assert et._PROVIDER_INITIALIZED is True
+        # On error, _PROVIDER_INITIALIZED stays False
+        assert et._PROVIDER_INITIALIZED is False
