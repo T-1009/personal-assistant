@@ -4,18 +4,10 @@ Feature 10a: Outbound Email — verifies the factory correctly discovers
 and collects tools from sub-modules.
 """
 
-import os
 import sys
 from unittest.mock import patch
 
 from app.tools import build_tools
-
-# Dummy M365 env vars so build_tools() doesn't skip email tools
-_M365_ENV = {
-    "M365_CLIENT_ID": "test-client-id",
-    "M365_CLIENT_SECRET": "test-client-secret",
-    "M365_TENANT_ID": "test-tenant-id",
-}
 
 
 class TestBuildTools:
@@ -23,13 +15,13 @@ class TestBuildTools:
 
     def test_build_tools_returns_list(self) -> None:
         """UT-TI-01: build_tools() returns a list."""
-        with patch.dict(os.environ, _M365_ENV):
+        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
             result = build_tools()
         assert isinstance(result, list)
 
     def test_build_tools_includes_email_tools(self) -> None:
         """UT-TI-02: build_tools() includes all 5 email tools."""
-        with patch.dict(os.environ, _M365_ENV):
+        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
             result = build_tools()
 
         result_names = [t.__name__ for t in result]
@@ -59,7 +51,7 @@ class TestBuildTools:
 
     def test_build_tools_deduplicates(self) -> None:
         """UT-TI-04: each tool function appears only once in the result list."""
-        with patch.dict(os.environ, _M365_ENV):
+        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
             result = build_tools()
 
         names = [t.__name__ for t in result]

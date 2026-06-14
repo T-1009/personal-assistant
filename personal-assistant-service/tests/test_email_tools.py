@@ -1,10 +1,9 @@
 """Unit tests for app.tools.email_tools — Microsoft 365 email tools.
 
 Feature 10a: Outbound Email — tests all 5 tool functions plus
-provider initialization (_ensure_provider).
+provider initialization (ensure_provider_sync).
 """
 
-import asyncio
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -65,11 +64,9 @@ def reset_provider_and_client():
     import app.tools.email_tools as _et
 
     _et._PROVIDER_INITIALIZED = False
-    _et._provider_lock = asyncio.Lock()
     _et._client = None
     yield
     _et._PROVIDER_INITIALIZED = False
-    _et._provider_lock = asyncio.Lock()
     _et._client = None
 
 
@@ -876,28 +873,26 @@ class TestReplyToEmail:
 
 
 class TestProviderInit:
-    """Tests for _ensure_provider()."""
+    """Tests for ensure_provider_sync()."""
 
-    @pytest.mark.asyncio
-    async def test_provider_init_skips_if_env_vars_missing(
+    def test_provider_init_skips_if_env_vars_missing(
         self, mock_identity_client, monkeypatch
     ):
-        """UT-PI-01: skips when M365 env vars not set; flag stays False."""
+        """UT-PI-01: returns False when M365 env vars not set."""
         monkeypatch.delenv("M365_CLIENT_ID", raising=False)
         monkeypatch.delenv("M365_CLIENT_SECRET", raising=False)
         monkeypatch.delenv("M365_TENANT_ID", raising=False)
 
-        await et._ensure_provider()
+        result = et.ensure_provider_sync()
 
+        assert result is False
         mock_identity_client.assert_not_called()
-        # On missing env vars, _PROVIDER_INITIALIZED stays False
         assert et._PROVIDER_INITIALIZED is False
 
-    @pytest.mark.asyncio
-    async def test_provider_init_with_valid_env(
+    def test_provider_init_with_valid_env(
         self, mock_identity_client, monkeypatch
     ):
-        """UT-PI-02: creates provider with correct arguments."""
+        """UT-PI-02: creates provider with correct arguments, returns True."""
         monkeypatch.setenv("M365_CLIENT_ID", "test-client-id")
         monkeypatch.setenv("M365_CLIENT_SECRET", "test-client-secret")
         monkeypatch.setenv("M365_TENANT_ID", "test-tenant-id")
@@ -906,8 +901,9 @@ class TestProviderInit:
         mock_client_instance = MagicMock()
         mock_identity_client.return_value = mock_client_instance
 
-        await et._ensure_provider()
+        result = et.ensure_provider_sync()
 
+        assert result is True
         mock_identity_client.assert_called_once_with(region="test-region")
         mock_client_instance.create_oauth2_credential_provider.assert_called_once_with(
             name="m365-provider",
@@ -916,11 +912,9 @@ class TestProviderInit:
             client_secret="test-client-secret",
             tenant_id="test-tenant-id",
         )
-        # On success, _PROVIDER_INITIALIZED is set to True
         assert et._PROVIDER_INITIALIZED is True
 
-    @pytest.mark.asyncio
-    async def test_provider_only_initialized_once(
+    def test_provider_only_initialized_once(
         self, mock_identity_client, monkeypatch
     ):
         """UT-PI-03: create_oauth2_credential_provider called exactly once."""
@@ -931,17 +925,16 @@ class TestProviderInit:
         mock_client_instance = MagicMock()
         mock_identity_client.return_value = mock_client_instance
 
-        await et._ensure_provider()
-        await et._ensure_provider()
-        await et._ensure_provider()
+        et.ensure_provider_sync()
+        et.ensure_provider_sync()
+        et.ensure_provider_sync()
 
         mock_client_instance.create_oauth2_credential_provider.assert_called_once()
 
-    @pytest.mark.asyncio
-    async def test_provider_init_handles_identity_client_error(
+    def test_provider_init_handles_identity_client_error(
         self, mock_identity_client, monkeypatch
     ):
-        """UT-PI-04: IdentityClient error is caught; flag stays False."""
+        """UT-PI-04: IdentityClient error returns False; flag stays False."""
         monkeypatch.setenv("M365_CLIENT_ID", "test-client-id")
         monkeypatch.setenv("M365_CLIENT_SECRET", "test-client-secret")
         monkeypatch.setenv("M365_TENANT_ID", "test-tenant-id")
@@ -952,8 +945,26 @@ class TestProviderInit:
         )
         mock_identity_client.return_value = mock_client_instance
 
-        # Should not raise
-        await et._ensure_provider()
+        result = et.ensure_provider_sync()
 
-        # On error, _PROVIDER_INITIALIZED stays False
+        assert result is False
         assert et._PROVIDER_INITIALIZED is False
+
+    def test_provider_init_handles_already_exists(
+        self, mock_identity_client, monkeypatch
+    ):
+        """UT-PI-05: 'already exists' error treated as success, returns True."""
+        monkeypatch.setenv("M365_CLIENT_ID", "test-client-id")
+        monkeypatch.setenv("M365_CLIENT_SECRET", "test-client-secret")
+        monkeypatch.setenv("M365_TENANT_ID", "test-tenant-id")
+
+        mock_client_instance = MagicMock()
+        mock_client_instance.create_oauth2_credential_provider.side_effect = (
+            RuntimeError("provider already exists")
+        )
+        mock_identity_client.return_value = mock_client_instance
+
+        result = et.ensure_provider_sync()
+
+        assert result is True
+        assert et._PROVIDER_INITIALIZED is True

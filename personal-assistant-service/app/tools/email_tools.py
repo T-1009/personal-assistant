@@ -1,4 +1,3 @@
-import asyncio
 import functools
 import logging
 import os
@@ -11,7 +10,6 @@ from agentarts.sdk.identity.types import OAuth2Vendor
 logger = logging.getLogger(__name__)
 
 _PROVIDER_INITIALIZED = False
-_provider_lock = asyncio.Lock()
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
 
@@ -62,43 +60,46 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-async def _ensure_provider():
-    """Ensure the m365-provider exists in AgentArts Identity Service.
+def ensure_provider_sync() -> bool:
+    """Create the m365-provider in AgentArts Identity Service (sync, for init-time).
 
-    Called lazily on first tool invocation, NOT at module import time.
-    Reads M365_CLIENT_ID, M365_CLIENT_SECRET, M365_TENANT_ID from env.
-    Thread-safe via double-checked locking with asyncio.Lock.
-    Only sets _PROVIDER_INITIALIZED = True on successful creation.
+    Must be called BEFORE any email tool is invoked — the @require_access_token
+    decorator runs before the function body, so lazy creation inside tools won't work.
+
+    Returns:
+        True if provider exists or was created successfully, False otherwise.
     """
     global _PROVIDER_INITIALIZED
     if _PROVIDER_INITIALIZED:
-        return
-    async with _provider_lock:
-        if _PROVIDER_INITIALIZED:
-            return
-        client_id = os.environ.get("M365_CLIENT_ID")
-        client_secret = os.environ.get("M365_CLIENT_SECRET")
-        tenant_id = os.environ.get("M365_TENANT_ID")
-        if not all([client_id, client_secret, tenant_id]):
-            logger.warning(
-                "M365_CLIENT_ID, M365_CLIENT_SECRET, or M365_TENANT_ID not set. "
-                "Email tools will be registered but may fail at runtime."
-            )
-            return
-        try:
-            region = os.environ.get("AGENTARTS_REGION", "cn-southwest-2")
-            client = IdentityClient(region=region)
-            client.create_oauth2_credential_provider(
-                name="m365-provider",
-                vendor=OAuth2Vendor.MICROSOFTOAUTH2,
-                client_id=client_id,
-                client_secret=client_secret,
-                tenant_id=tenant_id,
-            )
-            logger.info("m365-provider created successfully.")
+        return True
+
+    client_id = os.environ.get("M365_CLIENT_ID")
+    client_secret = os.environ.get("M365_CLIENT_SECRET")
+    tenant_id = os.environ.get("M365_TENANT_ID")
+    if not all([client_id, client_secret, tenant_id]):
+        return False
+
+    region = os.environ.get("AGENTARTS_REGION", "cn-southwest-2")
+    try:
+        client = IdentityClient(region=region)
+        client.create_oauth2_credential_provider(
+            name="m365-provider",
+            vendor=OAuth2Vendor.MICROSOFTOAUTH2,
+            client_id=client_id,
+            client_secret=client_secret,
+            tenant_id=tenant_id,
+        )
+        logger.info("m365-provider created successfully.")
+        _PROVIDER_INITIALIZED = True
+        return True
+    except Exception as e:
+        # Provider might already exist — that's fine, treat as success
+        if "already exists" in str(e).lower() or "duplicate" in str(e).lower():
+            logger.info("m365-provider already exists, reusing.")
             _PROVIDER_INITIALIZED = True
-        except Exception as e:
-            logger.error(f"Failed to create m365-provider: {e}")
+            return True
+        logger.error("Failed to create m365-provider: %s", e)
+        return False
 
 
 # ── 1. list_emails ──
@@ -125,7 +126,6 @@ async def list_emails(
         dict with keys: emails (list of {id, subject, from, receivedDateTime,
         isRead, importance}), count (int), folder (str)
     """
-    await _ensure_provider()
     client = _get_client()
     resp = await client.get(
         f"{GRAPH_BASE_URL}/mailFolders/{folder}/messages",
@@ -181,7 +181,6 @@ async def get_email(
         dict with: id, subject, body (plain text), from, toRecipients,
         ccRecipients, receivedDateTime, attachments (list of {name, size, contentType})
     """
-    await _ensure_provider()
     client = _get_client()
     resp = await client.get(
         f"{GRAPH_BASE_URL}/messages/{email_id}",
@@ -249,7 +248,6 @@ async def search_emails(
         dict with keys: results (list of {id, subject, from, receivedDateTime, isRead}),
         count (int), query (str)
     """
-    await _ensure_provider()
     escaped_query = query.replace('"', '\\"')
     client = _get_client()
     resp = await client.get(
@@ -333,7 +331,6 @@ async def send_email(
             },
             "error": "请确认收件人、主题和正文后再发送。调用时设置 confirm=True。",
         }
-    await _ensure_provider()
     message: dict[str, Any] = {
         "subject": subject,
         "body": {
@@ -408,7 +405,6 @@ async def reply_to_email(
             },
             "error": "请确认回复内容后再发送。调用时设置 confirm=True。",
         }
-    await _ensure_provider()
     client = _get_client()
     resp = await client.post(
         f"{GRAPH_BASE_URL}/messages/{email_id}/reply",
