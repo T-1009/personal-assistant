@@ -33,12 +33,20 @@ _TOOL_NAMES = [
 
 @pytest.fixture(autouse=True)
 def unwrap_email_tools():
-    """Replace decorated tool functions with their undecorated originals."""
+    """Replace decorated tool functions with their undecorated originals.
+
+    Each tool has two decorators: @_handle_provider_error (outer) and
+    @require_access_token (inner).  We unwrap both to get the raw function.
+    """
     saved = {}
     for name in _TOOL_NAMES:
         wrapped = getattr(et, name)
         saved[name] = wrapped
-        setattr(et, name, wrapped.__wrapped__)
+        # Unwrap both decorator layers to reach the raw tool function
+        raw = wrapped
+        while hasattr(raw, "__wrapped__"):
+            raw = raw.__wrapped__
+        setattr(et, name, raw)
     yield
     for name, orig in saved.items():
         setattr(et, name, orig)
