@@ -399,9 +399,10 @@ async def search_emails(
 @_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
-    scopes=["https://graph.microsoft.com/Mail.Send"],
+    scopes=["https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read"],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
+    force_authentication=True,
 )
 async def send_email(
     to: list[str],
@@ -499,9 +500,10 @@ async def send_email(
 @_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
-    scopes=["https://graph.microsoft.com/Mail.Send"],
+    scopes=["https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read"],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
+    force_authentication=True,
 )
 async def reply_to_email(
     email_id: str,
