@@ -240,6 +240,7 @@ async def list_emails(
         dict with keys: emails (list of {id, subject, from, receivedDateTime,
         isRead, importance}), count (int), folder (str)
     """
+    logger.debug("list_emails access_token: %s", access_token)
     client = _get_client()
     resp = await client.get(
         f"{GRAPH_BASE_URL}/mailFolders/{folder}/messages",
@@ -297,6 +298,7 @@ async def get_email(
         dict with: id, subject, body (plain text), from, toRecipients,
         ccRecipients, receivedDateTime, attachments (list of {name, size, contentType})
     """
+    logger.debug("get_email access_token: %s", access_token)
     client = _get_client()
     resp = await client.get(
         f"{GRAPH_BASE_URL}/messages/{email_id}",
@@ -366,6 +368,7 @@ async def search_emails(
         dict with keys: results (list of {id, subject, from, receivedDateTime, isRead}),
         count (int), query (str)
     """
+    logger.debug("search_emails access_token: %s", access_token)
     escaped_query = query.replace('"', '\\"')
     client = _get_client()
     resp = await client.get(
@@ -434,6 +437,7 @@ async def send_email(
         requires_confirmation (bool) when confirm=False, preview (dict) when
         confirm=False
     """
+    logger.debug("send_email access_token: %s", access_token)
     if not to:
         return {
             "sent": False,
@@ -530,6 +534,7 @@ async def reply_to_email(
         requires_confirmation (bool) when confirm=False, preview (dict) when
         confirm=False
     """
+    logger.debug("reply_to_email access_token: %s", access_token)
     if not email_id or not email_id.strip():
         return {"sent": False, "error": "email_id is required for reply_to_email"}
     if not body or not body.strip():
