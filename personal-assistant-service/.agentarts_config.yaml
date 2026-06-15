@@ -75,6 +75,8 @@ agents:
         value: ${HUAWEICLOUD_SDK_AK}
       - key: HUAWEICLOUD_SDK_SK
         value: ${HUAWEICLOUD_SDK_SK}
+      - key: LOG_LEVEL
+        value: ${LOG_LEVEL}
       tags:
       - key: app
         value: personal-assistant
