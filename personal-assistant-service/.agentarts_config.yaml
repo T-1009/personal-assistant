@@ -71,6 +71,10 @@ agents:
         value: ${M365_CLIENT_SECRET}
       - key: M365_TENANT_ID
         value: ${M365_TENANT_ID}
+      - key: HUAWEICLOUD_SDK_AK
+        value: ${HUAWEICLOUD_SDK_AK}
+      - key: HUAWEICLOUD_SDK_SK
+        value: ${HUAWEICLOUD_SDK_SK}
       tags:
       - key: app
         value: personal-assistant
