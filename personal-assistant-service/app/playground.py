@@ -46,7 +46,8 @@ async def on_message(message: cl.Message):
         )
 
         # 使用 ainvoke 获取完整结果，callback 自动捕获中间步骤
-        result = await handler.agent.ainvoke(
+        agent = handler.create_agent()
+        result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": message.content}]},
             config=config,
         )

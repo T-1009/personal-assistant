@@ -1,21 +1,15 @@
 """Integration tests for app.main FastAPI application."""
 
 import json
-import os
 from unittest.mock import patch
 
 import httpx
 import pytest
-
-from agentarts.sdk.runtime.model import (
+from agentarts.sdk.runtime.model import (  # noqa: E402
     ACCESS_TOKEN_HEADER,
     SESSION_HEADER,
     USER_ID_HEADER,
 )
-
-# Must be set BEFORE importing app.main (the lifespan checks this)
-os.environ["MODEL_API_KEY"] = "test-key"
-
 from starlette.routing import Mount  # noqa: E402
 
 from app.main import app  # noqa: E402
@@ -319,24 +313,20 @@ async def test_invocations_whitespace_only_passes_through(client, fake_handler):
 
 
 # ---------------------------------------------------------------------------
-# App startup error (missing MODEL_API_KEY)
+# App startup error (missing LLM config)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_missing_model_api_key_causes_startup_error(monkeypatch):
-    """App lifespan should raise RuntimeError when MODEL_API_KEY is missing."""
-    # Temporarily remove MODEL_API_KEY from the environment
-    monkeypatch.delenv("MODEL_API_KEY", raising=False)
-
-    # Ensure config.yaml absence is simulated (avoid picking up real config.yaml)
+async def test_missing_llm_config_causes_startup_error():
+    """App lifespan should raise RuntimeError when config.yaml is missing."""
     with patch("pathlib.Path.exists", return_value=False):
         from fastapi import FastAPI
 
         from app.main import lifespan
 
         test_app = FastAPI()
-        with pytest.raises(RuntimeError, match="MODEL_API_KEY"):
+        with pytest.raises(RuntimeError, match="config.yaml is required"):
             async with lifespan(test_app):
                 pass
 
@@ -349,7 +339,7 @@ async def test_lifespan_sets_agent_handler(fake_handler):
     from app.main import lifespan
 
     test_app = FastAPI()
-    with patch("pathlib.Path.exists", return_value=False):
+    with patch("app.llm_config.validate_model_config"):
         async with lifespan(test_app):
             assert test_app.state.agent_handler is fake_handler
 
@@ -552,7 +542,7 @@ class TestAgentHandlerSingletonIntegration:
 
         try:
             test_app = FastAPI()
-            with patch("pathlib.Path.exists", return_value=False):
+            with patch("app.llm_config.validate_model_config"):
 
                 async def _run():
                     async with lifespan(test_app):

@@ -95,14 +95,23 @@ class AgentHandler:
     """Handles agent initialization and invocation."""
 
     def __init__(self):
-        self.model = get_model()  # 默认使用 config.yaml 中 llm.default 指定的 provider
         self.checkpointer = self._init_checkpointer()
-        self.agent = create_deep_agent(
-            model=self.model,
+        self.tools = build_tools()
+        self.model = None
+        self.agent = None
+
+    def create_agent(self):
+        """Create an agent with a fresh SDK-managed LLM API key."""
+        model = get_model()
+        agent = create_deep_agent(
+            model=model,
             system_prompt=SYSTEM_PROMPT,
-            tools=build_tools(),
+            tools=self.tools,
             checkpointer=self.checkpointer,
         )
+        self.model = model
+        self.agent = agent
+        return agent
 
     def _init_checkpointer(self):
         """按环境变量选择 Checkpointer 后端。
@@ -140,7 +149,8 @@ class AgentHandler:
     ) -> str:
         """Invoke the agent synchronously and return the final response."""
         config = self._build_config(user_id, session_id)
-        result = await self.agent.ainvoke(
+        agent = self.create_agent()
+        result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": message}]},
             config=config,
         )
@@ -156,7 +166,8 @@ class AgentHandler:
         """Stream tokens from the agent using astream_events v2."""
         config = self._build_config(user_id, session_id)
         try:
-            async for event in self.agent.astream_events(
+            agent = self.create_agent()
+            async for event in agent.astream_events(
                 {"messages": [{"role": "user", "content": message}]},
                 version="v2",
                 config=config,

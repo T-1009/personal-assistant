@@ -1,6 +1,6 @@
 """Integration tests for email conversation flows.
 
-Requires running server (localhost:8080) and a configured LLM API key.
+Requires running server (localhost:8080) and a configured LLM Identity provider.
 Marked @pytest.mark.slow — skipped in CI; run manually.
 
 Feature 10a: Outbound Email — tests defined in test-plan.md §2.1.
@@ -26,16 +26,11 @@ def _post(message: str, stream: bool = False, timeout: float = 60.0) -> httpx.Re
 @pytest.mark.slow
 @pytest.mark.integration
 class TestEmailIntegration:
-    """Integration tests requiring a running service and LLM API key."""
+    """Integration tests requiring a running service and LLM Identity provider."""
 
     @pytest.fixture(autouse=True)
     def check_env(self):
         """Skip integration tests if required env vars are not configured."""
-        if (
-            not os.environ.get("DEEPSEEK_API_KEY")
-            and not os.environ.get("MAAS_API_KEY")
-        ):
-            pytest.skip("LLM API key not configured")
         if not os.environ.get("M365_CLIENT_ID") and not os.environ.get(
             "M365_CLIENT_SECRET"
         ):
@@ -61,9 +56,7 @@ class TestEmailIntegration:
         resp = _post('搜索关于"会议"的邮件')
         assert resp.status_code == 200
         body = resp.text
-        assert any(
-            word in body.lower() for word in ["搜索", "邮件", "会议", "search"]
-        )
+        assert any(word in body.lower() for word in ["搜索", "邮件", "会议", "search"])
 
     # ── IT-03 ──
 
@@ -115,8 +108,7 @@ class TestEmailIntegration:
         body = resp2.text
         # Agent should acknowledge cancellation
         assert any(
-            word in body.lower()
-            for word in ["取消", "不发", "cancel", "已取消"]
+            word in body.lower() for word in ["取消", "不发", "cancel", "已取消"]
         )
 
     # ── IT-07 ──
@@ -128,10 +120,7 @@ class TestEmailIntegration:
         assert resp.status_code == 200
         body = resp.text
         # Agent should NOT have sent directly; should show preview or ask
-        assert any(
-            word in body.lower()
-            for word in ["确认", "预览", "preview", "发送"]
-        )
+        assert any(word in body.lower() for word in ["确认", "预览", "preview", "发送"])
 
     # ── IT-08 ──
 

@@ -55,14 +55,10 @@ agents:
         url: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest
         commands: []
       environment_variables:
-      - key: DEEPSEEK_API_KEY
-        value: ${DEEPSEEK_API_KEY}
-      - key: MODEL_API_KEY
-        value: ${DEEPSEEK_API_KEY}
       - key: MODEL_NAME
-        value: deepseek-v4-pro
+        value: deepseek-chat
       - key: MODEL_URL
-        value: https://api.modelarts-maas.com/openai/v1
+        value: https://api.deepseek.com
       - key: CORS_ALLOWED_ORIGINS
         value: https://resource-governance.cloud,https://agentarts-personal-assistant.netlify.app
       - key: M365_CLIENT_ID

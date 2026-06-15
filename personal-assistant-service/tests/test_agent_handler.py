@@ -47,47 +47,41 @@ class TestAgentHandlerInit:
         (
             mock_get_model,
             mock_create_agent,
-            mock_model,
-            mock_agent,
+            _mock_model,
+            _mock_agent,
             mock_init_cp,
             mock_build_tools,
         ) = mock_deps
 
         handler = AgentHandler()
 
-        # Verify get_model was called (no args, using default provider)
-        mock_get_model.assert_called_once()
-
-        # Verify create_deep_agent was called with model and system prompt
-        mock_create_agent.assert_called_once()
-        kwargs = mock_create_agent.call_args[1]
-        assert kwargs["model"] is mock_model
-        assert kwargs["system_prompt"] == SYSTEM_PROMPT
-        assert kwargs["tools"] == mock_build_tools.return_value
-        assert "checkpointer" in kwargs
-        assert kwargs["checkpointer"] is mock_init_cp.return_value
-
-        # Verify handler stores model and agent references
-        assert handler.model is mock_model
-        assert handler.agent is mock_agent
+        mock_get_model.assert_not_called()
+        mock_create_agent.assert_not_called()
+        mock_build_tools.assert_called_once()
+        assert handler.checkpointer is mock_init_cp.return_value
+        assert handler.tools == mock_build_tools.return_value
+        assert handler.model is None
+        assert handler.agent is None
 
     def test_agent_handler_uses_get_model(self, mock_deps):
         mock_get_model, mock_create_agent, mock_model, mock_agent, _, _ = mock_deps
 
-        AgentHandler()
+        handler = AgentHandler()
+        agent = handler.create_agent()
 
-        # Verify get_model was called to obtain the model
         mock_get_model.assert_called_once()
-        # Verify the returned model was passed to create_deep_agent
         mock_create_agent.assert_called_once()
         assert mock_create_agent.call_args[1]["model"] is mock_model
-
+        assert handler.model is mock_model
+        assert handler.agent is mock_agent
+        assert agent is mock_agent
 
     def test_agent_created_with_tools_from_build_tools(self, mock_deps):
-        """UT-AH-01: Agent init uses build_tools() result for tools kwarg."""
+        """UT-AH-01: Agent creation uses build_tools() result for tools kwarg."""
         _, mock_create_agent, _, _, _, mock_build_tools = mock_deps
 
-        AgentHandler()
+        handler = AgentHandler()
+        handler.create_agent()
 
         mock_build_tools.assert_called_once()
         kwargs = mock_create_agent.call_args[1]

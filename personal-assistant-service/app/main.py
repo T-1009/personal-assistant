@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from app.logging_config import configure as configure_logging
+from app.logging_config import configure as configure_logging  # noqa: E402
 
 configure_logging()
 
@@ -20,7 +20,8 @@ class PingFilter(logging.Filter):
     """Filter out /ping 200 access logs."""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        return "GET /ping " not in record.getMessage() or "200" not in record.getMessage()
+        message = record.getMessage()
+        return "GET /ping " not in message or "200" not in message
 
 
 logging.getLogger("uvicorn.access").addFilter(PingFilter())
@@ -45,11 +46,12 @@ from app.auth import (  # noqa: E402
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle for the FastAPI application."""
-    # Validate LLM configuration per config.yaml, with fallback to legacy env vars.
-    from app.llm_config import get_model
+    # Validate LLM provider metadata. API keys are fetched per request from
+    # AgentArts Identity after the Gateway workload token is in context.
+    from app.llm_config import validate_model_config
 
     try:
-        get_model()  # validates provider config + api key availability
+        validate_model_config()
     except ValueError as e:
         raise RuntimeError(f"LLM 配置错误: {e}") from e
 
