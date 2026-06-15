@@ -11,9 +11,31 @@ const baseUrl: string = (
   import.meta.env.VITE_API_BASE_URL ?? ""
 ).replace(/\/$/, "");
 
+/**
+ * Decode a base64url-encoded string to a native JavaScript string.
+ *
+ * Unlike atob(), this handles:
+ * - base64url alphabet (- → +, _ → /)
+ * - missing padding
+ * - UTF-8 byte sequences in the decoded payload (e.g. Chinese names in claims)
+ */
+function base64UrlDecode(str: string): string {
+  // Restore base64url → standard base64
+  let base64 = str.replace(/-/g, "+").replace(/_/g, "/");
+  // Restore padding
+  while (base64.length % 4 !== 0) {
+    base64 += "=";
+  }
+  // Decode binary string to UTF-8
+  const binary = atob(base64);
+  return new TextDecoder().decode(
+    Uint8Array.from(binary, (c) => c.charCodeAt(0)),
+  );
+}
+
 function extractUserIdFromToken(idToken: string): string | undefined {
   try {
-    const payload = JSON.parse(atob(idToken.split(".")[1]));
+    const payload = JSON.parse(base64UrlDecode(idToken.split(".")[1]));
     return (payload as Record<string, unknown>).sub as string | undefined
         ?? (payload as Record<string, unknown>).oid as string | undefined;
   } catch {
@@ -24,7 +46,7 @@ function extractUserIdFromToken(idToken: string): string | undefined {
 /** Check if token expires within the next 60 seconds */
 function isTokenExpiringSoon(idToken: string): boolean {
   try {
-    const payload = JSON.parse(atob(idToken.split(".")[1]));
+    const payload = JSON.parse(base64UrlDecode(idToken.split(".")[1]));
     const exp = (payload as Record<string, unknown>).exp as number;
     return Date.now() >= (exp - 60) * 1000;
   } catch {
