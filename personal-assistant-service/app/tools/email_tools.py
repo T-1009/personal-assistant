@@ -222,6 +222,7 @@ def ensure_provider_sync() -> bool:
     scopes=["https://graph.microsoft.com/Mail.Read"],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
+    force_authentication=True,
 )
 async def list_emails(
     folder: str = "inbox",
@@ -280,6 +281,7 @@ async def list_emails(
     scopes=["https://graph.microsoft.com/Mail.Read"],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
+    force_authentication=True,
 )
 async def get_email(
     email_id: str,
@@ -344,6 +346,7 @@ async def get_email(
     scopes=["https://graph.microsoft.com/Mail.Read"],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
+    force_authentication=True,
 )
 async def search_emails(
     query: str,
