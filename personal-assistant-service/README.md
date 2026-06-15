@@ -182,4 +182,7 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
 | Feature 3 | OfficeClaw 渠道 | [Planned — not yet implemented] |
 | Feature 4 | 用户认证 / OAuth（Inbound Identity） | 已实现 |
 | Feature 5 | 飞书 Client Adapter（飞书 Bot 接入） | [Planned — not yet implemented] |
-| Feature 6-8 | 外部工具集成（日历/邮件/笔记/任务） | [Planned — not yet implemented] |
+| Feature 6-8 | 外部工具集成（GitHub / M2M / STS） | [Planned — not yet implemented] |
+| **Feature 10a** | **Outbound Email — Microsoft 365 邮件处理** | **✅ 已实现** |
+| | `app/tools/email_tools.py` — list_emails, get_email, search_emails, send_email, reply_to_email | |
+| | AgentArts Identity SDK `@require_access_token` + Microsoft Graph API | |

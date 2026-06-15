@@ -10,13 +10,14 @@ from app.agent_handler import SYSTEM_PROMPT, AgentHandler, get_agent_handler
 
 @pytest.fixture
 def mock_deps():
-    """Mock get_model, create_deep_agent, and _init_checkpointer.
+    """Mock get_model, create_deep_agent, build_tools, and _init_checkpointer.
 
     Avoids real API calls and real checkpointer initialization.
     """
     with (
         patch("app.agent_handler.get_model") as mock_get_model,
         patch("app.agent_handler.create_deep_agent") as mock_create_agent,
+        patch("app.agent_handler.build_tools") as mock_build_tools,
         patch.object(
             AgentHandler, "_init_checkpointer", return_value=MagicMock()
         ) as mock_init_cp,
@@ -27,16 +28,30 @@ def mock_deps():
         mock_agent = MagicMock()
         mock_create_agent.return_value = mock_agent
 
-        yield mock_get_model, mock_create_agent, mock_model, mock_agent, mock_init_cp
+        mock_build_tools.return_value = ["mock_tool_1", "mock_tool_2"]
+
+        yield (
+            mock_get_model,
+            mock_create_agent,
+            mock_model,
+            mock_agent,
+            mock_init_cp,
+            mock_build_tools,
+        )
 
 
 class TestAgentHandlerInit:
     """Tests for AgentHandler.__init__."""
 
     def test_initializes_with_correct_model_config(self, mock_deps):
-        mock_get_model, mock_create_agent, mock_model, mock_agent, mock_init_cp = (
-            mock_deps
-        )
+        (
+            mock_get_model,
+            mock_create_agent,
+            mock_model,
+            mock_agent,
+            mock_init_cp,
+            mock_build_tools,
+        ) = mock_deps
 
         handler = AgentHandler()
 
@@ -48,7 +63,7 @@ class TestAgentHandlerInit:
         kwargs = mock_create_agent.call_args[1]
         assert kwargs["model"] is mock_model
         assert kwargs["system_prompt"] == SYSTEM_PROMPT
-        assert kwargs["tools"] == []
+        assert kwargs["tools"] == mock_build_tools.return_value
         assert "checkpointer" in kwargs
         assert kwargs["checkpointer"] is mock_init_cp.return_value
 
@@ -57,7 +72,7 @@ class TestAgentHandlerInit:
         assert handler.agent is mock_agent
 
     def test_agent_handler_uses_get_model(self, mock_deps):
-        mock_get_model, mock_create_agent, mock_model, mock_agent, _ = mock_deps
+        mock_get_model, mock_create_agent, mock_model, mock_agent, _, _ = mock_deps
 
         AgentHandler()
 
@@ -68,12 +83,39 @@ class TestAgentHandlerInit:
         assert mock_create_agent.call_args[1]["model"] is mock_model
 
 
+    def test_agent_created_with_tools_from_build_tools(self, mock_deps):
+        """UT-AH-01: Agent init uses build_tools() result for tools kwarg."""
+        _, mock_create_agent, _, _, _, mock_build_tools = mock_deps
+
+        AgentHandler()
+
+        mock_build_tools.assert_called_once()
+        kwargs = mock_create_agent.call_args[1]
+        assert kwargs["tools"] is mock_build_tools.return_value
+
+    def test_system_prompt_mentions_email_capabilities(self):
+        """UT-AH-02: SYSTEM_PROMPT contains names of all 5 email tools."""
+        assert "list_emails" in SYSTEM_PROMPT
+        assert "get_email" in SYSTEM_PROMPT
+        assert "search_emails" in SYSTEM_PROMPT
+        assert "send_email" in SYSTEM_PROMPT
+        assert "reply_to_email" in SYSTEM_PROMPT
+
+    def test_system_prompt_contains_guard_instruction(self):
+        """UT-AH-03: SYSTEM_PROMPT contains Guard instructions for sensitive ops."""
+        # Must contain confirmation-related language
+        assert (
+            "必须先确认" in SYSTEM_PROMPT
+            or "必须先向用户展示预览" in SYSTEM_PROMPT
+        ), "SYSTEM_PROMPT missing confirmation guard instruction"
+
+
 class TestHandle:
     """Tests for AgentHandler.handle()."""
 
     @pytest.mark.asyncio
     async def test_handle_returns_agent_response(self, mock_deps):
-        _, _, _, mock_agent, _ = mock_deps
+        _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 
@@ -97,7 +139,7 @@ class TestHandle:
 
     @pytest.mark.asyncio
     async def test_handle_default_user_id(self, mock_deps):
-        _, _, _, mock_agent, _ = mock_deps
+        _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 
@@ -116,7 +158,7 @@ class TestHandleStream:
 
     @pytest.mark.asyncio
     async def test_handle_stream_yields_sse_events(self, mock_deps):
-        _, _, _, mock_agent, _ = mock_deps
+        _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 
@@ -155,7 +197,7 @@ class TestHandleStream:
 
     @pytest.mark.asyncio
     async def test_handle_stream_skips_empty_tokens(self, mock_deps):
-        _, _, _, mock_agent, _ = mock_deps
+        _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 
@@ -188,7 +230,7 @@ class TestHandleStream:
 
     @pytest.mark.asyncio
     async def test_handle_stream_error_yields_sse_error_event(self, mock_deps):
-        _, _, _, mock_agent, _ = mock_deps
+        _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 
@@ -212,7 +254,7 @@ class TestHandleStream:
         self, mock_deps
     ):
         """Test that handle_stream uses str(chunk) when chunk lacks .content."""
-        _, _, _, mock_agent, _ = mock_deps
+        _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 
@@ -238,7 +280,7 @@ class TestHandleStream:
     @pytest.mark.asyncio
     async def test_handle_stream_ignores_non_stream_events(self, mock_deps):
         """Test that only on_chat_model_stream events produce SSE data."""
-        _, _, _, mock_agent, _ = mock_deps
+        _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 

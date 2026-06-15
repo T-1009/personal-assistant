@@ -7,6 +7,12 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from agentarts.sdk.runtime.model import (
+    ACCESS_TOKEN_HEADER,
+    SESSION_HEADER,
+    USER_ID_HEADER,
+)
+
 # Must be set BEFORE importing app.main (the lifespan checks this)
 os.environ["MODEL_API_KEY"] = "test-key"
 
@@ -92,8 +98,8 @@ async def test_invocations_returns_response(client, fake_handler):
         "/invocations",
         json={"message": "Hello, assistant!"},
         headers={
-            "X-HW-AgentGateway-User-Id": "user-1",
-            "x-hw-agentarts-session-id": "sess-abc",
+            USER_ID_HEADER: "user-1",
+            SESSION_HEADER: "sess-abc",
         },
     )
     assert response.status_code == 200
@@ -114,47 +120,48 @@ async def test_invocations_returns_response(client, fake_handler):
 class TestHeaderHandling:
     """Verify the /invocations endpoint reads AgentArts Gateway headers.
 
-    - session_id: from x-hw-agentarts-session-id header (400 if missing)
-    - user_id: from X-HW-AgentGateway-User-Id header (fail-closed: 401 if missing)
+    - session_id: from SESSION_HEADER (400 if missing)
+    - user_id: from USER_ID_HEADER (fail-closed: 401 if missing)
+    - workload_access_token: from ACCESS_TOKEN_HEADER (silent no-op if missing)
     """
 
     # ── session_id ──────────────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_session_id_from_official_header(self, client, fake_handler):
-        """Official header x-hw-agentarts-session-id is recognized."""
+        """SESSION_HEADER is recognized."""
         await client.post(
             "/invocations",
             json={"message": "Hi"},
             headers={
-                "X-HW-AgentGateway-User-Id": "test-user",
-                "x-hw-agentarts-session-id": "sess-123",
+                USER_ID_HEADER: "test-user",
+                SESSION_HEADER: "sess-123",
             },
         )
         assert fake_handler.handle_calls[0][2] == "sess-123"
 
     @pytest.mark.asyncio
     async def test_missing_session_id_returns_400(self, client):
-        """POST /invocations without x-hw-agentarts-session-id header returns 400."""
+        """POST /invocations without SESSION_HEADER returns 400."""
         response = await client.post(
             "/invocations",
             json={"message": "Hi"},
-            headers={"X-HW-AgentGateway-User-Id": "test-user"},
+            headers={USER_ID_HEADER: "test-user"},
         )
         assert response.status_code == 400
-        assert "x-hw-agentarts-session-id" in response.json()["detail"]
+        assert SESSION_HEADER in response.json()["detail"]
 
     # ── user_id ─────────────────────────────────────────────────────
 
     @pytest.mark.asyncio
     async def test_user_id_from_official_gateway_header(self, client, fake_handler):
-        """Official header X-HW-AgentGateway-User-Id is recognized."""
+        """USER_ID_HEADER is recognized."""
         await client.post(
             "/invocations",
             json={"message": "Hi"},
             headers={
-                "X-HW-AgentGateway-User-Id": "user-x",
-                "x-hw-agentarts-session-id": "sess-test",
+                USER_ID_HEADER: "user-x",
+                SESSION_HEADER: "sess-test",
             },
         )
         assert fake_handler.handle_calls[0][1] == "user-x"
@@ -163,14 +170,14 @@ class TestHeaderHandling:
     async def test_invocations_gateway_user_id_passed_to_handler(
         self, client, fake_handler
     ):
-        """POST with X-HW-AgentGateway-User-Id: special-user →
+        """POST with USER_ID_HEADER: special-user →
         handler receives user_id='special-user'."""
         await client.post(
             "/invocations",
             json={"message": "Hi"},
             headers={
-                "X-HW-AgentGateway-User-Id": "special-user",
-                "x-hw-agentarts-session-id": "sess-test",
+                USER_ID_HEADER: "special-user",
+                SESSION_HEADER: "sess-test",
             },
         )
         assert fake_handler.handle_calls[0][1] == "special-user"
@@ -181,10 +188,10 @@ class TestHeaderHandling:
         response = await client.post(
             "/invocations",
             json={"message": "Hi"},
-            headers={"x-hw-agentarts-session-id": "sess-default"},
+            headers={SESSION_HEADER: "sess-default"},
         )
         assert response.status_code == 401
-        assert "Missing X-HW-AgentGateway-User-Id header" in response.json()["detail"]
+        assert USER_ID_HEADER in response.json()["detail"]
 
     @pytest.mark.asyncio
     async def test_invocations_missing_gateway_user_id_returns_401(self, client):
@@ -192,10 +199,46 @@ class TestHeaderHandling:
         response = await client.post(
             "/invocations",
             json={"message": "Hi"},
-            headers={"x-hw-agentarts-session-id": "sess-test"},
+            headers={SESSION_HEADER: "sess-test"},
         )
         assert response.status_code == 401
-        assert "Missing X-HW-AgentGateway-User-Id header" in response.json()["detail"]
+        assert USER_ID_HEADER in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    async def test_workload_token_passed_to_context(self, client, fake_handler):
+        """POST with workload token header → SDK context receives the token."""
+        token_value = "test-token-abc123"
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            response = await client.post(
+                "/invocations",
+                json={"message": "Hi"},
+                headers={
+                    USER_ID_HEADER: "test-user",
+                    SESSION_HEADER: "sess-test",
+                    ACCESS_TOKEN_HEADER: token_value,
+                },
+            )
+            assert response.status_code == 200
+            mock_set.assert_called_once_with(token_value)
+
+    @pytest.mark.asyncio
+    async def test_no_workload_token_no_error(self, client, fake_handler):
+        """POST without workload token header → 200, SDK context gets None."""
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            response = await client.post(
+                "/invocations",
+                json={"message": "Hi"},
+                headers={
+                    USER_ID_HEADER: "test-user",
+                    SESSION_HEADER: "sess-test",
+                },
+            )
+            assert response.status_code == 200
+            mock_set.assert_called_once_with(None)
 
 
 @pytest.mark.asyncio
@@ -205,8 +248,8 @@ async def test_invocations_stream_false_returns_response(client, fake_handler):
         "/invocations",
         json={"message": "Hello, assistant!", "stream": False},
         headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
         },
     )
     assert response.status_code == 200
@@ -222,8 +265,8 @@ async def test_invocations_empty_message_returns_400(client):
         "/invocations",
         json={"message": ""},
         headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
         },
     )
     assert response.status_code == 400
@@ -237,8 +280,8 @@ async def test_invocations_missing_message_returns_400(client):
         "/invocations",
         json={},
         headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
         },
     )
     assert response.status_code == 400
@@ -266,8 +309,8 @@ async def test_invocations_whitespace_only_passes_through(client, fake_handler):
         "/invocations",
         json={"message": "   "},
         headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
         },
     )
     # Currently passes through; should be 400 after fix
@@ -323,8 +366,8 @@ async def test_invocations_stream_returns_sse(client, fake_handler):
         "/invocations",
         json={"message": "hello", "stream": True},
         headers={
-            "X-HW-AgentGateway-User-Id": "user-1",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "user-1",
+            SESSION_HEADER: "sess-test",
         },
     )
     assert response.status_code == 200
@@ -346,8 +389,8 @@ async def test_invocations_stream_content_format(client):
         "/invocations",
         json={"message": "hello", "stream": True},
         headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
         },
     )
     assert response.status_code == 200
@@ -376,8 +419,8 @@ async def test_invocations_stream_empty_message_returns_400(client):
         "/invocations",
         json={"message": "", "stream": True},
         headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
         },
     )
     assert response.status_code == 400
@@ -391,8 +434,8 @@ async def test_invocations_stream_missing_message_returns_400(client):
         "/invocations",
         json={"stream": True},
         headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
         },
     )
     assert response.status_code == 400
@@ -406,8 +449,8 @@ async def test_invocations_stream_whitespace_message_returns_400(client):
         "/invocations",
         json={"message": "  ", "stream": True},
         headers={
-            "X-HW-AgentGateway-User-Id": "test-user",
-            "x-hw-agentarts-session-id": "sess-test",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
         },
     )
     assert response.status_code == 400
@@ -693,8 +736,8 @@ class TestCORSHeadersOnNormalRequests:
             json={"message": "Hello, assistant!"},
             headers={
                 "Origin": ALLOWED_ORIGIN,
-                "X-HW-AgentGateway-User-Id": "user-1",
-                "x-hw-agentarts-session-id": "sess-test",
+                USER_ID_HEADER: "user-1",
+                SESSION_HEADER: "sess-test",
             },
         )
         assert response.status_code == 200
