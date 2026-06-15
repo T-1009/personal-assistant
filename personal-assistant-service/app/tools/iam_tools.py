@@ -9,7 +9,7 @@ from typing import Any
 from agentarts.sdk import require_sts_token
 from agentarts.sdk.identity.types import StsCredentials
 from huaweicloudsdkcore.auth.credentials import GlobalCredentials
-from huaweicloudsdkiam.v3 import IamAsyncClient, KeystoneListUsersRequest
+from huaweicloudsdkiam.v5 import IamAsyncClient, ListUsersV5Request
 from langchain_core.tools import tool
 
 from app.identity import get_iam_users_readonly_config
@@ -29,14 +29,13 @@ class IamToolError:
 class IamUserItem:
     id: str | None = None
     name: str | None = None
-    domain_id: str | None = None
+    user_id: str | None = None
+    user_name: str | None = None
     enabled: bool | None = None
     description: str | None = None
-    access_mode: str | None = None
-    pwd_status: bool | None = None
-    pwd_strength: str | None = None
-    password_expires_at: str | None = None
-    last_project_id: str | None = None
+    is_root_user: bool | None = None
+    created_at: str | None = None
+    urn: str | None = None
 
 
 def _get_value(item: Any, key: str) -> Any:
@@ -45,18 +44,25 @@ def _get_value(item: Any, key: str) -> Any:
     return getattr(item, key, None)
 
 
+def _serialize_value(value: Any) -> Any:
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return value
+
+
 def _normalize_user_item(item: Any) -> IamUserItem:
+    user_id = _get_value(item, "user_id") or _get_value(item, "id")
+    user_name = _get_value(item, "user_name") or _get_value(item, "name")
     return IamUserItem(
-        id=_get_value(item, "id"),
-        name=_get_value(item, "name"),
-        domain_id=_get_value(item, "domain_id"),
+        id=user_id,
+        name=user_name,
+        user_id=user_id,
+        user_name=user_name,
         enabled=_get_value(item, "enabled"),
         description=_get_value(item, "description"),
-        access_mode=_get_value(item, "access_mode"),
-        pwd_status=_get_value(item, "pwd_status"),
-        pwd_strength=_get_value(item, "pwd_strength"),
-        password_expires_at=_get_value(item, "password_expires_at"),
-        last_project_id=_get_value(item, "last_project_id"),
+        is_root_user=_get_value(item, "is_root_user"),
+        created_at=_serialize_value(_get_value(item, "created_at")),
+        urn=_get_value(item, "urn"),
     )
 
 
@@ -89,36 +95,28 @@ def _build_iam_client(sts_credentials: StsCredentials) -> IamAsyncClient:
 )
 async def _list_iam_users(
     *,
-    domain_id: str | None = None,
-    enabled: bool | None = None,
-    name: str | None = None,
-    password_expires_at: str | None = None,
+    limit: int | None = None,
+    marker: str | None = None,
+    group_id: str | None = None,
     sts_credentials: StsCredentials,
 ) -> Any:
     client = _build_iam_client(sts_credentials)
-    request = KeystoneListUsersRequest(
-        domain_id=domain_id,
-        enabled=enabled,
-        name=name,
-        password_expires_at=password_expires_at,
-    )
-    future_response = client.keystone_list_users_async(request)
+    request = ListUsersV5Request(limit=limit, marker=marker, group_id=group_id)
+    future_response = client.list_users_v5_async(request)
     return await asyncio.to_thread(future_response.result)
 
 
 async def list_iam_users(
-    domain_id: str | None = None,
-    enabled: bool | None = None,
-    name: str | None = None,
-    password_expires_at: str | None = None,
+    limit: int | None = None,
+    marker: str | None = None,
+    group_id: str | None = None,
 ) -> dict[str, Any]:
-    """List Huawei Cloud IAM users visible to the readonly STS credential."""
+    """List Huawei Cloud IAM users with the IAM V5 API."""
     try:
         response = await _list_iam_users(
-            domain_id=domain_id,
-            enabled=enabled,
-            name=name,
-            password_expires_at=password_expires_at,
+            limit=limit,
+            marker=marker,
+            group_id=group_id,
         )
     except Exception as exc:
         return asdict(
@@ -134,12 +132,22 @@ async def list_iam_users(
         _user_item_to_dict(_normalize_user_item(item))
         for item in (getattr(response, "users", None) or [])
     ]
+    page_info = getattr(response, "page_info", None)
     return {
         "ok": True,
+        "api_version": "v5",
         "provider_name": _IAM_USERS_CONFIG["provider_name"],
         "region": _IAM_USERS_CONFIG["region"],
         "endpoint": _IAM_USERS_CONFIG["endpoint"],
         "count": len(users),
+        "page_info": (
+            {
+                "next_marker": _get_value(page_info, "next_marker"),
+                "current_count": _get_value(page_info, "current_count"),
+            }
+            if page_info is not None
+            else None
+        ),
         "users": users,
     }
 
@@ -149,8 +157,8 @@ IAM_TOOLS = [
         "huaweicloud_list_iam_users",
         description=(
             "List Huawei Cloud IAM users/sub-users visible to the AgentArts "
-            "STS credential provider iam-users-readonly. Supports optional "
-            "filters: domain_id, enabled, name, and password_expires_at."
+            "STS credential provider iam-users-readonly using IAM V5. Supports "
+            "optional pagination and group filters: limit, marker, and group_id."
         ),
     )(list_iam_users),
 ]

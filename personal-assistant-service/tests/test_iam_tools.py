@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import pytest
@@ -31,19 +32,21 @@ def test_credentials_to_global_credentials_uses_sts_fields():
 def test_normalize_user_item_accepts_dicts():
     item = _normalize_user_item(
         {
-            "id": "user-id",
-            "name": "alice",
-            "domain_id": "domain-id",
+            "user_id": "user-id",
+            "user_name": "alice",
             "enabled": True,
-            "access_mode": "default",
+            "is_root_user": False,
+            "urn": "iam::123:user/alice",
         }
     )
 
     assert item.id == "user-id"
     assert item.name == "alice"
-    assert item.domain_id == "domain-id"
+    assert item.user_id == "user-id"
+    assert item.user_name == "alice"
     assert item.enabled is True
-    assert item.access_mode == "default"
+    assert item.is_root_user is False
+    assert item.urn == "iam::123:user/alice"
 
 
 @pytest.mark.asyncio
@@ -55,7 +58,7 @@ async def test_list_iam_users_uses_sdk_future_result(monkeypatch):
             return SimpleNamespace(users=[])
 
     class FakeClient:
-        def keystone_list_users_async(self, request):
+        def list_users_v5_async(self, request):
             captured["request"] = request
             return FakeFuture()
 
@@ -67,58 +70,65 @@ async def test_list_iam_users_uses_sdk_future_result(monkeypatch):
     monkeypatch.setattr("app.tools.iam_tools._build_iam_client", lambda _: FakeClient())
 
     response = await _list_iam_users.__wrapped__(
-        domain_id="domain-id",
-        enabled=False,
-        name="bob",
-        password_expires_at="lt:2026-12-01T00:00:00Z",
+        limit=50,
+        marker="next-marker",
+        group_id="group-id",
         sts_credentials=sts,
     )
 
     assert response.users == []
     request = captured["request"]
-    assert request.domain_id == "domain-id"
-    assert request.enabled is False
-    assert request.name == "bob"
-    assert request.password_expires_at == "lt:2026-12-01T00:00:00Z"
+    assert request.limit == 50
+    assert request.marker == "next-marker"
+    assert request.group_id == "group-id"
 
 
 @pytest.mark.asyncio
 async def test_list_iam_users_returns_structure(monkeypatch):
     async def fake_list_users(**kwargs):
         assert kwargs == {
-            "domain_id": "domain-id",
-            "enabled": True,
-            "name": "alice",
-            "password_expires_at": None,
+            "limit": 100,
+            "marker": None,
+            "group_id": "group-id",
         }
         return SimpleNamespace(
             users=[
                 SimpleNamespace(
-                    id="user-id",
-                    name="alice",
-                    domain_id="domain-id",
+                    user_id="user-id",
+                    user_name="alice",
                     enabled=True,
                     description="dev user",
-                    access_mode="programmatic",
-                    pwd_status=False,
-                    pwd_strength="high",
-                    password_expires_at=None,
-                    last_project_id="project-id",
+                    is_root_user=False,
+                    created_at=datetime(2026, 1, 2, 3, 4, 5, tzinfo=UTC),
+                    urn="iam::123:user/alice",
                 )
-            ]
+            ],
+            page_info=SimpleNamespace(
+                next_marker="next-marker",
+                current_count=1,
+            ),
         )
 
     monkeypatch.setattr("app.tools.iam_tools._list_iam_users", fake_list_users)
 
-    result = await list_iam_users(domain_id="domain-id", enabled=True, name="alice")
+    result = await list_iam_users(limit=100, group_id="group-id")
 
     assert result["ok"] is True
+    assert result["api_version"] == "v5"
     assert result["provider_name"] == "iam-users-readonly"
     assert result["count"] == 1
+    assert result["page_info"] == {
+        "next_marker": "next-marker",
+        "current_count": 1,
+    }
     user = result["users"][0]
     assert user["id"] == "user-id"
     assert user["name"] == "alice"
-    assert user["access_mode"] == "programmatic"
+    assert user["user_id"] == "user-id"
+    assert user["user_name"] == "alice"
+    assert user["is_root_user"] is False
+    assert user["created_at"] == "2026-01-02T03:04:05+00:00"
+    assert user["urn"] == "iam::123:user/alice"
 
 
 @pytest.mark.asyncio
