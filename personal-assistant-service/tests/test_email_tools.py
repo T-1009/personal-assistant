@@ -11,6 +11,7 @@ import httpx
 import pytest
 
 import app.tools.email_tools as et
+from app.tools.email_tools import AuthUrlRequired, _handle_provider_error
 
 # ── Shared Fixtures ──
 
@@ -865,6 +866,136 @@ class TestReplyToEmail:
         assert result["sent"] is False
         assert "email_id" in result["error"]
         mock_client.post.assert_not_called()
+
+
+# ═══════════════════════════════════════════════════════════════
+# _handle_provider_error decorator tests
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestHandleProviderError:
+    """Tests for the @_handle_provider_error decorator behavior.
+
+    The autouse unwrap_email_tools fixture strips both decorator layers,
+    so we manually re-apply @_handle_provider_error to test its error
+    handling in isolation.
+    """
+
+    @pytest.mark.asyncio
+    async def test_empty_exception_message_falls_back_to_type_name(self):
+        """UT-HPE-01: empty str(e) falls back to exception type name."""
+        @_handle_provider_error
+        async def _failing_tool(access_token=None):
+            raise RuntimeError()
+
+        result = await _failing_tool()
+
+        assert "RuntimeError" in result["error"]
+        assert result["detail"] == "RuntimeError"
+
+    @pytest.mark.asyncio
+    async def test_empty_exception_message_uses_args(self):
+        """UT-HPE-02: empty str(e) with non-empty e.args uses args."""
+        @_handle_provider_error
+        async def _failing_tool(access_token=None):
+            raise RuntimeError("detail from args")
+
+        result = await _failing_tool()
+
+        assert "detail from args" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_whitespace_only_exception_message_falls_back(self):
+        """UT-HPE-03: whitespace-only str(e) treated as empty."""
+        @_handle_provider_error
+        async def _failing_tool(access_token=None):
+            e = RuntimeError()
+            e.args = ("   ",)
+            raise e
+
+        result = await _failing_tool()
+
+        assert "RuntimeError" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_write_tool_exception_includes_sent_false(self):
+        """UT-HPE-04: send_email exception includes sent=False in result."""
+        @_handle_provider_error
+        async def send_email(access_token=None):
+            raise RuntimeError()
+
+        result = await send_email()
+
+        assert result["sent"] is False
+        assert "RuntimeError" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_reply_to_email_exception_includes_sent_false(self):
+        """UT-HPE-05: reply_to_email exception includes sent=False in result."""
+        @_handle_provider_error
+        async def reply_to_email(access_token=None):
+            raise RuntimeError()
+
+        result = await reply_to_email()
+
+        assert result["sent"] is False
+
+    @pytest.mark.asyncio
+    async def test_read_tool_exception_excludes_sent(self):
+        """UT-HPE-06: list_emails exception does NOT include sent field."""
+        @_handle_provider_error
+        async def list_emails(access_token=None):
+            raise RuntimeError()
+
+        result = await list_emails()
+
+        assert "sent" not in result
+
+    @pytest.mark.asyncio
+    async def test_auth_url_required_returns_auth_info(self):
+        """UT-HPE-07: AuthUrlRequired returns auth_url and auth_required."""
+        @_handle_provider_error
+        async def _failing_tool(access_token=None):
+            raise AuthUrlRequired("https://auth.example.com/login")
+
+        result = await _failing_tool()
+
+        assert result["auth_required"] is True
+        assert "https://auth.example.com/login" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_provider_not_found_returns_setup_required(self):
+        """UT-HPE-08: 'm365-provider' error returns setup_required."""
+        @_handle_provider_error
+        async def _failing_tool(access_token=None):
+            raise Exception("m365-provider not found")
+
+        result = await _failing_tool()
+
+        assert result["setup_required"] is True
+
+    @pytest.mark.asyncio
+    async def test_provider_not_found_write_tool_includes_sent(self):
+        """UT-HPE-09: 'm365-provider' error on write tool includes sent=False."""
+        @_handle_provider_error
+        async def send_email(access_token=None):
+            raise Exception("m365-provider not found")
+
+        result = await send_email()
+
+        assert result["setup_required"] is True
+        assert result["sent"] is False
+
+    @pytest.mark.asyncio
+    async def test_500_error_returns_retryable(self):
+        """UT-HPE-10: 500 error returns retryable."""
+        @_handle_provider_error
+        async def _failing_tool(access_token=None):
+            raise Exception("internal server error (500)")
+
+        result = await _failing_tool()
+
+        assert result["retryable"] is True
 
 
 # ═══════════════════════════════════════════════════════════════

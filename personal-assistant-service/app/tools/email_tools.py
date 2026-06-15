@@ -90,38 +90,60 @@ def _handle_provider_error(fn):
                 "auth_required": True,
             }
         except Exception as e:
-            error_msg = str(e)
+            error_msg = str(e).strip()
             error_type = type(e).__name__
             logger.error(
-                "Email tool failed — %s: %s. Tool: %s, args: %s",
-                error_type, error_msg, fn.__name__, args,
+                "Email tool failed — %s. Tool: %s. "
+                "Exception args: %s, Exception repr: %s",
+                error_type, fn.__name__,
+                e.args, repr(e),
                 exc_info=True,
             )
+            is_write_tool = fn.__name__ in ("send_email", "reply_to_email")
             if "m365-provider" in error_msg or "Resource not found" in error_msg:
-                return {
+                res = {
                     "error": (
                         "邮件功能暂不可用：M365 Provider 未配置。"
-                        "请设置环境变量 M365_CLIENT_ID, M365_CLIENT_SECRET, M365_TENANT_ID，"
-                        "并确保 AgentArts Identity 服务可用。"
+                        "请设置环境变量 M365_CLIENT_ID, M365_CLIENT_SECRET, "
+                        "M365_TENANT_ID，并确保 AgentArts Identity 服务可用。"
                     ),
                     "setup_required": True,
                 }
+                if is_write_tool:
+                    res["sent"] = False
+                return res
             if "500" in error_msg or "internal server error" in error_msg.lower():
-                return {
+                res = {
                     "error": (
-                        "邮件功能暂时不可用：AgentArts Identity 服务返回内部错误 (500)。"
-                        "请稍后重试。如果持续出现，请检查 M365 Provider 在华为云控制台的配置。"
+                        "邮件功能暂时不可用：AgentArts Identity 服务返回内部错误"
+                        " (500)。请稍后重试。如果持续出现，请检查 M365 Provider "
+                        "在华为云控制台的配置。"
                     ),
                     "retryable": True,
                 }
-            # Generic fallback — return error dict instead of crashing
-            return {
+                if is_write_tool:
+                    res["sent"] = False
+                return res
+
+            display_error = error_msg
+            if not display_error:
+                if e.args:
+                    arg_strs = [str(a) for a in e.args if str(a).strip()]
+                    display_error = "; ".join(arg_strs[:3]) if arg_strs else ""
+                if not display_error:
+                    display_error = f"未知错误 ({error_type})"
+
+            res = {
                 "error": (
-                    f"邮件工具执行失败：{error_msg[:300]}。"
+                    f"邮件工具执行失败：{display_error[:300]}。"
                     "请检查 AgentArts Identity 服务和 M365 凭据配置。"
                 ),
                 "detail": error_type,
             }
+            if fn.__name__ in ("send_email", "reply_to_email"):
+                res["sent"] = False
+
+            return res
 
     return wrapper
 
