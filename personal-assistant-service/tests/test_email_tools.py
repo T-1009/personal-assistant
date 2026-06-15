@@ -1,7 +1,6 @@
 """Unit tests for app.tools.email_tools — Microsoft 365 email tools.
 
-Feature 10a: Outbound Email — tests all 5 tool functions plus
-provider initialization (ensure_provider_sync).
+Feature 10a: Outbound Email — tests all 5 tool functions
 """
 
 from contextlib import contextmanager
@@ -53,30 +52,19 @@ def unwrap_email_tools():
 
 
 @pytest.fixture(autouse=True)
-def mock_identity_client():
-    """Mock IdentityClient to avoid real AgentArts calls."""
-    with patch("app.tools.email_tools.IdentityClient") as mock:
-        yield mock
-
-
-@pytest.fixture(autouse=True)
-def reset_provider_and_client():
-    """Reset provider state and shared client before/after each test."""
+def reset_shared_client():
+    """Reset shared HTTP client before/after each test."""
     import app.tools.email_tools as _et
 
-    _et._PROVIDER_INITIALIZED = False
     _et._client = None
     yield
-    _et._PROVIDER_INITIALIZED = False
     _et._client = None
 
 
 # ── Helpers ──
 
 
-def _make_resp(
-    status_code: int = 200, json_data: dict | None = None
-) -> MagicMock:
+def _make_resp(status_code: int = 200, json_data: dict | None = None) -> MagicMock:
     """Create a mock httpx Response with the given status and JSON body."""
     resp = MagicMock()
     resp.status_code = status_code
@@ -164,9 +152,7 @@ class TestListEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et.list_emails(
-                folder="sentitems", access_token="mock-token"
-            )
+            await et.list_emails(folder="sentitems", access_token="mock-token")
             call_url = mock_client.get.call_args[0][0]
 
         assert "mailFolders/sentitems/messages" in call_url
@@ -275,9 +261,7 @@ class TestGetEmail:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et.get_email(
-                email_id="msg-1", access_token="mock-token"
-            )
+            result = await et.get_email(email_id="msg-1", access_token="mock-token")
 
         assert result["id"] == "msg-1"
         assert result["subject"] == "Hello"
@@ -286,9 +270,7 @@ class TestGetEmail:
             "name": "Alice",
             "address": "alice@x.com",
         }
-        assert result["toRecipients"] == [
-            {"name": "Bob", "address": "bob@x.com"}
-        ]
+        assert result["toRecipients"] == [{"name": "Bob", "address": "bob@x.com"}]
         assert result["ccRecipients"] == []
         assert result["receivedDateTime"] == "2026-06-14T10:00:00Z"
         assert result["attachments"] == []
@@ -323,9 +305,7 @@ class TestGetEmail:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et.get_email(
-                email_id="msg-1", access_token="mock-token"
-            )
+            result = await et.get_email(email_id="msg-1", access_token="mock-token")
 
         assert len(result["attachments"]) == 1
         att = result["attachments"][0]
@@ -356,9 +336,7 @@ class TestGetEmail:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et.get_email(
-                email_id="msg-1", access_token="mock-token"
-            )
+            result = await et.get_email(email_id="msg-1", access_token="mock-token")
 
         assert result["attachments"] == []
 
@@ -377,9 +355,7 @@ class TestGetEmail:
             _mock_httpx("get", resp) as _rc,  # noqa: F841
             pytest.raises(httpx.HTTPStatusError),
         ):
-            await et.get_email(
-                email_id="invalid", access_token="mock-token"
-            )
+            await et.get_email(email_id="invalid", access_token="mock-token")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -410,9 +386,7 @@ class TestSearchEmails:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et.search_emails(
-                query="project", access_token="mock-token"
-            )
+            result = await et.search_emails(query="project", access_token="mock-token")
 
         assert result["count"] == 1
         assert result["query"] == "project"
@@ -443,9 +417,7 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et.search_emails(
-                query="hello world", access_token="mock-token"
-            )
+            await et.search_emails(query="hello world", access_token="mock-token")
             params = mock_client.get.call_args[1]["params"]
 
         assert params["$search"] == '"hello world"'
@@ -456,9 +428,7 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et.search_emails(
-                query="test", limit=20, access_token="mock-token"
-            )
+            await et.search_emails(query="test", limit=20, access_token="mock-token")
             params = mock_client.get.call_args[1]["params"]
 
         assert params["$top"] == 20
@@ -478,9 +448,7 @@ class TestSearchEmails:
             _mock_httpx("get", resp) as _rc,  # noqa: F841
             pytest.raises(httpx.HTTPStatusError),
         ):
-            await et.search_emails(
-                query="test", access_token="mock-token"
-            )
+            await et.search_emails(query="test", access_token="mock-token")
 
     @pytest.mark.asyncio
     async def test_search_emails_escapes_quotes(self):
@@ -488,9 +456,7 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et.search_emails(
-                query='hello "world"', access_token="mock-token"
-            )
+            await et.search_emails(query='hello "world"', access_token="mock-token")
             params = mock_client.get.call_args[1]["params"]
 
         # Double-quotes inside the query should be backslash-escaped
@@ -502,9 +468,7 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et.search_emails(
-                query="test", access_token="mock-token"
-            )
+            await et.search_emails(query="test", access_token="mock-token")
             params = mock_client.get.call_args[1]["params"]
 
         assert "$orderby" not in params
@@ -884,6 +848,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_empty_exception_message_falls_back_to_type_name(self):
         """UT-HPE-01: empty str(e) falls back to exception type name."""
+
         @_handle_provider_error
         async def _failing_tool(access_token=None):
             raise RuntimeError()
@@ -896,6 +861,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_empty_exception_message_uses_args(self):
         """UT-HPE-02: empty str(e) with non-empty e.args uses args."""
+
         @_handle_provider_error
         async def _failing_tool(access_token=None):
             raise RuntimeError("detail from args")
@@ -907,6 +873,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_whitespace_only_exception_message_falls_back(self):
         """UT-HPE-03: whitespace-only str(e) treated as empty."""
+
         @_handle_provider_error
         async def _failing_tool(access_token=None):
             e = RuntimeError()
@@ -920,6 +887,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_write_tool_exception_includes_sent_false(self):
         """UT-HPE-04: send_email exception includes sent=False in result."""
+
         @_handle_provider_error
         async def send_email(access_token=None):
             raise RuntimeError()
@@ -932,6 +900,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_reply_to_email_exception_includes_sent_false(self):
         """UT-HPE-05: reply_to_email exception includes sent=False in result."""
+
         @_handle_provider_error
         async def reply_to_email(access_token=None):
             raise RuntimeError()
@@ -943,6 +912,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_read_tool_exception_excludes_sent(self):
         """UT-HPE-06: list_emails exception does NOT include sent field."""
+
         @_handle_provider_error
         async def list_emails(access_token=None):
             raise RuntimeError()
@@ -954,6 +924,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_auth_url_required_returns_auth_info(self):
         """UT-HPE-07: AuthUrlRequired returns auth_url and auth_required."""
+
         @_handle_provider_error
         async def _failing_tool(access_token=None):
             raise AuthUrlRequired("https://auth.example.com/login")
@@ -966,6 +937,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_provider_not_found_returns_setup_required(self):
         """UT-HPE-08: 'm365-provider' error returns setup_required."""
+
         @_handle_provider_error
         async def _failing_tool(access_token=None):
             raise Exception("m365-provider not found")
@@ -977,6 +949,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_provider_not_found_write_tool_includes_sent(self):
         """UT-HPE-09: 'm365-provider' error on write tool includes sent=False."""
+
         @_handle_provider_error
         async def send_email(access_token=None):
             raise Exception("m365-provider not found")
@@ -989,6 +962,7 @@ class TestHandleProviderError:
     @pytest.mark.asyncio
     async def test_500_error_returns_retryable(self):
         """UT-HPE-10: 500 error returns retryable."""
+
         @_handle_provider_error
         async def _failing_tool(access_token=None):
             raise Exception("internal server error (500)")
@@ -999,103 +973,3 @@ class TestHandleProviderError:
 
 
 # ═══════════════════════════════════════════════════════════════
-# Provider initialization tests
-# ═══════════════════════════════════════════════════════════════
-
-
-class TestProviderInit:
-    """Tests for ensure_provider_sync()."""
-
-    def test_provider_init_skips_if_env_vars_missing(
-        self, mock_identity_client, monkeypatch
-    ):
-        """UT-PI-01: returns False when M365 env vars not set."""
-        monkeypatch.delenv("M365_CLIENT_ID", raising=False)
-        monkeypatch.delenv("M365_CLIENT_SECRET", raising=False)
-        monkeypatch.delenv("M365_TENANT_ID", raising=False)
-
-        result = et.ensure_provider_sync()
-
-        assert result is False
-        mock_identity_client.assert_not_called()
-        assert et._PROVIDER_INITIALIZED is False
-
-    def test_provider_init_with_valid_env(
-        self, mock_identity_client, monkeypatch
-    ):
-        """UT-PI-02: creates provider with correct arguments, returns True."""
-        monkeypatch.setenv("M365_CLIENT_ID", "test-client-id")
-        monkeypatch.setenv("M365_CLIENT_SECRET", "test-client-secret")
-        monkeypatch.setenv("M365_TENANT_ID", "test-tenant-id")
-        monkeypatch.setenv("AGENTARTS_REGION", "test-region")
-
-        mock_client_instance = MagicMock()
-        mock_identity_client.return_value = mock_client_instance
-
-        result = et.ensure_provider_sync()
-
-        assert result is True
-        mock_identity_client.assert_called_once_with(region="test-region")
-        mock_client_instance.create_oauth2_credential_provider.assert_called_once_with(
-            name="m365-provider",
-            vendor=et.OAuth2Vendor.MICROSOFTOAUTH2,
-            client_id="test-client-id",
-            client_secret="test-client-secret",
-            tenant_id="test-tenant-id",
-        )
-        assert et._PROVIDER_INITIALIZED is True
-
-    def test_provider_only_initialized_once(
-        self, mock_identity_client, monkeypatch
-    ):
-        """UT-PI-03: create_oauth2_credential_provider called exactly once."""
-        monkeypatch.setenv("M365_CLIENT_ID", "test-client-id")
-        monkeypatch.setenv("M365_CLIENT_SECRET", "test-client-secret")
-        monkeypatch.setenv("M365_TENANT_ID", "test-tenant-id")
-
-        mock_client_instance = MagicMock()
-        mock_identity_client.return_value = mock_client_instance
-
-        et.ensure_provider_sync()
-        et.ensure_provider_sync()
-        et.ensure_provider_sync()
-
-        mock_client_instance.create_oauth2_credential_provider.assert_called_once()
-
-    def test_provider_init_handles_identity_client_error(
-        self, mock_identity_client, monkeypatch
-    ):
-        """UT-PI-04: IdentityClient error returns False; flag stays False."""
-        monkeypatch.setenv("M365_CLIENT_ID", "test-client-id")
-        monkeypatch.setenv("M365_CLIENT_SECRET", "test-client-secret")
-        monkeypatch.setenv("M365_TENANT_ID", "test-tenant-id")
-
-        mock_client_instance = MagicMock()
-        mock_client_instance.create_oauth2_credential_provider.side_effect = (
-            RuntimeError("API error")
-        )
-        mock_identity_client.return_value = mock_client_instance
-
-        result = et.ensure_provider_sync()
-
-        assert result is False
-        assert et._PROVIDER_INITIALIZED is False
-
-    def test_provider_init_handles_already_exists(
-        self, mock_identity_client, monkeypatch
-    ):
-        """UT-PI-05: 'already exists' error treated as success, returns True."""
-        monkeypatch.setenv("M365_CLIENT_ID", "test-client-id")
-        monkeypatch.setenv("M365_CLIENT_SECRET", "test-client-secret")
-        monkeypatch.setenv("M365_TENANT_ID", "test-tenant-id")
-
-        mock_client_instance = MagicMock()
-        mock_client_instance.create_oauth2_credential_provider.side_effect = (
-            RuntimeError("provider already exists")
-        )
-        mock_identity_client.return_value = mock_client_instance
-
-        result = et.ensure_provider_sync()
-
-        assert result is True
-        assert et._PROVIDER_INITIALIZED is True

@@ -1,19 +1,15 @@
 import functools
 import logging
-import os
 from typing import Any
 
 import httpx
-from agentarts.sdk import IdentityClient, require_access_token
-from agentarts.sdk.identity.types import OAuth2Vendor
+from agentarts.sdk import require_access_token
 
 logger = logging.getLogger(__name__)
 
-_PROVIDER_INITIALIZED = False
 
-
-class AuthUrlRequired(Exception):
-    """Raised when user authorization is required to access an OAuth2-protected resource."""
+class AuthUrlRequired(Exception):  # noqa: N818
+    """Raised when user authorization is required for an OAuth2 resource."""
 
     def __init__(self, auth_url: str) -> None:
         self.auth_url = auth_url
@@ -28,6 +24,7 @@ async def handle_auth_url(auth_url: str) -> None:
     """
     logger.info("User authorization required — auth URL: %s", auth_url)
     raise AuthUrlRequired(auth_url)
+
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
 
@@ -95,8 +92,10 @@ def _handle_provider_error(fn):
             logger.error(
                 "Email tool failed — %s. Tool: %s. "
                 "Exception args: %s, Exception repr: %s",
-                error_type, fn.__name__,
-                e.args, repr(e),
+                error_type,
+                fn.__name__,
+                e.args,
+                repr(e),
                 exc_info=True,
             )
             is_write_tool = fn.__name__ in ("send_email", "reply_to_email")
@@ -104,8 +103,8 @@ def _handle_provider_error(fn):
                 res = {
                     "error": (
                         "邮件功能暂不可用：M365 Provider 未配置。"
-                        "请设置环境变量 M365_CLIENT_ID, M365_CLIENT_SECRET, "
-                        "M365_TENANT_ID，并确保 AgentArts Identity 服务可用。"
+                        "请在 AgentArts Identity 中预先配置 OAuth2 provider "
+                        "`m365-provider`，并确保 AgentArts Identity 服务可用。"
                     ),
                     "setup_required": True,
                 }
@@ -136,7 +135,7 @@ def _handle_provider_error(fn):
             res = {
                 "error": (
                     f"邮件工具执行失败：{display_error[:300]}。"
-                    "请检查 AgentArts Identity 服务和 M365 凭据配置。"
+                    "请检查 AgentArts Identity 服务和 m365-provider 配置。"
                 ),
                 "detail": error_type,
             }
@@ -162,59 +161,8 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
-def ensure_provider_sync() -> bool:
-    """Create the m365-provider in AgentArts Identity Service (sync, for init-time).
-
-    Must be called BEFORE any email tool is invoked — the @require_access_token
-    decorator runs before the function body, so lazy creation inside tools won't work.
-
-    Returns:
-        True if provider exists or was created successfully, False otherwise.
-    """
-    global _PROVIDER_INITIALIZED
-    if _PROVIDER_INITIALIZED:
-        logger.debug("m365-provider already initialized, skipping.")
-        return True
-
-    client_id = os.environ.get("M365_CLIENT_ID")
-    client_secret = os.environ.get("M365_CLIENT_SECRET")
-    tenant_id = os.environ.get("M365_TENANT_ID")
-    if not all([client_id, client_secret, tenant_id]):
-        missing = [v for v in ("M365_CLIENT_ID", "M365_CLIENT_SECRET", "M365_TENANT_ID")
-                   if not os.environ.get(v)]
-        logger.warning("m365-provider skipped — missing env vars: %s", ", ".join(missing))
-        return False
-
-    region = os.environ.get("AGENTARTS_REGION", "cn-southwest-2")
-    logger.info(
-        "Creating m365-provider (region=%s, tenant=%s, client_id=%s...%s)...",
-        region, tenant_id, client_id[:8], client_id[-4:],
-    )
-    try:
-        client = IdentityClient(region=region)
-        client.create_oauth2_credential_provider(
-            name="m365-provider",
-            vendor=OAuth2Vendor.MICROSOFTOAUTH2,
-            client_id=client_id,
-            client_secret=client_secret,
-            tenant_id=tenant_id,
-        )
-        logger.info("m365-provider created successfully.")
-        _PROVIDER_INITIALIZED = True
-        return True
-    except Exception as e:
-        err_str = str(e)
-        logger.warning("create_oauth2_credential_provider response: %s", err_str[:500])
-        # Provider might already exist — that's fine, treat as success
-        if "already exists" in err_str.lower() or "duplicate" in err_str.lower():
-            logger.info("m365-provider already exists, reusing.")
-            _PROVIDER_INITIALIZED = True
-            return True
-        logger.error("Failed to create m365-provider: %s", e)
-        return False
-
-
 # ── 1. list_emails ──
+
 
 @_handle_provider_error
 @require_access_token(
@@ -260,9 +208,7 @@ async def list_emails(
             "id": m.get("id"),
             "subject": m.get("subject"),
             "from": (
-                (m.get("from") or {})
-                .get("emailAddress", {})
-                .get("name", "Unknown")
+                (m.get("from") or {}).get("emailAddress", {}).get("name", "Unknown")
             ),
             "receivedDateTime": m.get("receivedDateTime"),
             "isRead": m.get("isRead"),
@@ -275,6 +221,7 @@ async def list_emails(
 
 
 # ── 2. get_email ──
+
 
 @_handle_provider_error
 @require_access_token(
@@ -321,12 +268,10 @@ async def get_email(
         "body": data.get("body", {}).get("content", ""),
         "from": (data.get("from") or {}).get("emailAddress", {}),
         "toRecipients": [
-            r.get("emailAddress", {})
-            for r in data.get("toRecipients", [])
+            r.get("emailAddress", {}) for r in data.get("toRecipients", [])
         ],
         "ccRecipients": [
-            r.get("emailAddress", {})
-            for r in data.get("ccRecipients", [])
+            r.get("emailAddress", {}) for r in data.get("ccRecipients", [])
         ],
         "receivedDateTime": data.get("receivedDateTime"),
         "attachments": [
@@ -336,11 +281,14 @@ async def get_email(
                 "contentType": a.get("contentType"),
             }
             for a in data.get("attachments", [])
-        ] if data.get("hasAttachments") else [],
+        ]
+        if data.get("hasAttachments")
+        else [],
     }
 
 
 # ── 3. search_emails ──
+
 
 @_handle_provider_error
 @require_access_token(
@@ -387,9 +335,7 @@ async def search_emails(
             "id": m.get("id"),
             "subject": m.get("subject"),
             "from": (
-                (m.get("from") or {})
-                .get("emailAddress", {})
-                .get("name", "Unknown")
+                (m.get("from") or {}).get("emailAddress", {}).get("name", "Unknown")
             ),
             "receivedDateTime": m.get("receivedDateTime"),
             "isRead": m.get("isRead"),
@@ -402,10 +348,14 @@ async def search_emails(
 
 # ── 4. send_email (Guard protected) ──
 
+
 @_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
-    scopes=["https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read"],
+    scopes=[
+        "https://graph.microsoft.com/Mail.Send",
+        "https://graph.microsoft.com/Mail.Read",
+    ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
     force_authentication=True,
@@ -461,14 +411,10 @@ async def send_email(
             "contentType": "Text",
             "content": body,
         },
-        "toRecipients": [
-            {"emailAddress": {"address": addr}} for addr in to
-        ],
+        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
     }
     if cc:
-        message["ccRecipients"] = [
-            {"emailAddress": {"address": addr}} for addr in cc
-        ]
+        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
 
     client = _get_client()
     resp = await client.post(
@@ -504,10 +450,14 @@ async def send_email(
 
 # ── 5. reply_to_email ──
 
+
 @_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
-    scopes=["https://graph.microsoft.com/Mail.Send", "https://graph.microsoft.com/Mail.Read"],
+    scopes=[
+        "https://graph.microsoft.com/Mail.Send",
+        "https://graph.microsoft.com/Mail.Read",
+    ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
     force_authentication=True,

@@ -63,17 +63,11 @@ def build_tools() -> list[Any]:
 
     # ── Email tools (Feature 10a) — always register ──
     try:
-        from app.tools.email_tools import EMAIL_TOOLS, ensure_provider_sync
+        from app.tools.email_tools import EMAIL_TOOLS
 
         tools.extend(EMAIL_TOOLS)
         logger.info("Email tools registered (%d tools).", len(EMAIL_TOOLS))
 
-        # Pre-create the OAuth2 credential provider on AgentArts Identity.
-        # Don't gate tool registration on this — tools are always available
-        # to the LLM. If provider creation fails, the _handle_provider_error
-        # wrapper on each tool catches it and returns a user-friendly error
-        # instead of crashing.
-        ensure_provider_sync()
     except ImportError as e:
         logger.warning(
             "Email tools not available (import failed): %s. "

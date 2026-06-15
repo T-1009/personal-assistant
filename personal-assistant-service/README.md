@@ -9,7 +9,7 @@ personal-assistant-service/
 ├── app/
 │   ├── __init__.py          # Python 包标记
 │   ├── main.py              # FastAPI 应用入口 + 路由定义
-│   ├── agent_handler.py     # deepagents Agent 编排 + MaaS 模型连接
+│   ├── agent_handler.py     # deepagents Agent 编排 + LLM 模型连接
 │   ├── llm_config.py        # LLM 多模型配置管理
 │   ├── auth.py              # Inbound 认证中间件（JWT / API Key）
 │   └── playground.py        # Chainlit Playground 挂载
@@ -45,21 +45,16 @@ personal-assistant-service/
 uv sync
 ```
 
-### 2. 设置环境变量
+### 2. 配置 LLM 凭据
 
-```bash
-export MAAS_API_KEY="<your-maas-api-key>"
-```
+DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Identity 中创建 API key credential provider：
 
-> 当 `config.yaml` 存在时，LLM Provider 配置由 `config.yaml` 管理（详见 [ADR-011](../personal-assistant-meta/architecture/ADR/ADR-011-multi-llm-provider.md)），此时需设置 `MAAS_API_KEY`（maas provider）或 `DEEPSEEK_API_KEY`（deepseek provider）。
->
-> 若无 `config.yaml`，系统会 fallback 读取旧版环境变量：
+| 字段 | 值 |
+|------|----|
+| Provider name | `DEEPSEEK_API_KEY` |
+| Secret value | DeepSeek API key |
 
-| 变量 | 默认值 | 说明 |
-|------|--------|------|
-| `MODEL_API_KEY` | **必需**（fallback 模式） | MaaS API Key |
-| `MODEL_NAME` | `deepseek-v4-pro` | 模型名称 |
-| `MODEL_URL` | `https://api.modelarts-maas.com/openai/v1` | MaaS API 地址 |
+`config.yaml` 保存默认模型元数据，`app.llm_config.get_model()` 会通过 AgentArts SDK `@require_api_key(provider_name="DEEPSEEK_API_KEY")` 获取密钥。`MODEL_NAME` / `MODEL_URL` 不是密钥，可作为部署期环境变量覆盖默认模型名和 API 地址。
 
 ### 3. 启动服务
 
@@ -117,7 +112,7 @@ docker build --platform linux/arm64 -t personal-assistant:dev .
 ### 运行容器
 
 ```bash
-docker run --rm -p 8080:8080 -e MODEL_API_KEY="<your-key>" personal-assistant:dev
+docker run --rm -p 8080:8080 personal-assistant:dev
 ```
 
 ## 在线测试
@@ -153,7 +148,7 @@ uv run ruff format --check .
 |------|------|
 | Web 框架 | FastAPI |
 | Agent 编排 | deepagents（内置 ReAct loop） |
-| LLM 连接 | langchain-openai → MaaS (DeepSeek-V4-Pro) |
+| LLM 连接 | langchain-openai + AgentArts Identity API Key provider |
 | 包管理 | uv |
 | 代码质量 | ruff |
 | 测试 | pytest + pytest-asyncio |
@@ -169,7 +164,7 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
   │
   │  deepagents agent.astream_events(v2)
   │
-  │  MaaS LLM (DeepSeek-V4-Pro)
+  │  DeepSeek LLM (API key from AgentArts Identity)
   │
   └── POST /invocations {"stream":false} ──→ AgentHandler.handle() → agent.ainvoke()
 ```
@@ -183,6 +178,6 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
 | Feature 4 | 用户认证 / OAuth（Inbound Identity） | 已实现 |
 | Feature 5 | 飞书 Client Adapter（飞书 Bot 接入） | [Planned — not yet implemented] |
 | Feature 6-8 | 外部工具集成（GitHub / M2M / STS） | [Planned — not yet implemented] |
-| **Feature 10a** | **Outbound Email — Microsoft 365 邮件处理** | **✅ 已实现** |
+| **Feature 10a** | **Outbound Email — Microsoft 365 邮件处理** | **已实现** |
 | | `app/tools/email_tools.py` — list_emails, get_email, search_emails, send_email, reply_to_email | |
 | | AgentArts Identity SDK `@require_access_token` + Microsoft Graph API | |
