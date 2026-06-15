@@ -166,6 +166,7 @@ class FakeEmailHandler:
     async def handle_stream(
         self, message: str, user_id: str = "anonymous",
         session_id: str | None = None,
+        message_queue=None,
     ):
         self.stream_calls.append((message, user_id, session_id))
         sid = session_id or "default"
