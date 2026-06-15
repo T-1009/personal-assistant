@@ -1,0 +1,183 @@
+"""Gitee repository tools for delegated end-user access."""
+
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+from typing import Any, Literal
+
+import httpx
+from agentarts.sdk import require_access_token
+from langchain_core.tools import tool
+
+from app.identity import (
+    AuthorizationRequired,
+    GitHubAuthorizationRequiredPoller,
+    capture_github_authorization_url,
+    get_gitee_provider_name,
+)
+
+GITEE_API_BASE_URL = "https://gitee.com/api/v5"
+DEFAULT_GITEE_SCOPES = ("user_info", "projects")
+
+GiteeVisibility = Literal["all", "public", "private"]
+GiteeRepoType = Literal["all", "owner", "personal", "member", "public", "private"]
+GiteeSort = Literal["created", "updated", "pushed", "full_name"]
+GiteeDirection = Literal["asc", "desc"]
+
+
+@dataclass(slots=True)
+class GiteeToolError:
+    ok: bool
+    message: str
+    authorization_url: str | None = None
+    provider_name: str | None = None
+    details: str | None = None
+
+
+@dataclass(slots=True)
+class GiteeRepositoryItem:
+    name: str
+    full_name: str
+    private: bool
+    human_name: str | None = None
+    path: str | None = None
+    namespace: str | None = None
+    description: str | None = None
+    html_url: str | None = None
+    default_branch: str | None = None
+    updated_at: str | None = None
+
+
+def _normalize_repo_item(item: dict[str, Any]) -> GiteeRepositoryItem:
+    namespace = item.get("namespace")
+    namespace_path = None
+    if isinstance(namespace, dict):
+        namespace_path = namespace.get("path") or namespace.get("name")
+    elif isinstance(namespace, str):
+        namespace_path = namespace
+
+    name = str(item.get("name") or item.get("path") or "")
+    full_name = str(item.get("full_name") or item.get("path_with_namespace") or name)
+    return GiteeRepositoryItem(
+        name=name,
+        full_name=full_name,
+        private=bool(item.get("private", False)),
+        human_name=item.get("human_name"),
+        path=item.get("path"),
+        namespace=namespace_path,
+        description=item.get("description"),
+        html_url=item.get("html_url"),
+        default_branch=item.get("default_branch"),
+        updated_at=item.get("updated_at"),
+    )
+
+
+def _repo_item_to_dict(item: GiteeRepositoryItem) -> dict[str, Any]:
+    return asdict(item)
+
+
+async def _raw_gitee_request(
+    access_token: str,
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+) -> Any:
+    query = {k: v for k, v in (params or {}).items() if v is not None}
+    query["access_token"] = access_token
+    headers = {"Accept": "application/json"}
+    async with httpx.AsyncClient(base_url=GITEE_API_BASE_URL, timeout=30.0) as client:
+        response = await client.request(method, path, headers=headers, params=query)
+        response.raise_for_status()
+        if response.status_code == httpx.codes.NO_CONTENT or not response.content:
+            return None
+        return response.json()
+
+
+@require_access_token(
+    provider_name=get_gitee_provider_name(),
+    into="access_token",
+    scopes=list(DEFAULT_GITEE_SCOPES),
+    on_auth_url=capture_github_authorization_url,
+    auth_flow="USER_FEDERATION",
+    force_authentication=False,
+    token_poller=GitHubAuthorizationRequiredPoller(provider_name=get_gitee_provider_name()),
+)
+async def _gitee_request(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    access_token: str,
+) -> Any:
+    return await _raw_gitee_request(access_token, method, path, params=params)
+
+
+def _authorization_error(exc: AuthorizationRequired) -> dict[str, Any]:
+    return asdict(
+        GiteeToolError(
+            ok=False,
+            message=exc.message,
+            authorization_url=exc.authorization_url,
+            provider_name=exc.provider_name,
+        )
+    )
+
+
+async def list_repositories(
+    visibility: GiteeVisibility = "all",
+    affiliation: str | None = None,
+    repo_type: GiteeRepoType | None = None,
+    sort: GiteeSort = "full_name",
+    direction: GiteeDirection | None = None,
+    q: str | None = None,
+    page: int = 1,
+    per_page: int = 20,
+) -> dict[str, Any]:
+    """List repositories visible to the current Gitee end user."""
+    if repo_type and (visibility != "all" or affiliation):
+        return {
+            "ok": False,
+            "message": (
+                "repo_type cannot be combined with visibility or affiliation "
+                "because Gitee returns 422 for that combination."
+            ),
+        }
+
+    params = {
+        "visibility": visibility,
+        "affiliation": affiliation,
+        "type": repo_type,
+        "sort": sort,
+        "direction": direction,
+        "q": q,
+        "page": max(page, 1),
+        "per_page": min(max(per_page, 1), 100),
+    }
+    try:
+        data = await _gitee_request("GET", "/user/repos", params=params)
+        items = [
+            _repo_item_to_dict(_normalize_repo_item(item))
+            for item in data
+            if isinstance(item, dict)
+        ]
+        return {
+            "ok": True,
+            "count": len(items),
+            "page": params["page"],
+            "per_page": params["per_page"],
+            "repositories": items,
+        }
+    except AuthorizationRequired as exc:
+        return _authorization_error(exc)
+
+
+GITEE_TOOLS = [
+    tool(
+        "gitee_list_repositories",
+        description=(
+            "List repositories visible to the current Gitee end user. Uses the "
+            "AgentArts OAuth2 access token from the configured gitee-provider."
+        ),
+    )(list_repositories),
+]

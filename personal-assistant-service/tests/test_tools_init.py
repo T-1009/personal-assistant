@@ -38,8 +38,7 @@ class TestBuildTools:
         ]
         for name in expected:
             assert name in result_names, (
-                f"Expected {name} in build_tools() result, "
-                f"got {result_names}"
+                f"Expected {name} in build_tools() result, got {result_names}"
             )
 
     def test_build_tools_includes_github_tools(self) -> None:
@@ -60,6 +59,22 @@ class TestBuildTools:
                 f"Expected {name} in build_tools() result, got {result_names}"
             )
 
+    def test_build_tools_includes_gitee_tools(self) -> None:
+        """UT-TI-06: build_tools() includes Gitee tools."""
+        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
+            result = build_tools()
+
+        result_names = [_tool_name(t) for t in result]
+        assert "gitee_list_repositories" in result_names
+
+    def test_build_tools_includes_iam_tools(self) -> None:
+        """UT-TI-07: build_tools() includes Huawei Cloud IAM tools."""
+        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
+            result = build_tools()
+
+        result_names = [_tool_name(t) for t in result]
+        assert "huaweicloud_list_iam_users" in result_names
+
     def test_build_tools_graceful_import_error(self) -> None:
         """UT-TI-03: build_tools() does NOT raise when email_tools import fails."""
         # Ensure the module is in sys.modules before we set it to None
@@ -77,6 +92,4 @@ class TestBuildTools:
             result = build_tools()
 
         names = [_tool_name(t) for t in result]
-        assert len(names) == len(set(names)), (
-            f"Duplicate tool names detected: {names}"
-        )
+        assert len(names) == len(set(names)), f"Duplicate tool names detected: {names}"

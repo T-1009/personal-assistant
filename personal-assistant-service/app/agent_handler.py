@@ -44,6 +44,21 @@ SYSTEM_PROMPT = """\
 github_star_repository(confirm=True, owner=..., repo=...)
 才会实际点赞。
 
+### Gitee（码云）工具 ✅
+你可以帮用户处理 Gitee 代码仓库，包括：
+- **gitee_list_repositories**: 列出当前用户可访问的 Gitee 代码仓库
+
+当用户询问 Gitee、码云、Gitee 代码仓或码云仓库时，优先使用 Gitee 工具。
+如果工具返回授权链接，请先把链接发给用户并说明需要完成授权。
+
+### 华为云 IAM 工具 ✅
+你可以帮用户查看华为云 IAM 子用户，包括：
+- **huaweicloud_list_iam_users**: 列出 iam-users-readonly STS 凭据可见的
+  华为云 IAM 用户/子用户
+
+当用户询问华为云 IAM 用户、子用户、账号用户或用户启停状态时，优先使用华为云 IAM 工具。
+该工具只读，不会返回 AK/SK/Token。
+
 ### 邮件处理 ✅
 你可以帮用户处理 Microsoft 365 (Outlook) 邮件，包括：
 - **list_emails**: 列出收件箱或指定文件夹（如 sentitems、drafts）中的邮件
@@ -70,6 +85,7 @@ github_star_repository(confirm=True, owner=..., repo=...)
 以下工具为敏感写操作，必须执行二次确认流程：
 - send_email
 - reply_to_email
+- github_star_repository
 
 确认流程：
 1. 先调用工具但不传 confirm 参数（默认 confirm=False），获取操作预览
@@ -160,7 +176,9 @@ class AgentHandler:
         return messages[-1].content
 
     async def handle_stream(
-        self, message: str, user_id: str = "anonymous",
+        self,
+        message: str,
+        user_id: str = "anonymous",
         session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from the agent using astream_events v2."""

@@ -7,3 +7,12 @@ llm:
       base_url: https://api.deepseek.com
       credential_provider_name: DEEPSEEK_API_KEY
       model: deepseek-chat
+
+identity:
+  gitee:
+    provider_name: gitee-provider
+  iam_users_readonly:
+    provider_name: iam-users-readonly
+    agency_session_name: personal-assistant-iam-users-readonly
+    region: cn-southwest-2
+    endpoint: https://iam.cn-southwest-2.myhuaweicloud.com

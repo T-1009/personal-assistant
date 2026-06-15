@@ -33,6 +33,34 @@ def build_tools() -> list[Any]:
             exc_info=True,
         )
 
+    # ── Gitee tools — always register ──
+    try:
+        from app.tools.gitee_tools import GITEE_TOOLS
+
+        tools.extend(GITEE_TOOLS)
+        logger.info("Gitee tools registered (%d tools).", len(GITEE_TOOLS))
+    except ImportError as e:
+        logger.warning(
+            "Gitee tools not available (import failed): %s. "
+            "Gitee functionality will be disabled for this session.",
+            e,
+            exc_info=True,
+        )
+
+    # Huawei Cloud IAM tools -- always register
+    try:
+        from app.tools.iam_tools import IAM_TOOLS
+
+        tools.extend(IAM_TOOLS)
+        logger.info("Huawei Cloud IAM tools registered (%d tools).", len(IAM_TOOLS))
+    except ImportError as e:
+        logger.warning(
+            "Huawei Cloud IAM tools not available (import failed): %s. "
+            "IAM functionality will be disabled for this session.",
+            e,
+            exc_info=True,
+        )
+
     # ── Email tools (Feature 10a) — always register ──
     try:
         from app.tools.email_tools import EMAIL_TOOLS, ensure_provider_sync

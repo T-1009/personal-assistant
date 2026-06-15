@@ -95,12 +95,27 @@ class TestAgentHandlerInit:
         assert "send_email" in SYSTEM_PROMPT
         assert "reply_to_email" in SYSTEM_PROMPT
 
+    def test_system_prompt_mentions_github_capabilities(self):
+        """UT-AH-04: SYSTEM_PROMPT contains names of all GitHub tools."""
+        assert "github_list_repositories" in SYSTEM_PROMPT
+        assert "github_list_repo_contents" in SYSTEM_PROMPT
+        assert "github_get_file_content" in SYSTEM_PROMPT
+        assert "github_search_code" in SYSTEM_PROMPT
+        assert "github_star_repository" in SYSTEM_PROMPT
+
+    def test_system_prompt_mentions_gitee_capabilities(self):
+        """UT-AH-05: SYSTEM_PROMPT contains Gitee tool names."""
+        assert "gitee_list_repositories" in SYSTEM_PROMPT
+
+    def test_system_prompt_mentions_huaweicloud_iam_capabilities(self):
+        """UT-AH-06: SYSTEM_PROMPT contains Huawei Cloud IAM tool names."""
+        assert "huaweicloud_list_iam_users" in SYSTEM_PROMPT
+
     def test_system_prompt_contains_guard_instruction(self):
         """UT-AH-03: SYSTEM_PROMPT contains Guard instructions for sensitive ops."""
         # Must contain confirmation-related language
         assert (
-            "必须先确认" in SYSTEM_PROMPT
-            or "必须先向用户展示预览" in SYSTEM_PROMPT
+            "必须先确认" in SYSTEM_PROMPT or "必须先向用户展示预览" in SYSTEM_PROMPT
         ), "SYSTEM_PROMPT missing confirmation guard instruction"
 
 
