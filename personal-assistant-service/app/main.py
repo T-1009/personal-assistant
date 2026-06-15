@@ -35,7 +35,11 @@ from fastapi.responses import (  # noqa: E402
 )
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
-from app.auth import extract_gateway_user_id, extract_workload_access_token  # noqa: E402
+from app.auth import (  # noqa: E402
+    extract_gateway_session_id,
+    extract_gateway_user_id,
+    extract_workload_access_token,
+)
 
 
 @asynccontextmanager
@@ -114,13 +118,7 @@ async def invocations(request: Request):
     message = body.get("message", "")
     stream = body.get("stream", False)
     user_id = extract_gateway_user_id(request)
-    session_id = request.headers.get("x-hw-agentarts-session-id")
-    if not session_id:
-        raise HTTPException(
-            status_code=400,
-            detail="x-hw-agentarts-session-id header is required",
-        )
-
+    session_id = extract_gateway_session_id(request)
     extract_workload_access_token(request)
 
     if not message:
