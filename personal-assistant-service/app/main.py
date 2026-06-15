@@ -11,6 +11,16 @@ load_dotenv()
 
 logger = logging.getLogger("uvicorn")
 
+
+class PingFilter(logging.Filter):
+    """Filter out /ping 200 access logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        return "GET /ping " not in record.getMessage() or "200" not in record.getMessage()
+
+
+logging.getLogger("uvicorn.access").addFilter(PingFilter())
+
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.middleware.cors import CORSMiddleware  # noqa: E402

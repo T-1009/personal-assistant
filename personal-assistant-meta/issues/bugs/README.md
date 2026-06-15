@@ -7,8 +7,8 @@
 | Bug | 标题 | 关联 Feature | 状态 |
 |-----|------|-------------|------|
 | [1](bug-1-maas-rate-limit/issue.md) | MaaS API Rate Limit 导致多轮对话失败 | feature-1-agent-skeleton | backlog |
-| [2](bug-2-continuous-conversation-500/issue.md) | 连续会话触发 500 Internal Server Error | feature-session-checkpoint | todo |
 | [11](bug-11-agentarts-platform-issues/issue.md) | AgentArts 平台级缺陷与限制汇总 | — | backlog |
+| [12](bug-12-agentarts-sandbox-cold-start-504/issue.md) | AgentArts Sandbox 冷启动触发 504 Gateway Timeout | — | todo |
 
 ## 已解决 Bug
 
