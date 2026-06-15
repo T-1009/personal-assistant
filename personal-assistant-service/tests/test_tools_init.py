@@ -10,6 +10,10 @@ from unittest.mock import patch
 from app.tools import build_tools
 
 
+def _tool_name(tool) -> str:
+    return tool.name if hasattr(tool, "name") else tool.__name__
+
+
 class TestBuildTools:
     """Tests for build_tools() factory function."""
 
@@ -24,7 +28,7 @@ class TestBuildTools:
         with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
             result = build_tools()
 
-        result_names = [t.__name__ for t in result]
+        result_names = [_tool_name(t) for t in result]
         expected = [
             "list_emails",
             "get_email",
@@ -36,6 +40,23 @@ class TestBuildTools:
             assert name in result_names, (
                 f"Expected {name} in build_tools() result, "
                 f"got {result_names}"
+            )
+
+    def test_build_tools_includes_github_tools(self) -> None:
+        """UT-TI-05: build_tools() includes all 4 GitHub tools."""
+        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
+            result = build_tools()
+
+        result_names = [_tool_name(t) for t in result]
+        expected = [
+            "github_list_repositories",
+            "github_list_repo_contents",
+            "github_get_file_content",
+            "github_search_code",
+        ]
+        for name in expected:
+            assert name in result_names, (
+                f"Expected {name} in build_tools() result, got {result_names}"
             )
 
     def test_build_tools_graceful_import_error(self) -> None:
@@ -54,7 +75,7 @@ class TestBuildTools:
         with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
             result = build_tools()
 
-        names = [t.__name__ for t in result]
+        names = [_tool_name(t) for t in result]
         assert len(names) == len(set(names)), (
             f"Duplicate tool names detected: {names}"
         )

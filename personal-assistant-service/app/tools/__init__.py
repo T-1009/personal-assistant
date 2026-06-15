@@ -19,6 +19,20 @@ def build_tools() -> list[Any]:
     """
     tools: list[Any] = []
 
+    # ── GitHub tools (Feature 6) — always register ──
+    try:
+        from app.tools.github_tools import GITHUB_TOOLS
+
+        tools.extend(GITHUB_TOOLS)
+        logger.info("GitHub tools registered (%d tools).", len(GITHUB_TOOLS))
+    except ImportError as e:
+        logger.warning(
+            "GitHub tools not available (import failed): %s. "
+            "GitHub functionality will be disabled for this session.",
+            e,
+            exc_info=True,
+        )
+
     # ── Email tools (Feature 10a) — always register ──
     try:
         from app.tools.email_tools import EMAIL_TOOLS, ensure_provider_sync
@@ -39,12 +53,5 @@ def build_tools() -> list[Any]:
             e,
             exc_info=True,
         )
-
-    # ── Future tool modules go here ──
-    # try:
-    #     from app.tools.github_tools import GITHUB_TOOLS
-    #     tools.extend(GITHUB_TOOLS)
-    # except ImportError as e:
-    #     logger.warning("GitHub tools not available.", exc_info=True)
 
     return tools
