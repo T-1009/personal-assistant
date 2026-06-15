@@ -1,0 +1,248 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+
+// ────────────────────────────────────────────────────
+// 1. Create hoisted mock functions so vi.mock can reference them
+// ────────────────────────────────────────────────────
+const { mockUseAui, mockUseAuiState, mockResetSessionId } = vi.hoisted(() => ({
+  mockUseAui: vi.fn(),
+  mockUseAuiState: vi.fn(),
+  mockResetSessionId: vi.fn(),
+}));
+
+// ────────────────────────────────────────────────────
+// 2. Mock external modules
+// ────────────────────────────────────────────────────
+vi.mock("@assistant-ui/react", () => ({
+  useAui: mockUseAui,
+  useAuiState: mockUseAuiState,
+}));
+
+vi.mock("@/lib/chat-adapter", () => ({
+  resetSessionId: mockResetSessionId,
+}));
+
+// ────────────────────────────────────────────────────
+// 3. Import component under test
+// ────────────────────────────────────────────────────
+import { ResetSessionButton } from "./ResetSessionButton";
+
+// ────────────────────────────────────────────────────
+// 4. Shared mock infrastructure
+// ────────────────────────────────────────────────────
+const mockCancelRun = vi.fn();
+const mockThreadReset = vi.fn();
+const mockComposerReset = vi.fn().mockResolvedValue(undefined);
+const mockThread = vi.fn(() => ({
+  cancelRun: mockCancelRun,
+  reset: mockThreadReset,
+}));
+const mockComposer = vi.fn(() => ({
+  reset: mockComposerReset,
+}));
+
+/**
+ * Build the standard "not running" AUI mock state.
+ */
+function setupStandardMocks() {
+  mockUseAui.mockReturnValue({
+    thread: mockThread,
+    composer: mockComposer,
+  });
+  mockUseAuiState.mockReturnValue(false);
+  mockResetSessionId.mockReset();
+  mockCancelRun.mockReset();
+  mockThreadReset.mockReset();
+  mockComposerReset.mockReset();
+  mockThread.mockReset();
+  mockComposer.mockReset();
+}
+
+// ────────────────────────────────────────────────────
+// 5. Tests
+// ────────────────────────────────────────────────────
+describe("ResetSessionButton", () => {
+  beforeEach(() => {
+    setupStandardMocks();
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // ── CT-RS-01: Initial render ──────────────────────
+  it("CT-RS-01: renders a ghost icon-sm Button with aria-label and RotateCcw icon, not disabled when not running", () => {
+    render(<ResetSessionButton />);
+
+    const button = screen.getByRole("button", { name: "新对话" });
+    expect(button).toBeInTheDocument();
+    expect(button).not.toBeDisabled();
+
+    // RotateCcw icon should be inside the button
+    const icon = button.querySelector("svg");
+    expect(icon).toBeInTheDocument();
+    // lucide-react class convention
+    expect(icon!.classList.toString()).toMatch(/lucide/);
+  });
+
+  // ── CT-RS-02: Tooltip display ────────────────────
+  it("CT-RS-02: shows Tooltip with text '新对话' on hover", async () => {
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    const button = screen.getByRole("button", { name: "新对话" });
+
+    // Hover over the button to trigger the tooltip
+    await user.hover(button);
+
+    // Tooltip content appears in a portal — search entire document
+    const tooltip = await screen.findByText("新对话", {}, { timeout: 2000 });
+    expect(tooltip).toBeInTheDocument();
+  });
+
+  // ── CT-RS-03: Dialog opens on click ──────────────
+  it("CT-RS-03: opens Dialog on button click", async () => {
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    const button = screen.getByRole("button", { name: "新对话" });
+    await user.click(button);
+
+    // Dialog should be visible — the title "新对话" appears both in
+    // the tooltip and the dialog title, but the role="dialog" confirms
+    // the dialog is open.
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+  });
+
+  // ── CT-RS-04: Dialog content verification ────────
+  it("CT-RS-04: Dialog has title, description, Cancel and Confirm buttons", async () => {
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toBeInTheDocument();
+
+    // Title
+    expect(screen.getByText("新对话")).toBeInTheDocument();
+
+    // Description
+    expect(
+      screen.getByText(/开始全新对话/),
+    ).toBeInTheDocument();
+
+    // Cancel button
+    expect(
+      screen.getByRole("button", { name: "取消" }),
+    ).toBeInTheDocument();
+
+    // Confirm button (destructive variant)
+    const confirmButton = screen.getByRole("button", { name: "确认" });
+    expect(confirmButton).toBeInTheDocument();
+  });
+
+  // ── CT-RS-05: Cancel has no side effects ─────────
+  it("CT-RS-05: clicking Cancel closes dialog without calling resetSessionId or thread methods", async () => {
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+    await user.click(screen.getByRole("button", { name: "取消" }));
+
+    // Dialog should close
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+
+    // No reset operations should have been called
+    expect(mockCancelRun).not.toHaveBeenCalled();
+    expect(mockResetSessionId).not.toHaveBeenCalled();
+    expect(mockThreadReset).not.toHaveBeenCalled();
+    expect(mockComposer).not.toHaveBeenCalled();
+  });
+
+  // ── CT-RS-06: Confirm executes full reset sequence ─
+  it("CT-RS-06: clicking Confirm calls cancelRun → resetSessionId → thread.reset → composer.reset → closes dialog", async () => {
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
+
+    // Wait for the async handleConfirm to finish
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    // All four operations should have been called exactly once
+    expect(mockCancelRun).toHaveBeenCalledTimes(1);
+    expect(mockResetSessionId).toHaveBeenCalledTimes(1);
+    expect(mockThreadReset).toHaveBeenCalledTimes(1);
+    expect(mockComposer).toHaveBeenCalledTimes(1);
+    expect(mockComposerReset).toHaveBeenCalledTimes(1);
+
+    // Verify order: cancelRun before resetSessionId before thread.reset
+    // before composer.reset
+    const callOrder = [
+      mockCancelRun,
+      mockResetSessionId,
+      mockThreadReset,
+      mockComposer,
+      mockComposerReset,
+    ].map((m) => m.mock?.invocationCallOrder?.[0] ?? Infinity);
+
+    expect(callOrder[0]).toBeLessThan(callOrder[1]);
+    expect(callOrder[1]).toBeLessThan(callOrder[2]);
+    expect(callOrder[2]).toBeLessThan(callOrder[3]);
+    expect(callOrder[3]).toBeLessThan(callOrder[4]);
+  });
+
+  // ── CT-RS-07: Button disabled during streaming ───
+  it("CT-RS-07: button is disabled when thread.isRunning is true", () => {
+    // Override: streaming in progress
+    mockUseAuiState.mockReturnValue(true);
+
+    render(<ResetSessionButton />);
+
+    const button = screen.getByRole("button", { name: "新对话" });
+    expect(button).toBeDisabled();
+  });
+
+  // ── CT-RS-08: Error in composer().reset() does not freeze dialog ─
+  it("CT-RS-08: dialog still closes when composer().reset() rejects (finally block)", async () => {
+    // Override: composer reset rejects
+    mockComposerReset.mockRejectedValueOnce(new Error("composer error"));
+
+    const consoleSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
+
+    // Dialog must close despite the error (finally block)
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    // The error should have been logged
+    expect(consoleSpy).toHaveBeenCalledWith(
+      "Failed during session reset:",
+      expect.any(Error),
+    );
+
+    consoleSpy.mockRestore();
+  });
+
+  // ── CT-RS-09: Works without auth ─────────────────
+  it("CT-RS-09: component renders and functions without any auth context", () => {
+    // No auth mocks needed — the component does not import or use auth
+    expect(() => render(<ResetSessionButton />)).not.toThrow();
+
+    const button = screen.getByRole("button", { name: "新对话" });
+    expect(button).toBeInTheDocument();
+  });
+});

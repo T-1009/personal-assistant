@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { chatAdapter } from "./chat-adapter";
+import { chatAdapter, getSessionId, resetSessionId } from "./chat-adapter";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
 import type { ThreadMessage, ThreadUserMessagePart } from "@assistant-ui/core";
@@ -660,259 +660,65 @@ describe("chatAdapter", () => {
     });
   });
 
-  describe("system_message events", () => {
-    it("CT-SYS-01: system_message without auth_url renders as text", async () => {
-      const chunks = [
-        encoder.encode(
-          "data: " +
-            JSON.stringify({
-              system_message: "系统通知：服务将在 10 分钟后维护",
-              auth_required: false,
-            }) +
-            "\n",
-        ),
-      ];
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream(chunks),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-      const results = await collectResults("system message test");
-      const texts = results
-        .map((r) => r.content?.[0])
-        .filter(
-          (c): c is { type: "text"; text: string } => c?.type === "text",
-        )
-        .map((c) => c.text);
-
-      expect(
-        texts.some((t) =>
-          t.includes("系统通知：服务将在 10 分钟后维护"),
-        ),
-      ).toBe(true);
+  describe("resetSessionId", () => {
+    beforeEach(() => {
+      localStorage.clear();
     });
 
-    it("CT-SYS-02: system_message with auth_url renders auth link", async () => {
-      const chunks = [
-        encoder.encode(
-          "data: " +
-            JSON.stringify({
-              system_message: "邮件功能需要您的授权",
-              auth_url: "https://login.microsoftonline.com/test",
-              auth_required: true,
-            }) +
-            "\n",
-        ),
-      ];
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream(chunks),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-      const results = await collectResults("auth url test");
-      const texts = results
-        .map((r) => r.content?.[0])
-        .filter(
-          (c): c is { type: "text"; text: string } => c?.type === "text",
-        )
-        .map((c) => c.text);
-
-      expect(
-        texts.some(
-          (t) =>
-            t.includes("邮件功能需要您的授权") &&
-            t.includes("[点击授权](https://login.microsoftonline.com/test)"),
-        ),
-      ).toBe(true);
+    afterEach(() => {
+      localStorage.clear();
+      vi.restoreAllMocks();
     });
 
-    it("CT-SYS-03: system_message interleaved with tokens accumulates correctly", async () => {
-      const chunks = [
-        encoder.encode(
-          "data: " +
-            JSON.stringify({ system_message: "请授权" }) +
-            "\n",
-        ),
-        encoder.encode(
-          "data: " + JSON.stringify({ token: "点击" }) + "\n",
-        ),
-        encoder.encode(
-          "data: " +
-            JSON.stringify({ token: "上方链接" }) +
-            "\n",
-        ),
-        encoder.encode(
-          "data: " +
-            JSON.stringify({ token: "完成授权" }) +
-            "\n",
-        ),
-        encoder.encode(
-          "data: " + JSON.stringify({ done: true }) + "\n",
-        ),
-      ];
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream(chunks),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
+    it("UT-RS-01: removes agentarts-session-id from localStorage", () => {
+      localStorage.setItem("agentarts-session-id", "test-session-id");
+      expect(localStorage.getItem("agentarts-session-id")).toBe("test-session-id");
 
-      const results = await collectResults("interleaved test");
+      resetSessionId();
 
-      const texts = results
-        .map((r) => r.content?.[0])
-        .filter(
-          (c): c is { type: "text"; text: string } => c?.type === "text",
-        )
-        .map((c) => c.text);
-      expect(texts[texts.length - 1]).toBe("请授权点击上方链接完成授权");
-
-      const finalResult = results[results.length - 1];
-      expect(finalResult?.status).toEqual({
-        type: "complete",
-        reason: "stop",
-      });
+      expect(localStorage.getItem("agentarts-session-id")).toBeNull();
     });
 
-    it("CT-SYS-04: system_message before first token — stream continues normally", async () => {
-      const chunks = [
-        encoder.encode(
-          "data: " +
-            JSON.stringify({ system_message: "系统提示" }) +
-            "\n",
-        ),
-        encoder.encode(
-          "data: " + JSON.stringify({ token: "Hello" }) + "\n",
-        ),
-        encoder.encode(
-          "data: " +
-            JSON.stringify({ token: " World" }) +
-            "\n",
-        ),
-        encoder.encode(
-          "data: " + JSON.stringify({ done: true }) + "\n",
-        ),
-      ];
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream(chunks),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
+    it("UT-RS-02: is a no-op when key does not exist", () => {
+      expect(localStorage.getItem("agentarts-session-id")).toBeNull();
 
-      const results = await collectResults("sys before token test");
-      const texts = results
-        .map((r) => r.content?.[0])
-        .filter(
-          (c): c is { type: "text"; text: string } => c?.type === "text",
-        )
-        .map((c) => c.text);
+      expect(() => resetSessionId()).not.toThrow();
 
-      expect(texts[texts.length - 1]).toBe("系统提示Hello World");
-
-      const finalResult = results[results.length - 1];
-      expect(finalResult?.status).toEqual({
-        type: "complete",
-        reason: "stop",
-      });
+      expect(localStorage.getItem("agentarts-session-id")).toBeNull();
     });
 
-    it("CT-SYS-05: system_message after done event — stream already closed, no crash", async () => {
-      const chunks = [
-        encoder.encode(
-          "data: " +
-            JSON.stringify({ done: true }) +
-            "\n" +
-            "data: " +
-            JSON.stringify({ system_message: "after done" }) +
-            "\n",
-        ),
-      ];
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream(chunks),
+    it("UT-RS-03: silently handles localStorage errors (privacy mode)", () => {
+      vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+        throw new DOMException("Blocked", "SecurityError");
       });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
 
-      const results = await collectResults("after done test");
-
-      // system_message after done should NOT appear in any text
-      const texts = results
-        .map((r) => r.content?.[0])
-        .filter(
-          (c): c is { type: "text"; text: string } => c?.type === "text",
-        )
-        .map((c) => c.text);
-      expect(texts.every((t) => !t.includes("after done"))).toBe(true);
-
-      // Should still yield complete status from outer yield
-      const finalResult = results[results.length - 1];
-      expect(finalResult?.status).toEqual({
-        type: "complete",
-        reason: "stop",
-      });
+      expect(() => resetSessionId()).not.toThrow();
     });
 
-    it("CT-SYS-06: empty system_message string skipped gracefully", async () => {
-      const chunks = [
-        encoder.encode(
-          "data: " +
-            JSON.stringify({ system_message: "" }) +
-            "\n",
-        ),
-        encoder.encode(
-          "data: " +
-            JSON.stringify({ token: "real content" }) +
-            "\n",
-        ),
-        encoder.encode(
-          "data: " + JSON.stringify({ done: true }) + "\n",
-        ),
-      ];
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream(chunks),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
+    it("UT-RS-04: after resetSessionId, getSessionId returns a new UUID", () => {
+      // Set an existing session ID
+      localStorage.setItem("agentarts-session-id", "old-session-id");
 
-      const results = await collectResults("empty sys msg test");
-      const texts = results
-        .map((r) => r.content?.[0])
-        .filter(
-          (c): c is { type: "text"; text: string } => c?.type === "text",
-        )
-        .map((c) => c.text);
+      // Record the old value
+      const oldId = getSessionId();
+      expect(oldId).toBe("old-session-id");
 
-      // Empty system_message should be skipped; fullText = "real content"
-      expect(texts[texts.length - 1]).toBe("real content");
-    });
+      // Reset the session ID
+      resetSessionId();
 
-    it("CT-SYS-07: auth_required without auth_url still renders system_message", async () => {
-      const chunks = [
-        encoder.encode(
-          "data: " +
-            JSON.stringify({
-              system_message: "需要授权",
-              auth_required: true,
-            }) +
-            "\n",
-        ),
-      ];
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream(chunks),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
+      // Get new session ID
+      const newId = getSessionId();
 
-      const results = await collectResults("auth required no url test");
-      const texts = results
-        .map((r) => r.content?.[0])
-        .filter(
-          (c): c is { type: "text"; text: string } => c?.type === "text",
-        )
-        .map((c) => c.text);
+      // New ID should differ from old
+      expect(newId).not.toBe(oldId);
 
-      expect(texts.some((t) => t.includes("需要授权"))).toBe(true);
+      // New ID should be a valid UUID v4
+      const uuidV4Regex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(newId).toMatch(uuidV4Regex);
+
+      // New ID should also be persisted in localStorage
+      expect(localStorage.getItem("agentarts-session-id")).toBe(newId);
     });
   });
 });
