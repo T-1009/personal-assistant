@@ -14,11 +14,13 @@ flowchart LR
         A3 --> A4["LLM 看到 dict → 转述给用户"]
     end
 
-    subgraph After["After（正常控制流）"]
-        B1["handle_auth_url()"] -->|"await queue.put()"| B2["asyncio.Queue"]
+    subgraph After["After（正常控制流 + ContextVar 隔离）"]
+        B1["handle_auth_url()"] -->|"ContextVar.get().put()"| B2["ContextVar 隔离的<br/>asyncio.Queue"]
         B2 -->|"handle_stream drain"| B3["yield system_message SSE event"]
-        B3 --> B4["用户浏览器直接看到鉴权 URL"]
+        B3 --> B4["用户浏览器直接渲染鉴权 URL"]
     end
+
+    Before -.->|"重构"| After
 ```
 
 ---
@@ -60,7 +62,7 @@ flowchart LR
 
 | 行号 | 删除内容 | 说明 |
 |------|----------|------|
-| L1 | `import functools` | 不再需要装饰器 |
+| L1 | `import functools` | 不再需要装饰器；替换为 `import contextvars` 和 `import httpx` |
 | L15–L20 | `class AuthUrlRequired(Exception)` | 不再使用异常控制流 |
 | L23–L30 | `async def handle_auth_url()` | 重写为正常控制流 |
 | L68–L148 | `def _handle_provider_error(fn)` + 所有 wrapper 逻辑 | 约 80 行，不再需要包装层 |
@@ -68,22 +70,27 @@ flowchart LR
 
 #### 新增项
 
-**a) Module-level Queue 访问器**（在 `_PROVIDER_INITIALIZED` 之后，`GRAPH_BASE_URL` 之前插入）：
+**a) ContextVar 隔离的 Queue 访问器**（在 `_PROVIDER_INITIALIZED` 之后，`GRAPH_BASE_URL` 之前插入）：
+
+> **设计要点**：使用 `contextvars.ContextVar` 而非 module-level global。FastAPI 的 asyncio event loop 中多个请求并发执行，module-level global 会被互相覆盖（User A 的 auth URL 泄漏到 User B 的 session）。`ContextVar` 保证每个 asyncio Task 独立隔离，遵循项目 `identity.py` 中已有的模式。
 
 ```python
-import asyncio  # 需要新增 import
+import asyncio     # 新增 import
+import contextvars  # 新增 import
 
-_message_queue: asyncio.Queue | None = None
+_message_queue: contextvars.ContextVar[asyncio.Queue | None] = (
+    contextvars.ContextVar("email_message_queue", default=None)
+)
 
 
 def set_message_queue(q: asyncio.Queue | None) -> None:
-    """Set the shared message queue for out-of-band system messages.
+    """Set the per-task isolated message queue for out-of-band system messages.
 
-    Called by main.py before streaming starts, and cleaned up (set to None)
-    by agent_handler.handle_stream() in its finally block.
+    Uses contextvars.ContextVar for proper isolation between concurrent
+    FastAPI requests. Called by agent_handler.handle_stream() before
+    streaming starts, and cleaned up (set to None) in its finally block.
     """
-    global _message_queue
-    _message_queue = q
+    _message_queue.set(q)
 ```
 
 **b) 重写 `handle_auth_url`**（替换 L23–L30）：
@@ -92,13 +99,14 @@ def set_message_queue(q: asyncio.Queue | None) -> None:
 async def handle_auth_url(auth_url: str) -> None:
     """Callback triggered by the SDK when user authentication is required.
 
-    Writes a system_message to the shared queue so the SSE stream can
-    present the authorization URL directly to the user — no exception,
-    no LLM round-trip.
+    Writes a system_message to the per-task ContextVar-isolated queue
+    so the SSE stream can present the authorization URL directly to the
+    user — no exception, no LLM round-trip.
     """
     logger.info("User authorization required — auth URL: %s", auth_url)
-    if _message_queue is not None:
-        await _message_queue.put({
+    q = _message_queue.get(None)
+    if q is not None:
+        await q.put({
             "type": "system_message",
             "content": (
                 "邮件功能需要您的授权。请点击以下链接进行授权：\n\n"
@@ -108,6 +116,11 @@ async def handle_auth_url(auth_url: str) -> None:
             "auth_url": auth_url,
             "auth_required": True,
         })
+    else:
+        logger.warning(
+            "No message queue available (sync handle() path or cleanup "
+            "already ran). Auth URL not pushed to user."
+        )
 ```
 
 **c) `_auth_required_response()` helper**（在 `_extract_graph_error` 之后插入）：
@@ -126,14 +139,59 @@ def _auth_required_response() -> dict[str, Any]:
     }
 ```
 
-**d) 各 tool function 添加 `if not access_token` guard**
+**d) `_format_tool_error()` helper**（在 `_auth_required_response()` 之后插入）：
 
-在 5 个 tool function body 的 `logger.debug(...)` 之后、核心逻辑之前，插入：
+> **设计要点**：删除 `@_handle_provider_error` 装饰器后，所有非鉴权异常（`httpx.TimeoutException`、`ConnectError`、`HTTPStatusError` 429/503/401、SDK 内部错误等）将失去统一的错误转换。`_format_tool_error()` 提供轻量级替代，将已知异常转换为用户友好的中文错误 dict，防止原始 Python exception string 泄漏到 SSE stream。
 
 ```python
-if not access_token:
-    return _auth_required_response()
+def _format_tool_error(e: Exception, tool_name: str) -> dict[str, Any]:
+    """Convert known exceptions to user-friendly Chinese error dicts.
+
+    Replaces the broad error-handling aspect of @_handle_provider_error,
+    which is being deleted as part of the normal-control-flow refactoring.
+
+    Each tool function wraps its core logic in try/except Exception and
+    calls this helper to produce a safe, human-readable result.
+    """
+    import httpx
+
+    if isinstance(e, httpx.TimeoutException):
+        return {"error": f"请求超时，请稍后再试。（{tool_name}）"}
+    if isinstance(e, httpx.ConnectError):
+        return {"error": f"无法连接到邮件服务器，请检查网络。（{tool_name}）"}
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code
+        if status == 429:
+            return {"error": "请求过于频繁，请稍后再试。"}
+        if status == 503:
+            return {"error": "邮件服务暂时不可用，请稍后再试。"}
+        if status == 401:
+            return {"error": "授权已过期，请重新授权。"}
+        return {"error": f"邮件服务返回错误（{status}），请稍后再试。"}
+    # Generic fallback — log full traceback, return safe message
+    logger.exception("%s failed with unexpected error", tool_name)
+    return {"error": f"操作失败: {tool_name}。如果问题持续，请联系支持。"}
 ```
+
+**e) 各 tool function 添加 guard + error handling**
+
+在 5 个 tool function body 中：
+
+1. **`logger.debug(...)` 之后插入 `if not access_token` guard**：
+   ```python
+   if not access_token:
+       return _auth_required_response()
+   ```
+
+2. **核心业务逻辑包裹 `try/except Exception` + `_format_tool_error()`**：
+   ```python
+   try:
+       # ... existing logic (the actual Graph API calls) ...
+       return result
+   except Exception as e:
+       logger.exception("%s failed", fn.__name__)
+       return _format_tool_error(e, tool_name)
+   ```
 
 影响范围：`list_emails`、`get_email`、`search_emails`、`send_email`、`reply_to_email`。
 
@@ -148,7 +206,12 @@ After:   @require_access_token(...)        ← 保持不变
          async def list_emails(...)
              if not access_token:          ← 新增 guard
                  return _auth_required_response()
-             # 原有逻辑不变
+             try:                          ← 新增 error handling
+                 # 原有 Graph API 调用逻辑
+                 return result
+             except Exception as e:
+                 logger.exception("list_emails failed")
+                 return _format_tool_error(e, "list_emails")
 ```
 
 #### 最终 `email_tools.py` 结构
@@ -157,12 +220,12 @@ After:   @require_access_token(...)        ← 保持不变
 flowchart TB
     subgraph email_tools["app/tools/email_tools.py"]
         direction TB
-        Imports["import asyncio, logging, os<br/>import httpx<br/>from agentarts.sdk import ..."]
-        State["_PROVIDER_INITIALIZED = False<br/>_message_queue: asyncio.Queue | None = None<br/>_client: httpx.AsyncClient | None = None"]
-        Accessors["set_message_queue(q)<br/>— module-level setter"]
-        Helpers["handle_auth_url(auth_url)<br/>— puts to _message_queue<br/><br/>_auth_required_response()<br/>— returns dict<br/><br/>_extract_graph_error(resp)<br/>— 保持不变<br/><br/>_get_client()<br/>— 保持不变"]
+        Imports["import asyncio, contextvars, logging, os<br/>import httpx<br/>from agentarts.sdk import ..."]
+        State["_PROVIDER_INITIALIZED = False<br/>_message_queue: ContextVar（per-task 隔离）<br/>_client: httpx.AsyncClient | None = None"]
+        Accessors["set_message_queue(q)<br/>— ContextVar.set(q)"]
+        Helpers["handle_auth_url(auth_url)<br/>— ContextVar.get() → queue.put()<br/><br/>_auth_required_response()<br/>— returns dict<br/><br/>_format_tool_error(e, tool_name)<br/>— 新增◀ 用户友好的错误转换<br/><br/>_extract_graph_error(resp)<br/>— 保持不变<br/><br/>_get_client()<br/>— 保持不变"]
         Provider["ensure_provider_sync()<br/>— 保持不变"]
-        Tools["list_emails<br/>get_email<br/>search_emails<br/>send_email<br/>reply_to_email<br/>— 每个顶部添加 if not access_token guard"]
+        Tools["list_emails<br/>get_email<br/>search_emails<br/>send_email<br/>reply_to_email<br/>— guard + try/except + _format_tool_error()"]
         EMAIL_TOOLS["EMAIL_TOOLS = [...]<br/>— 保持不变"]
 
         Imports --> State
@@ -227,13 +290,18 @@ async def handle_stream(
             if message_queue:
                 while not message_queue.empty():
                     msg = message_queue.get_nowait()
-                    yield (
-                        f"data: {json.dumps({"
-                        "'system_message': msg['content'], "
-                        "'auth_url': msg.get('auth_url'), "
-                        "'auth_required': True"
-                        "})}\n\n"
-                    )
+                    # Type guard: only yield system_message events
+                    if msg.get("type") != "system_message":
+                        logger.warning(
+                            "Unexpected queue message type: %s", msg.get("type")
+                        )
+                        continue
+                    payload = {
+                        "system_message": msg["content"],
+                        "auth_url": msg.get("auth_url"),
+                        "auth_required": True,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
 
             kind = event["event"]
             if kind == "on_chat_model_stream":
@@ -246,13 +314,18 @@ async def handle_stream(
         if message_queue:
             while not message_queue.empty():
                 msg = message_queue.get_nowait()
-                yield (
-                    f"data: {json.dumps({"
-                    "'system_message': msg['content'], "
-                    "'auth_url': msg.get('auth_url'), "
-                    "'auth_required': True"
-                    "})}\n\n"
-                )
+                if msg.get("type") != "system_message":
+                    logger.warning(
+                        "Unexpected queue message type (final drain): %s",
+                        msg.get("type"),
+                    )
+                    continue
+                payload = {
+                    "system_message": msg["content"],
+                    "auth_url": msg.get("auth_url"),
+                    "auth_required": True,
+                }
+                yield f"data: {json.dumps(payload)}\n\n"
 
         # Signal completion
         yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
@@ -261,7 +334,9 @@ async def handle_stream(
         yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 
     finally:
-        # Clean up module-level queue reference
+        # Clean up per-task queue reference (auxiliary — ContextVar
+        # isolation already ensures correctness; this just eagerly
+        # releases the reference to reduce GC pressure)
         set_message_queue(None)
 ```
 
@@ -274,35 +349,35 @@ sequenceDiagram
     participant Agent as deepagents<br/>astream_events
     participant Tool as email_tools<br/>tool function
     participant CB as email_tools<br/>handle_auth_url
-    participant Queue as asyncio.Queue<br/>(shared)
+    participant CtxVar as ContextVar<br/>(per-task queue)
 
     Main->>Main: message_queue = asyncio.Queue()
     Main->>Stream: handle_stream(message, user_id, session_id, message_queue)
-    Stream->>Stream: set_message_queue(message_queue)
+    Stream->>CtxVar: set_message_queue(message_queue) → ContextVar.set(q)
     Stream->>Agent: astream_events({"messages": [...]})
 
     Agent->>Tool: invoke list_emails(...)
     Tool->>Tool: @require_access_token fires
     Tool->>CB: on_auth_url callback: handle_auth_url(auth_url)
-    CB->>Queue: await put({system_message, auth_url})
+    CB->>CtxVar: ContextVar.get(None) → q (per-task isolated)
+    CB->>CtxVar: q.put({system_message, auth_url})
     CB-->>Tool: return (no exception)
     Tool-->>Agent: return _auth_required_response()
     Agent-->>Stream: on_chat_model_stream: "您需要先完成授权..."
 
-    Stream->>Queue: drain: while not empty() → get_nowait()
-    Queue-->>Stream: {system_message, auth_url}
+    Stream->>Stream: drain message_queue: while not empty() → get_nowait()
     Stream-->>Main: SSE: {"system_message": "...", "auth_url": "..."}
     Main-->>Main: StreamingResponse → 用户浏览器
 
     Stream->>Agent: next astream_events event
     Agent-->>Stream: on_chat_model_stream: "请点击上面的链接..."
-    Stream->>Queue: drain (empty, skip)
+    Stream->>Stream: drain (empty, skip)
     Stream-->>Main: SSE: {"token": "请点击..."}
 
     Agent-->>Stream: agent completes
-    Stream->>Queue: final drain (empty, skip)
+    Stream->>Stream: final drain (empty, skip)
     Stream-->>Main: SSE: {"done": true}
-    Stream->>Stream: finally: set_message_queue(None)
+    Stream->>CtxVar: finally: set_message_queue(None)
 ```
 
 ---
@@ -434,24 +509,34 @@ def unwrap_email_tools():
 
 | 测试 ID | 测试用例 | 覆盖目标 |
 |---------|----------|----------|
-| `UT-HAU-01` | `handle_auth_url` writes to queue when `_message_queue` is set | Queue 写入正确 |
-| `UT-HAU-02` | `handle_auth_url` does NOT raise exception when queue is `None` | Normal control flow，无异常 |
-| `UT-HAU-03` | Message format contains `system_message`, `auth_url`, `auth_required: True` | 消息格式正确 |
+| `UT-HAU-01` | `handle_auth_url` writes to queue when ContextVar is set | Queue 写入正确，ContextVar 隔离 |
+| `UT-HAU-02` | `handle_auth_url` is a no-op when ContextVar is `None` | Normal control flow，ContextVar 未设置时不抛异常 |
+| `UT-HAU-03` | Message format contains `system_message` + `auth_url` + `auth_required: True` | 消息格式正确 |
 | `UT-HAU-04` | `handle_auth_url` message content includes the auth URL string | Auth URL 包含在消息中 |
 
 ```python
 class TestHandleAuthUrl:
-    """Tests for handle_auth_url() with shared message queue (normal control flow).
+    """Tests for handle_auth_url() with ContextVar-isolated message queue.
 
     Replaces TestHandleProviderError which tested the deprecated
     @_handle_provider_error decorator / AuthUrlRequired exception.
+
+    Uses contextvars.ContextVar for per-task queue isolation, ensuring
+    concurrent FastAPI requests do not cross-contaminate auth URLs.
     """
+
+    @pytest.fixture(autouse=True)
+    def reset_contextvar(self):
+        """Reset the ContextVar before each test to ensure clean isolation."""
+        et._message_queue.set(None)
+        yield
+        et._message_queue.set(None)
 
     @pytest.mark.asyncio
     async def test_handle_auth_url_writes_to_queue(self):
-        """UT-HAU-01: handle_auth_url puts message to the module-level queue."""
+        """UT-HAU-01: handle_auth_url puts message to the ContextVar queue."""
         q = asyncio.Queue()
-        et.set_message_queue(q)
+        et._message_queue.set(q)
 
         await et.handle_auth_url("https://auth.example.com/login")
 
@@ -464,8 +549,8 @@ class TestHandleAuthUrl:
 
     @pytest.mark.asyncio
     async def test_handle_auth_url_no_queue_no_error(self):
-        """UT-HAU-02: handle_auth_url is a no-op (no exception) when queue is None."""
-        et.set_message_queue(None)
+        """UT-HAU-02: handle_auth_url is a no-op when ContextVar is None."""
+        et._message_queue.set(None)
 
         # Should not raise — this is the key behavior change from
         # AuthUrlRequired exception
@@ -475,7 +560,7 @@ class TestHandleAuthUrl:
     async def test_handle_auth_url_message_fields(self):
         """UT-HAU-03: message dict has correct keys and auth_required=True."""
         q = asyncio.Queue()
-        et.set_message_queue(q)
+        et._message_queue.set(q)
 
         await et.handle_auth_url("https://login.example.com/oauth")
 
@@ -489,7 +574,7 @@ class TestHandleAuthUrl:
     async def test_handle_auth_url_content_includes_url(self):
         """UT-HAU-04: message content text contains the provided auth URL."""
         q = asyncio.Queue()
-        et.set_message_queue(q)
+        et._message_queue.set(q)
         test_url = "https://microsoft.com/oauth/authorize?state=abc123"
 
         await et.handle_auth_url(test_url)
@@ -579,6 +664,88 @@ class TestAccessTokenGuard:
         assert result["auth_required"] is True
 ```
 
+**TestToolErrorFormatting**（新类）：
+
+| 测试 ID | 测试用例 | 覆盖目标 |
+|---------|----------|----------|
+| `UT-ERR-01` | `_format_tool_error` converts `httpx.TimeoutException` to 中文 error dict | 超时错误转换 |
+| `UT-ERR-02` | `_format_tool_error` converts `httpx.ConnectError` to 中文 error dict | 连接错误转换 |
+| `UT-ERR-03` | `_format_tool_error` converts 429 to "请求过于频繁" | 限流错误转换 |
+| `UT-ERR-04` | `_format_tool_error` converts 503 to "邮件服务暂时不可用" | 服务不可用转换 |
+| `UT-ERR-05` | `_format_tool_error` converts 401 to "授权已过期" | 授权过期转换 |
+| `UT-ERR-06` | `_format_tool_error` converts unknown exception to generic 中文 error dict | 通用异常 fallback |
+
+```python
+class TestToolErrorFormatting:
+    """Tests for _format_tool_error() — user-friendly error conversion.
+
+    Replaces the non-auth error-handling coverage previously provided
+    by TestHandleProviderError (deleted with @_handle_provider_error).
+    """
+
+    def test_format_timeout_error(self):
+        """UT-ERR-01: TimeoutException → 中文超时提示."""
+        import httpx
+
+        result = et._format_tool_error(
+            httpx.TimeoutException("timeout"), "list_emails"
+        )
+        assert "请求超时" in result["error"]
+        assert "list_emails" in result["error"]
+
+    def test_format_connect_error(self):
+        """UT-ERR-02: ConnectError → 中文连接失败提示."""
+        import httpx
+
+        result = et._format_tool_error(
+            httpx.ConnectError("connection refused"), "get_email"
+        )
+        assert "无法连接到邮件服务器" in result["error"]
+        assert "get_email" in result["error"]
+
+    def test_format_429_rate_limit(self):
+        """UT-ERR-03: HTTPStatusError 429 → 限流提示."""
+        import httpx
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        exc = httpx.HTTPStatusError(
+            "rate limited", request=MagicMock(), response=mock_response
+        )
+        result = et._format_tool_error(exc, "search_emails")
+        assert "请求过于频繁" in result["error"]
+
+    def test_format_503_unavailable(self):
+        """UT-ERR-04: HTTPStatusError 503 → 服务不可用提示."""
+        import httpx
+
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        exc = httpx.HTTPStatusError(
+            "unavailable", request=MagicMock(), response=mock_response
+        )
+        result = et._format_tool_error(exc, "send_email")
+        assert "邮件服务暂时不可用" in result["error"]
+
+    def test_format_401_expired(self):
+        """UT-ERR-05: HTTPStatusError 401 → 授权过期提示."""
+        import httpx
+
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        exc = httpx.HTTPStatusError(
+            "unauthorized", request=MagicMock(), response=mock_response
+        )
+        result = et._format_tool_error(exc, "reply_to_email")
+        assert "授权已过期" in result["error"]
+
+    def test_format_generic_exception_fallback(self):
+        """UT-ERR-06: Unknown exception → 通用错误提示."""
+        result = et._format_tool_error(ValueError("unexpected"), "list_emails")
+        assert "操作失败" in result["error"]
+        assert "list_emails" in result["error"]
+```
+
 **需要添加的 import**（文件顶部）：
 
 ```python
@@ -607,6 +774,8 @@ import asyncio  # 新增 — TestHandleAuthUrl 中创建 asyncio.Queue
 | `UT-HSM-03` | Queue drain after agent completes yields remaining messages | 最终 drain |
 | `UT-HSM-04` | `set_message_queue(None)` called in finally block | 清理逻辑 |
 | `UT-HSM-05` | `message_queue=None` does not break existing streaming | 向后兼容 |
+| `UT-HSM-06` | Error in astream_events still triggers finally cleanup | Error 路径下 finally 执行 |
+| `UT-HSM-07` | Two concurrent `handle_stream` calls with separate queues do not cross-contaminate | ContextVar 并发隔离 |
 
 ```python
 class TestHandleStreamWithMessageQueue:
@@ -806,6 +975,69 @@ class TestHandleStreamWithMessageQueue:
         # Cleanup must still happen even on error
         mock_set.assert_any_call(None)
 
+    @pytest.mark.asyncio
+    async def test_concurrent_streams_no_cross_contamination(self, mock_deps):
+        """UT-HSM-07: Two concurrent handle_stream calls with separate queues
+        do not cross-contaminate — verifies ContextVar per-task isolation."""
+        import asyncio
+
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        q_a = asyncio.Queue()
+        q_b = asyncio.Queue()
+
+        # Pre-populate both queues with distinct messages
+        await q_a.put({
+            "type": "system_message",
+            "content": "Auth for User A",
+            "auth_url": "https://auth.example.com/a",
+            "auth_required": True,
+        })
+        await q_b.put({
+            "type": "system_message",
+            "content": "Auth for User B",
+            "auth_url": "https://auth.example.com/b",
+            "auth_required": True,
+        })
+
+        async def mock_astream_a(_input, version="v2", config=None):
+            yield {"event": "on_chat_model_stream", "data": {"chunk": _fake_chunk("A")}}
+
+        async def mock_astream_b(_input, version="v2", config=None):
+            yield {"event": "on_chat_model_stream", "data": {"chunk": _fake_chunk("B")}}
+
+        # Run both streams concurrently
+        mock_agent.astream_events = mock_astream_a
+        events_a = [
+            d async for d in handler.handle_stream(
+                message="Hi A", message_queue=q_a,
+            )
+        ]
+        mock_agent.astream_events = mock_astream_b
+        events_b = [
+            d async for d in handler.handle_stream(
+                message="Hi B", message_queue=q_b,
+            )
+        ]
+
+        parsed_a = [json.loads(e[6:]) for e in events_a]
+        parsed_b = [json.loads(e[6:]) for e in events_b]
+
+        system_a = [p for p in parsed_a if "system_message" in p]
+        system_b = [p for p in parsed_b if "system_message" in p]
+
+        # Stream A must see ONLY User A's message
+        assert len(system_a) == 1
+        assert "User A" in system_a[0]["system_message"]
+        assert "https://auth.example.com/a" in system_a[0]["auth_url"]
+
+        # Stream B must see ONLY User B's message
+        assert len(system_b) == 1
+        assert "User B" in system_b[0]["system_message"]
+        assert "https://auth.example.com/b" in system_b[0]["auth_url"]
+
 
 def _fake_chunk(content: str) -> MagicMock:
     """Create a mock chunk object with a .content attribute."""
@@ -905,12 +1137,13 @@ flowchart TB
             E_Del["删除: TestHandleProviderError（~125 行）"]
             E_Del2["删除: AuthUrlRequired import"]
             E_Mod["修改: unwrap_email_tools fixture<br/>（仅 unwrap @require_access_token）"]
-            E_Add1["新增: TestHandleAuthUrl（4 tests）"]
-            E_Add2["新增: TestAccessTokenGuard（7 tests）"]
-            E_Add3["新增: import asyncio"]
+            E_Add1["新增: TestHandleAuthUrl（4 tests: UT-HAU-01~04）"]
+            E_Add2["新增: TestAccessTokenGuard（7 tests: UT-ATG-01~07）"]
+            E_Add3["新增: TestToolErrorFormatting（6 tests: UT-ERR-01~06）◀"]
+            E_Add4["新增: import asyncio, contextvars"]
         end
         subgraph Agent["test_agent_handler.py"]
-            A_Add["新增: TestHandleStreamWithMessageQueue（6 tests）"]
+            A_Add["新增: TestHandleStreamWithMessageQueue（7 tests: UT-HSM-01~07）◀"]
             A_Hlp["新增: _fake_chunk() helper"]
         end
         subgraph Main["test_main.py"]
@@ -935,14 +1168,14 @@ sequenceDiagram
     participant Agent as deepagents<br/>astream_events
     participant SDK as @require_access_token
     participant Email as email_tools.py
-    participant Q as asyncio.Queue
+    participant CtxVar as ContextVar<br/>(per-task queue)
 
     Browser->>GW: POST /invocations {message, stream: true}
     GW->>Main: 转发 + Header 注入
 
     Main->>Main: message_queue = asyncio.Queue()
     Main->>Handler: handle_stream(message, user_id, session_id, message_queue)
-    Handler->>Email: set_message_queue(message_queue)
+    Handler->>Email: set_message_queue(message_queue) → ContextVar.set(q)
     Handler->>Agent: astream_events({"messages": [...]})
 
     Agent->>SDK: ReAct loop → tool call
@@ -954,19 +1187,23 @@ sequenceDiagram
         Email-->>Agent: 工具结果
     else Token 无效 / 未授权
         SDK->>Email: handle_auth_url(auth_url)
-        Email->>Q: await put({system_message, auth_url})
+        Email->>CtxVar: ContextVar.get(None) → q
+        Email->>CtxVar: q.put({system_message, auth_url})
         Email-->>SDK: return (no exception)
         SDK->>Email: 调用 tool function(access_token=None)
         Email->>Email: if not access_token → return _auth_required_response()
         Email-->>Agent: {auth_required: true, error: "..."}
+    else 非鉴权异常（网络/API错误）
+        SDK->>Email: 调用 tool function(access_token=valid)
+        Email->>Email: try/except → _format_tool_error(e, tool_name)
+        Email-->>Agent: {error: "请求超时，请稍后再试。（list_emails）"}
     end
 
     Agent-->>Handler: on_chat_model_stream tokens
 
     loop 每次 astream_events 迭代后
-        Handler->>Q: drain: while not empty() → get_nowait()
+        Handler->>Handler: drain message_queue: while not empty() → get_nowait()
         alt Queue 有消息
-            Q-->>Handler: {system_message, auth_url}
             Handler-->>Main: yield SSE: {"system_message": "...", "auth_url": "..."}
             Main-->>Browser: SSE event（带外系统消息）
         else Queue 空
@@ -977,7 +1214,7 @@ sequenceDiagram
 
     Agent-->>Handler: agent 完成
 
-    Handler->>Q: final drain（剩余消息）
+    Handler->>Handler: final drain（剩余消息）
     Handler-->>Main: yield SSE: {"done": true}
 
     Handler->>Email: set_message_queue(None) [finally]
@@ -993,10 +1230,10 @@ flowchart LR
         B3 --> B4["LLM 看到 dict → 转述给用户"]
     end
 
-    subgraph After["After: Normal Control Flow"]
-        A1["handle_auth_url()"] -->|"await queue.put()"| A2["asyncio.Queue"]
+    subgraph After["After: Normal Control Flow + ContextVar"]
+        A1["handle_auth_url()"] -->|"ContextVar.get().put()"| A2["ContextVar 隔离的<br/>asyncio.Queue"]
         A2 -->|"handle_stream drain"| A3["yield system_message SSE event"]
-        A3 --> A4["用户浏览器直接渲染"]
+        A3 --> A4["用户浏览器直接渲染鉴权 URL"]
     end
 
     Before -.->|"重构"| After
@@ -1008,11 +1245,11 @@ flowchart LR
 
 ```mermaid
 flowchart TD
-    Step1["1. email_tools.py 重构<br/>删除装饰器/异常类<br/>新增 queue 访问器 + guard"] --> Step2["2. agent_handler.py 扩展<br/>handle_stream() 新增<br/>message_queue 参数"]
-    Step2 --> Step3["3. main.py 集成<br/>创建 Queue 并传入<br/>handle_stream()"]
+    Step1["1. email_tools.py 重构<br/>删除装饰器/异常类<br/>新增 ContextVar queue 访问器<br/>+ _format_tool_error() + guard + try/except"] --> Step2["2. agent_handler.py 扩展<br/>handle_stream() 新增 message_queue<br/>+ type guard + SSE 序列化修正"]
+    Step2 --> Step3["3. main.py 集成<br/>创建 Queue 并传入 handle_stream()"]
     Step3 --> Step4["4. tools/__init__.py<br/>更新注释"]
-    Step4 --> Step5["5. test_email_tools.py<br/>删除旧测试 + 新增测试"]
-    Step5 --> Step6["6. test_agent_handler.py<br/>新增 stream + queue 测试"]
+    Step4 --> Step5["5. test_email_tools.py<br/>删除旧测试 + 新增 TestHandleAuthUrl<br/>+ TestAccessTokenGuard + TestToolErrorFormatting"]
+    Step5 --> Step6["6. test_agent_handler.py<br/>新增 stream + queue 测试（含 UT-HSM-07 并发隔离）"]
     Step6 --> Step7["7. test_main.py<br/>更新 FakeAgentHandler + 新增测试"]
 ```
 
@@ -1022,8 +1259,11 @@ flowchart TD
 
 | 风险 | 缓解措施 |
 |------|----------|
-| `asyncio.Queue` 生命周期管理 | `finally` 块中调用 `set_message_queue(None)`，确保请求结束后 module 级引用被清理，防止下一个请求复用过期 queue |
+| 并发请求中 auth URL 跨用户泄漏（module-level global 被覆盖） | **已修正**：使用 `contextvars.ContextVar` 替代 module-level global。每个 asyncio Task 独立隔离，并发请求不会互相污染。参考项目 `identity.py` 中已有的 ContextVar 模式 |
+| `asyncio.Queue` 生命周期管理 | `finally` 块中调用 `set_message_queue(None)` 辅助释放引用。ContextVar 随 Task 生命周期自动回收，正确性不依赖 finally |
+| 删除 `@_handle_provider_error` 后非鉴权异常（httpx.TimeoutException、ConnectError、HTTPStatusError 429/503/401 等）以原始 Python exception 传播 | **已修正**：新增 `_format_tool_error(e, tool_name)` helper，在每个 tool function 的 `try/except Exception` 中调用，将已知异常转换为用户友好的中文错误 dict |
 | Queue drain 使用 polling（`empty()` + `get_nowait()`）而非 `asyncio.wait` | 这是有意设计：`handle_auth_url` 回调在 tool 执行期间调用，此时 `astream_events` 迭代器正在等待 tool 返回；tool 返回后下一次迭代必然触发 drain。无需并发原语 |
-| `@require_access_token` 装饰器的异常（provider 404 / 500）不再被 `@_handle_provider_error` 捕获 | 这些异常现在直接 propagate。SDK 本身对这些错误已有内部处理（日志 + fallback），且 `access_token` 为 `None` 时 tool function 的 guard 会返回 `_auth_required_response()`。在实际使用中，Identity Service 错误通常不会到达 tool function body |
-| 前端需同步支持 `system_message` SSE event type | 由 `personal-assistant-meta-client-planner` 在 `client-plan.md` 中规划前端适配 |
+| 未来其他消息类型被误路由为 `system_message` | Drain 中添加 `if msg.get("type") != "system_message": continue` type guard |
+| 前端需同步支持 `system_message` SSE event type | 由 `personal-assistant-meta-client-planner` 在 `client-plan.md` 中规划前端适配。部署顺序：前端必须先于或同步于后端部署 |
 | `unwrap_email_tools` fixture 简化 | 现在只有一个装饰器层（`@require_access_token`），不需要多层 unwrap。需验证装饰器仍使用 `@functools.wraps` 暴露 `__wrapped__` 属性 |
+| Sync `handle()` 路径无 queue，`handle_auth_url` 无 fallback | `handle_auth_url` 中 `ContextVar.get()` 为 `None` 时记录 warning log。Sync 路径不触发 streaming，工具返回 `_auth_required_response()` dict 由 LLM 处理

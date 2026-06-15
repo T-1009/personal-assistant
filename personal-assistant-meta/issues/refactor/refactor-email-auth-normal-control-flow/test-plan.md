@@ -11,8 +11,8 @@
 flowchart TB
     subgraph Backend["1. 后端测试（pytest）"]
         direction TB
-        B1["test_email_tools.py<br/>删除 TestHandleProviderError<br/>新增 TestHandleAuthUrl (4)<br/>新增 TestAccessTokenGuard (7)"]
-        B2["test_agent_handler.py<br/>新增 TestHandleStreamWithMessageQueue (6)"]
+        B1["test_email_tools.py<br/>删除 TestHandleProviderError<br/>新增 TestHandleAuthUrl (4)<br/>新增 TestAccessTokenGuard (7)<br/>新增 TestToolErrorFormatting (5)"]
+        B2["test_agent_handler.py<br/>新增 TestHandleStreamWithMessageQueue (7)"]
         B3["test_main.py<br/>新增 TestInvocationsStreamWithMessageQueue (1)<br/>更新 FakeAgentHandler"]
     end
 
@@ -64,8 +64,10 @@ flowchart TB
 | `UT-HAU-04` | Message content text includes the auth URL string | Auth URL 包含在消息中 | `msg["content"]` 字符串包含传入的 `auth_url` |
 
 **前置条件**：
-- 需要 `import asyncio`（新增）
-- 使用 `et.set_message_queue(q)` 注入 queue → 调用 `et.handle_auth_url(url)` → 检查 `q.get_nowait()`
+- 需要 `import contextvars`（新增，替代原 `import functools`）
+- 需要 `import asyncio`（新增，用于创建 `asyncio.Queue` 测试实例）
+- 使用 `et._message_queue.set(q)`（ContextVar）注入 queue → 调用 `et.handle_auth_url(url)` → 检查 `q.get_nowait()`
+- `UT-HAU-02` 中应先将 ContextVar 重置为 `None`，确保覆盖率中"queue 未设置"的路径
 
 #### 1.1.3 新增：`TestAccessTokenGuard`（7 个测试）
 
@@ -82,7 +84,33 @@ flowchart TB
 **边界条件**：
 - `UT-ATG-04` 需使用 mocked httpx 返回有效 Graph API response（如 `tools/helpers.py` 中的 `_make_resp` / `_mock_httpx`），确保 guard 不触发时正常业务逻辑执行
 
-#### 1.1.4 需修改的 fixture
+#### 1.1.4 新增：`TestToolErrorFormatting`（5 个测试）
+
+> **背景**：`@_handle_provider_error` 装饰器被删除后，其 `except Exception` 分支原负责将 `httpx.TimeoutException`、`httpx.ConnectError`、`httpx.HTTPStatusError`（429/503/401）等非鉴权异常转换为用户友好的中文 error dict。新增 `_format_tool_error(e, tool_name)` helper 替代这一职责，每个 tool function 的 `try/except` 分支调用该 helper。以下测试验证错误转换的正确性。
+
+| 测试 ID | 测试用例 | 覆盖目标 | 断言要点 |
+|---------|----------|----------|----------|
+| `UT-ERR-01` | `_format_tool_error` converts `httpx.TimeoutException` to 中文 error dict | 超时错误转换 | `result["error"]` 包含 `"请求超时"`；tool name 出现在消息中 |
+| `UT-ERR-02` | `_format_tool_error` converts `httpx.ConnectError` to 中文 error dict | 连接错误转换 | `result["error"]` 包含 `"无法连接到邮件服务器"` |
+| `UT-ERR-03` | `_format_tool_error` converts HTTP 429 to "请求过于频繁" | 限流错误转换 | 构造 `httpx.HTTPStatusError`（status=429）→ `result["error"]` 为 `"请求过于频繁，请稍后再试。"` |
+| `UT-ERR-04` | `_format_tool_error` converts HTTP 503 to "邮件服务暂时不可用" | 服务不可用转换 | 构造 `httpx.HTTPStatusError`（status=503）→ `result["error"]` 为 `"邮件服务暂时不可用，请稍后再试。"` |
+| `UT-ERR-05` | `_format_tool_error` converts HTTP 401 to "授权已过期" | 授权过期转换 | 构造 `httpx.HTTPStatusError`（status=401）→ `result["error"]` 为 `"授权已过期，请重新授权。"` |
+
+**实现注意事项**：
+
+- **`httpx.TimeoutException`**：`import httpx` 后直接用 `httpx.TimeoutException("timeout")` 构造
+- **`httpx.ConnectError`**：`httpx.ConnectError("connection failed")` 构造
+- **`httpx.HTTPStatusError`**：需要构造 mock response object：
+  ```python
+  import httpx
+  mock_resp = MagicMock()
+  mock_resp.status_code = 429  # 或 503 / 401
+  exc = httpx.HTTPStatusError("message", request=MagicMock(), response=mock_resp)
+  result = et._format_tool_error(exc, "list_emails")
+  ```
+- **额外边界测试（可选）**：验证未识别的 HTTP status（如 500）返回通用 fallback 消息；验证通用 `Exception`（非 httpx 类型）返回包含 tool name 的通用错误消息
+
+#### 1.1.5 需修改的 fixture
 
 **`unwrap_email_tools`**：简化为仅 unwrap 一层 `@require_access_token`：
 
@@ -91,7 +119,7 @@ Before: 双层 unwrap（@require_access_token + @_handle_provider_error）
 After:  仅 unwrap @require_access_token（while hasattr(raw, "__wrapped__") 循环仍然健壮）
 ```
 
-#### 1.1.5 保持不变的测试类
+#### 1.1.6 保持不变的测试类
 
 以下测试类应**完全不受影响**，重构后全部通过：
 
@@ -103,12 +131,13 @@ After:  仅 unwrap @require_access_token（while hasattr(raw, "__wrapped__") 循
 | `TestSendEmail` | send_email 业务逻辑 |
 | `TestReplyToEmail` | reply_to_email 业务逻辑 |
 | `TestProviderInit` | ensure_provider_sync 生命周期 |
+| `TestToolErrorFormatting` | **新增** — _format_tool_error() 错误转换（替代被删除的 TestHandleProviderError 中的非鉴权测试） |
 
 ---
 
 ### 1.2 `test_agent_handler.py` 变更
 
-#### 1.2.1 新增：`TestHandleStreamWithMessageQueue`（6 个测试）
+#### 1.2.1 新增：`TestHandleStreamWithMessageQueue`（7 个测试）
 
 | 测试 ID | 测试用例 | 覆盖目标 | 断言要点 |
 |---------|----------|----------|----------|
@@ -118,6 +147,7 @@ After:  仅 unwrap @require_access_token（while hasattr(raw, "__wrapped__") 循
 | `UT-HSM-04` | `set_message_queue(None)` called in `finally` block | 清理逻辑 | `set_message_queue` 被调用 2 次（首次传 q，finally 传 None） |
 | `UT-HSM-05` | `message_queue=None`（默认值）不破坏现有 streaming | 向后兼容 | `system_message` events 数量为 0；`token` 和 `done` 正常 |
 | `UT-HSM-06` | When `astream_events` raises，finally block still runs cleanup | 异常路径清理 | `set_message_queue(None)` 仍被调用 |
+| `UT-HSM-07` | Two concurrent `handle_stream()` calls with separate `ContextVar` queues do not cross-contaminate | 并发请求隔离 | User A 的 stream 不含 User B 的 auth_url；User B 的 stream 不含 User A 的 auth_url；各自仅看到自己的 system_message |
 
 **测试实现注意事项**：
 
@@ -127,6 +157,13 @@ After:  仅 unwrap @require_access_token（while hasattr(raw, "__wrapped__") 循
 - **UT-HSM-04**：使用 `unittest.mock.patch("app.agent_handler.set_message_queue")` 验证调用次数和参数
 - **UT-HSM-05**：不传 `message_queue` 参数 → 确认无 `system_message` 事件
 - **UT-HSM-06**：mock `astream_events` 抛 `RuntimeError` → 仍然验证 `set_message_queue(None)` 被调用
+- **UT-HSM-07**：关键测试 — 验证 `contextvars.ContextVar` 的并发隔离。使用 `asyncio.gather()` 并发启动两个 `handle_stream()` 调用（使用不同的 queue），验证每个 stream 的 events 中仅包含各自队列的消息，不存在交叉污染。实现方式：
+  ```python
+  # User A 的 queue 预填充 {"type": "system_message", "content": "Auth for A", "auth_url": "https://a.example.com", "auth_required": True}
+  # User B 的 queue 预填充 {"type": "system_message", "content": "Auth for B", "auth_url": "https://b.example.com", "auth_required": True}
+  # asyncio.gather(collect_events(handler, q_a), collect_events(handler, q_b))
+  # → stream A 不含 "https://b.example.com"，stream B 不含 "https://a.example.com"
+  ```
 
 **Helper**：需要 `_fake_chunk(content: str) -> MagicMock` — 创建含 `.content` 属性的 mock chunk 对象。
 
@@ -430,6 +467,7 @@ pytest personal-assistant-e2e/ -m feature -v
 | `test_email_tools.py` | `TestSendEmail` | send_email 完整业务逻辑 |
 | `test_email_tools.py` | `TestReplyToEmail` | reply_to_email 完整业务逻辑 |
 | `test_email_tools.py` | `TestProviderInit` | ensure_provider_sync 生命周期 |
+| `test_email_tools.py` | `TestToolErrorFormatting` | **新增** — `_format_tool_error()` 错误格式化（替代被删除的 `TestHandleProviderError`） |
 | `test_main.py` | 所有现有类 | invocations 路由、header 解析 |
 
 #### 4.1.2 E2E 测试
@@ -501,9 +539,12 @@ flowchart TD
 
 | 风险 | 测试覆盖 |
 |------|----------|
+| `contextvars.ContextVar` 并发请求隔离（auth URL 跨用户泄露） | `UT-HSM-07`（并发隔离：User A 的 auth URL 不出现在 User B 的 stream 中） |
 | `asyncio.Queue` 生命周期管理（跨请求泄露） | `UT-HSM-04`（finally 清理）、`E2E-AUTH-07`（请求间隔离） |
 | `system_message` 在 token stream 中的位置错误 | `UT-HSM-02`（顺序）、`E2E-AUTH-02`（交错顺序） |
+| 删除 `@_handle_provider_error` 后非鉴权异常以原始 Python exception 传播 | `UT-ERR-01`~`UT-ERR-05`（`_format_tool_error()` 覆盖 TimeoutException / ConnectError / 429 / 503 / 401 转换） |
 | 前端异常 JSON 导致 crash | `CT-SYS-07`（auth_url 缺失）、`CT-SYS-06`（空字符串） |
-| 删除 `@_handle_provider_error` 后未处理的 provider 错误传播 | `UT-HSM-06`（异常路径清理） |
+| 删除 `@_handle_provider_error` 后未处理的异常传播路径 | `UT-HSM-06`（异常路径 finally 清理） |
 | 现有 email 功能被破坏 | 所有回归测试（§4） |
+| 前端部署顺序错误导致 system_message 被静默丢弃 | 回归 R4（前端 SSE token 解析不变） + R5（TypeScript 编译无回归） |
 | IaC 意外变更 | `tofu plan` 零变更验证 |
