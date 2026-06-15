@@ -51,6 +51,8 @@
 | **Workload Identity** | Agent 在 Identity Service 中的工作负载身份标识 |
 | **Workload Access Token** | AgentArts Gateway 在转发请求时注入的短期凭证（header: `X-HW-AgentGateway-Workload-Access-Token`）。容器提取后存入 `AgentArtsRuntimeContext`，供 `@require_access_token` 等装饰器直接使用以换取 OAuth2 access token，跳过本地 `.agent_identity.json` fallback。仅在 Gateway 转发路径存在，本地开发时为空 |<!-- updated by issue: chore-5-workload-access-token-from-header -->
 | **Guard 机制** | 敏感操作（如发送邮件）的二次确认机制，防止 LLM 幻觉导致误操作。**当前实现（Feature 10a）**：Text-based Conversation Guard — Agent 先在对话中生成操作预览（收件人、主题、正文），仅在用户给出明确的肯定回复（如"发送"、"确认"）后，才在后续 ReAct loop 中调用 `send_email` 或 `reply_to_email` 工具执行写操作。`send_email` 和 `reply_to_email` 工具直接调用 Microsoft Graph API 执行实际操作。**Planned Enhancement**：Tool-level interrupt — `requires_confirmation=True` 标记，由 LangGraph `interrupt()` 暂停 graph 执行等待用户确认后 resume，提供更强的安全保证和更少的 token 消耗 |
+| **system_message (SSE Event)** | SSE 流中的带外系统消息事件类型。由 tool callback（如 `handle_auth_url`）通过 shared `asyncio.Queue` 写入，`handle_stream` generator 在 `astream_events` 迭代间隙 drain queue 并 yield。用于在 LLM token stream 之外向用户呈现 OAuth2 鉴权 URL 等系统消息，不经过 LLM 转述。SSE payload: `{"system_message": "...", "auth_url": "...", "auth_required": true}` |
+| **Shared Queue（带外消息投递）** | `main.py` 创建的 `asyncio.Queue` 实例，注入到 tool module 和 `handle_stream` generator 之间。Tool callback 写入 system message → generator drain 并 yield SSE event。用于解决 `on_auth_url` 回调运行在 LLM token stream 之外、无法直接向用户推送消息的架构约束。详见 [backend_architecture.md §5.2.1](../architecture/backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递) |
 
 ---
 
