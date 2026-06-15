@@ -1,7 +1,7 @@
 # Panel Review & Consensus: refactor-email-auth-normal-control-flow
 
-> **评审结论**: ⚠️ **APPROVED WITH CHANGES** — 整体方向正确，但存在 2 个必须在实现阶段修正的关键设计缺陷。
-> **Panel**: GRAND (4 panelists — DeepSeek, Gemini, GPT, Hermes) | **Rounds**: 1（一次评审即达成共识）
+> **评审结论**: ✅ **APPROVED** — 所有关键设计缺陷已在 service-plan 和 test-plan 中修正，经过第二轮验证确认，四项质量闸门全部通过。
+> **Panel**: GRAND (4 panelists — DeepSeek, Gemini, GPT, Hermes) | **Rounds**: 2（初评发现 2 个关键缺陷 → 修正 → 复审确认）
 
 ---
 
@@ -306,10 +306,11 @@ yield f"data: {json.dumps(payload)}\n\n"
 
 | 测试类别 | Plan 内容 | Panel 补充 |
 |----------|----------|-----------|
-| `test_email_tools.py` | 删除 `TestHandleProviderError`（10 tests） | **新增**: `TestToolErrorFormatting`（5 tests，覆盖 `_format_tool_error()` 的 TimeoutException/ConnectError/429/503/401 转换） |
-| `test_email_tools.py` | 新增 `TestHandleAuthUrl`（4 tests） | 保持，`UT-HAU-01` 改用 `contextvars` 重置确保隔离 |
+| `test_email_tools.py` | 删除 `TestHandleProviderError`（10 tests） | **新增**: `TestToolErrorFormatting`（6 tests: UT-ERR-01~06，覆盖 TimeoutException/ConnectError/429/503/401/Generic 转换） |
+| `test_email_tools.py` | 新增 `TestHandleAuthUrl`（4 tests） | 保持，`UT-HAU-01` 新增 `reset_contextvar` fixture 确保 ContextVar 隔离 |
 | `test_email_tools.py` | 新增 `TestAccessTokenGuard`（7 tests） | 保持 |
-| `test_agent_handler.py` | 新增 `TestHandleStreamWithMessageQueue`（6 tests） | 保持，**新增** `UT-HSM-07`：concurrent requests 验证 ContextVar 隔离（两个并发 stream 不交叉） |
+| `test_email_tools.py` | 新增 `TestToolErrorFormatting`（6 tests: UT-ERR-01~06） | 保持，覆盖 TimeoutException/ConnectError/429/503/401/Generic |
+| `test_agent_handler.py` | 新增 `TestHandleStreamWithMessageQueue`（6 tests→**7** tests） | 保持，**新增** `UT-HSM-07`：concurrent streams 验证 ContextVar 隔离 |
 | `test_main.py` | 更新 `FakeAgentHandler` | 保持 |
 | Frontend | 7 个 test cases | 保持 |
 
@@ -322,6 +323,7 @@ yield f"data: {json.dumps(payload)}\n\n"
 | `UT-ERR-03` | `_format_tool_error` converts 429 to "请求过于频繁" | 限流错误转换 |
 | `UT-ERR-04` | `_format_tool_error` converts 503 to "邮件服务暂时不可用" | 服务不可用转换 |
 | `UT-ERR-05` | `_format_tool_error` converts 401 to "授权已过期" | 授权过期转换 |
+| `UT-ERR-06` | `_format_tool_error` converts unknown exception to generic 中文 error dict | 通用异常 fallback |
 | `UT-HSM-07` | Two concurrent `handle_stream` calls with separate queues do not cross-contaminate | ContextVar 并发隔离 |
 
 ---
@@ -403,7 +405,7 @@ yield f"data: {json.dumps(payload)}\n\n"
 - [ ] **3.1** `test_email_tools.py`: 删除 `TestHandleProviderError` 类 + `AuthUrlRequired` import + 更新 `unwrap_email_tools` fixture
 - [ ] **3.2** `test_email_tools.py`: 新增 `TestHandleAuthUrl`（4 tests: UT-HAU-01~04）
 - [ ] **3.3** `test_email_tools.py`: 新增 `TestAccessTokenGuard`（7 tests: UT-ATG-01~07）
-- [ ] **3.4** `test_email_tools.py`: 新增 `TestToolErrorFormatting`（5 tests: UT-ERR-01~05）
+- [ ] **3.4** `test_email_tools.py`: 新增 `TestToolErrorFormatting`（6 tests: UT-ERR-01~06）
 - [ ] **3.5** `test_agent_handler.py`: 新增 `TestHandleStreamWithMessageQueue`（7 tests: UT-HSM-01~07，含 concurrent isolation 测试）
 - [ ] **3.6** `test_main.py`: 更新 `FakeAgentHandler.handle_stream` 签名
 - [ ] **3.7** Frontend `chat-adapter.test.ts`: 新增 7 个 system_message 测试（CT-SYS-01~07）
@@ -425,6 +427,7 @@ yield f"data: {json.dumps(payload)}\n\n"
 |-------|---------------------|-------------|---------|
 | 1 | Module-level global `_message_queue` 并发安全性 | DeepSeek + Gemini 独立识别 → ContextVar 修正方案 | ✅ 共识达成 — contextvars.ContextVar 替代 module global |
 | 1 | 删除 `@_handle_provider_error` 后的错误处理真空 | Hermes 实证分析 + DeepSeek 风险识别 → `_format_tool_error()` 替代方案 | ✅ 共识达成 — 每个 tool function 添加 try/except 错误格式化 |
+| 2 | Follow-up: 验证 service-plan + test-plan 修正是否正确充分 | Panel Chair 逐项复审 | ✅ 全部通过 — ContextVar 模式与 `identity.py` 一致；`_format_tool_error()` 覆盖所有错误类型；`UT-HSM-07` 覆盖并发隔离；`UT-ERR-01~06` 覆盖错误转换；SSE 序列化已修正；type guard 已添加。无新问题。 |
 
 ---
 
