@@ -179,6 +179,8 @@ runtime:
 
 > 推荐生产环境使用 **Custom JWT** 方式，通过 Microsoft Entra ID 或自有 OIDC IdP 提供用户认证。
 
+**Gateway Header 注入**：除用户身份 header（`X-HW-AgentGateway-User-Id`）外，AgentArts Gateway 在转发请求时还会注入 `X-HW-AgentGateway-Workload-Access-Token`——Agent 容器以 Workload Identity 认证 Identity Service 的短期凭证。后端提取该 token 存入 `AgentArtsRuntimeContext` 后，Outbound 认证装饰器（如 `@require_access_token`）可直接使用，无需容器自行从 `.agent_identity.json` 走本地认证流程。详见 [backend_architecture.md §2.3](backend_architecture.md#23-agentarts-gateway-header-注入)。
+
 ### 4.2 Outbound — Agent 代表用户调用外部服务
 
 AgentArts Identity SDK 提供三种 Outbound 认证模式：

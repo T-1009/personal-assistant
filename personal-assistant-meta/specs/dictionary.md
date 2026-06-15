@@ -49,6 +49,7 @@
 | **Credential Provider** | Identity Service 中配置的凭据提供方。如 `github-provider`（OAuth2）、`m365-provider`（OAuth2，Microsoft 365 邮件/日历）、`internal-api-provider`（API Key） |
 | **m365-provider** | Microsoft 365 OAuth2 Credential Provider。用于 Agent 以 User Federation 模式调用 Microsoft Graph API（邮件、日历）。创建时需提供 `client_id`、`client_secret`、`tenant_id`，vendor 为 `OAuth2Vendor.MICROSOFTOAUTH2`。详见 Feature 10a |
 | **Workload Identity** | Agent 在 Identity Service 中的工作负载身份标识 |
+| **Workload Access Token** | AgentArts Gateway 在转发请求时注入的短期凭证（header: `X-HW-AgentGateway-Workload-Access-Token`）。容器提取后存入 `AgentArtsRuntimeContext`，供 `@require_access_token` 等装饰器直接使用以换取 OAuth2 access token，跳过本地 `.agent_identity.json` fallback。仅在 Gateway 转发路径存在，本地开发时为空 |<!-- updated by issue: chore-5-workload-access-token-from-header -->
 | **Guard 机制** | 敏感操作（如发送邮件）的二次确认机制，防止 LLM 幻觉导致误操作。**当前实现（Feature 10a）**：Text-based Conversation Guard — Agent 先在对话中生成操作预览（收件人、主题、正文），仅在用户给出明确的肯定回复（如"发送"、"确认"）后，才在后续 ReAct loop 中调用 `send_email` 或 `reply_to_email` 工具执行写操作。`send_email` 和 `reply_to_email` 工具直接调用 Microsoft Graph API 执行实际操作。**Planned Enhancement**：Tool-level interrupt — `requires_confirmation=True` 标记，由 LangGraph `interrupt()` 暂停 graph 执行等待用户确认后 resume，提供更强的安全保证和更少的 token 消耗 |
 
 ---
