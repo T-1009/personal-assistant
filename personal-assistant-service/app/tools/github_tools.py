@@ -1,4 +1,4 @@
-"""Read-only GitHub repository tools for delegated end-user access."""
+"""GitHub repository tools for delegated end-user access."""
 
 from __future__ import annotations
 
@@ -105,9 +105,13 @@ async def _raw_github_request(
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
+    if method.upper() == "PUT":
+        headers["Content-Length"] = "0"
     async with httpx.AsyncClient(base_url=GITHUB_API_BASE_URL, timeout=30.0) as client:
         response = await client.request(method, path, headers=headers, params=params)
         response.raise_for_status()
+        if response.status_code == httpx.codes.NO_CONTENT or not response.content:
+            return None
         return response.json()
 
 
@@ -154,7 +158,7 @@ async def list_repo_contents(
     owner: str,
     repo: str,
     path: str = "",
-) -> list[dict[str, Any]] | dict[str, Any]:
+) -> dict[str, Any]:
     """List a repository directory or return a single file entry."""
     encoded_path = quote(path.strip("/"), safe="/")
     api_path = f"/repos/{owner}/{repo}/contents"
@@ -163,10 +167,18 @@ async def list_repo_contents(
     try:
         data = await _github_request("GET", api_path)
         if isinstance(data, list):
-            return [
+            items = [
                 _content_item_to_dict(_normalize_content_item(item)) for item in data
             ]
-        return [_content_item_to_dict(_normalize_content_item(data))]
+        else:
+            items = [_content_item_to_dict(_normalize_content_item(data))]
+        return {
+            "owner": owner,
+            "repo": repo,
+            "path": path.strip("/"),
+            "count": len(items),
+            "items": items,
+        }
     except AuthorizationRequired as exc:
         return _authorization_error(exc)
 
@@ -202,6 +214,40 @@ async def search_code(query: str) -> list[dict[str, Any]] | dict[str, Any]:
         return _authorization_error(exc)
 
 
+async def star_repository(
+    owner: str,
+    repo: str,
+    confirm: bool = False,
+) -> dict[str, Any]:
+    """Star a GitHub repository for the current end user after confirmation."""
+    owner = owner.strip()
+    repo = repo.strip()
+    if not owner or not repo:
+        return {
+            "starred": False,
+            "repository": None,
+            "error": "owner and repo are required",
+        }
+
+    repository = f"{owner}/{repo}"
+    if not confirm:
+        return {
+            "starred": False,
+            "repository": repository,
+            "requires_confirmation": True,
+            "preview": {"owner": owner, "repo": repo, "repository": repository},
+            "error": "请确认是否为该 GitHub 仓库点赞。调用时设置 confirm=True。",
+        }
+
+    encoded_owner = quote(owner, safe="")
+    encoded_repo = quote(repo, safe="")
+    try:
+        await _github_request("PUT", f"/user/starred/{encoded_owner}/{encoded_repo}")
+        return {"starred": True, "repository": repository, "error": None}
+    except AuthorizationRequired as exc:
+        return _authorization_error(exc)
+
+
 GITHUB_TOOLS = [
     tool(
         "github_list_repositories",
@@ -231,4 +277,12 @@ GITHUB_TOOLS = [
             "search query syntax."
         ),
     )(search_code),
+    tool(
+        "github_star_repository",
+        description=(
+            "Star a GitHub repository for the current end user. This is a "
+            "sensitive write operation: call with confirm=False to preview, "
+            "then call with confirm=True only after explicit user confirmation."
+        ),
+    )(star_repository),
 ]

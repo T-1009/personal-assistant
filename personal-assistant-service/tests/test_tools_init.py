@@ -43,7 +43,7 @@ class TestBuildTools:
             )
 
     def test_build_tools_includes_github_tools(self) -> None:
-        """UT-TI-05: build_tools() includes all 4 GitHub tools."""
+        """UT-TI-05: build_tools() includes all GitHub tools."""
         with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
             result = build_tools()
 
@@ -53,6 +53,7 @@ class TestBuildTools:
             "github_list_repo_contents",
             "github_get_file_content",
             "github_search_code",
+            "github_star_repository",
         ]
         for name in expected:
             assert name in result_names, (
