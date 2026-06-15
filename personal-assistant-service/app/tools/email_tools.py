@@ -31,6 +31,37 @@ async def handle_auth_url(auth_url: str) -> None:
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
 
+
+def _extract_graph_error(resp: httpx.Response) -> str:
+    """Extract a human-readable error message from a Microsoft Graph API response.
+
+    Graph errors have a structured JSON body:
+        {"error": {"code": "...", "message": "..."}}
+
+    Falls back to HTTP status text or a generic message when the body is
+    empty or unparseable.
+    """
+    status = resp.status_code
+
+    # Try to extract the Graph error message from the JSON body
+    try:
+        body = resp.json()
+        graph_error = body.get("error", {})
+        code = graph_error.get("code", "")
+        message = graph_error.get("message", "")
+        if code or message:
+            return f"[{status}] {code}: {message}" if code else f"[{status}] {message}"
+    except (ValueError, AttributeError):
+        pass
+
+    # Fall back to response text if it's non-empty
+    if resp.text and resp.text.strip():
+        return f"[{status}] {resp.text[:500]}"
+
+    # Absolute fallback — use the HTTP reason phrase
+    return f"[{status}] {resp.reason_phrase or 'Unknown error'}"
+
+
 _client: httpx.AsyncClient | None = None
 
 
@@ -419,9 +450,26 @@ async def send_email(
         json={"message": message, "saveToSentItems": True},
     )
     if resp.status_code == 202:
-        return {"sent": True, "message_id": None, "error": None}
-    error_detail = resp.text
-    return {"sent": False, "message_id": None, "error": error_detail}
+        return {
+            "sent": True,
+            "message_id": None,
+            "error": None,
+            "status_code": 202,
+        }
+
+    # ── Non-202: extract a human-readable error from the Graph API ──
+    error_msg = _extract_graph_error(resp)
+    logger.error(
+        "send_email failed — status=%d, body=%s",
+        resp.status_code,
+        resp.text[:500] if resp.text else "(empty)",
+    )
+    return {
+        "sent": False,
+        "message_id": None,
+        "error": error_msg,
+        "status_code": resp.status_code,
+    }
 
 
 # ── 5. reply_to_email ──
@@ -479,8 +527,19 @@ async def reply_to_email(
         json={"message": {"body": {"contentType": "Text", "content": body}}},
     )
     if resp.status_code == 202:
-        return {"sent": True, "error": None}
-    return {"sent": False, "error": resp.text}
+        return {"sent": True, "error": None, "status_code": 202}
+
+    error_msg = _extract_graph_error(resp)
+    logger.error(
+        "reply_to_email failed — status=%d, body=%s",
+        resp.status_code,
+        resp.text[:500] if resp.text else "(empty)",
+    )
+    return {
+        "sent": False,
+        "error": error_msg,
+        "status_code": resp.status_code,
+    }
 
 
 # ── Module-level tool list (no side-effects at import time) ──
