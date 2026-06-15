@@ -4,6 +4,8 @@ Feature 4: Inbound Identity — fail-closed enforcement of
 X-HW-AgentGateway-User-Id header.
 """
 
+from unittest.mock import patch
+
 import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
@@ -54,3 +56,69 @@ class TestExtractGatewayUserId:
         with pytest.raises(HTTPException) as exc_info:
             extract_gateway_user_id(request)
         assert exc_info.value.status_code == 401
+
+
+class TestExtractWorkloadAccessToken:
+    """Tests for extract_workload_access_token()."""
+
+    def test_stores_token_when_header_present(self) -> None:
+        """Header present with valid token →
+        set_workload_access_token called with token value."""
+        token_value = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.test-token"
+        request = _make_request(
+            {"X-HW-AgentGateway-Workload-Access-Token": token_value}
+        )
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            from app.auth import extract_workload_access_token
+            extract_workload_access_token(request)
+            mock_set.assert_called_once_with(token_value)
+
+    def test_sets_none_when_header_missing(self) -> None:
+        """No header → set_workload_access_token called with None."""
+        request = _make_request({"other-header": "value"})
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            from app.auth import extract_workload_access_token
+            extract_workload_access_token(request)
+            mock_set.assert_called_once_with(None)
+
+    def test_sets_none_when_header_empty_string(self) -> None:
+        """Header present but empty string →
+        set_workload_access_token called with None."""
+        request = _make_request(
+            {"X-HW-AgentGateway-Workload-Access-Token": ""}
+        )
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            from app.auth import extract_workload_access_token
+            extract_workload_access_token(request)
+            mock_set.assert_called_once_with(None)
+
+    def test_strips_whitespace_and_stores_token(self) -> None:
+        """Header with surrounding whitespace → stripped token stored."""
+        request = _make_request(
+            {"X-HW-AgentGateway-Workload-Access-Token": "  valid-token  "}
+        )
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            from app.auth import extract_workload_access_token
+            extract_workload_access_token(request)
+            mock_set.assert_called_once_with("valid-token")
+
+    def test_sets_none_when_header_whitespace_only(self) -> None:
+        """Header with whitespace only →
+        set_workload_access_token called with None."""
+        request = _make_request(
+            {"X-HW-AgentGateway-Workload-Access-Token": "   "}
+        )
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            from app.auth import extract_workload_access_token
+            extract_workload_access_token(request)
+            mock_set.assert_called_once_with(None)

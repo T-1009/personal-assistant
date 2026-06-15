@@ -197,6 +197,42 @@ class TestHeaderHandling:
         assert response.status_code == 401
         assert "Missing X-HW-AgentGateway-User-Id header" in response.json()["detail"]
 
+    @pytest.mark.asyncio
+    async def test_workload_token_passed_to_context(self, client, fake_handler):
+        """POST with workload token header → SDK context receives the token."""
+        token_value = "test-token-abc123"
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            response = await client.post(
+                "/invocations",
+                json={"message": "Hi"},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "sess-test",
+                    "X-HW-AgentGateway-Workload-Access-Token": token_value,
+                },
+            )
+            assert response.status_code == 200
+            mock_set.assert_called_once_with(token_value)
+
+    @pytest.mark.asyncio
+    async def test_no_workload_token_no_error(self, client, fake_handler):
+        """POST without workload token header → 200, SDK context gets None."""
+        with patch(
+            "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+        ) as mock_set:
+            response = await client.post(
+                "/invocations",
+                json={"message": "Hi"},
+                headers={
+                    "X-HW-AgentGateway-User-Id": "test-user",
+                    "x-hw-agentarts-session-id": "sess-test",
+                },
+            )
+            assert response.status_code == 200
+            mock_set.assert_called_once_with(None)
+
 
 @pytest.mark.asyncio
 async def test_invocations_stream_false_returns_response(client, fake_handler):
