@@ -11,6 +11,24 @@ logger = logging.getLogger(__name__)
 
 _PROVIDER_INITIALIZED = False
 
+
+class AuthUrlRequired(Exception):
+    """Raised when user authorization is required to access an OAuth2-protected resource."""
+
+    def __init__(self, auth_url: str) -> None:
+        self.auth_url = auth_url
+        super().__init__(f"User authorization required: {auth_url}")
+
+
+async def handle_auth_url(auth_url: str) -> None:
+    """Callback triggered by the SDK when user authentication is required.
+
+    Raises AuthUrlRequired to short-circuit the token polling loop so the
+    agent can immediately present the authorization URL to the user.
+    """
+    logger.info("User authorization required — auth URL: %s", auth_url)
+    raise AuthUrlRequired(auth_url)
+
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
 
 _client: httpx.AsyncClient | None = None
@@ -29,6 +47,17 @@ def _handle_provider_error(fn):
     async def wrapper(*args, **kwargs):
         try:
             return await fn(*args, **kwargs)
+        except AuthUrlRequired as e:
+            logger.info("Email tool '%s' requires user authorization.", fn.__name__)
+            return {
+                "error": (
+                    "邮件功能需要您的授权。请点击以下链接进行授权：\n\n"
+                    f"{e.auth_url}\n\n"
+                    "授权完成后，请再次告诉我您需要做什么。"
+                ),
+                "auth_url": e.auth_url,
+                "auth_required": True,
+            }
         except Exception as e:
             error_msg = str(e)
             error_type = type(e).__name__
@@ -139,6 +168,7 @@ def ensure_provider_sync() -> bool:
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
     auth_flow="USER_FEDERATION",
+    on_auth_url=handle_auth_url,
 )
 async def list_emails(
     folder: str = "inbox",
@@ -196,6 +226,7 @@ async def list_emails(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
     auth_flow="USER_FEDERATION",
+    on_auth_url=handle_auth_url,
 )
 async def get_email(
     email_id: str,
@@ -259,6 +290,7 @@ async def get_email(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
     auth_flow="USER_FEDERATION",
+    on_auth_url=handle_auth_url,
 )
 async def search_emails(
     query: str,
@@ -316,6 +348,7 @@ async def search_emails(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Send"],
     auth_flow="USER_FEDERATION",
+    on_auth_url=handle_auth_url,
 )
 async def send_email(
     to: list[str],
@@ -398,6 +431,7 @@ async def send_email(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Send"],
     auth_flow="USER_FEDERATION",
+    on_auth_url=handle_auth_url,
 )
 async def reply_to_email(
     email_id: str,
