@@ -36,6 +36,7 @@ def _handle_provider_error(fn):
             logger.error(
                 "Email tool failed — %s: %s. Tool: %s, args: %s",
                 error_type, error_msg, fn.__name__, args,
+                exc_info=True,
             )
             if "m365-provider" in error_msg or "Resource not found" in error_msg:
                 return {

@@ -9,7 +9,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logger = logging.getLogger("uvicorn")
+from app.logging_config import configure as configure_logging
+
+configure_logging()
+
+logger = logging.getLogger("app")
 
 
 class PingFilter(logging.Filter):
