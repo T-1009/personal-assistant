@@ -66,40 +66,6 @@ function getSessionId(): string {
   }
 }
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("Aborted", "AbortError"));
-      return;
-    }
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener("abort", () => {
-      clearTimeout(timer);
-      reject(new DOMException("Aborted", "AbortError"));
-    }, { once: true });
-  });
-}
-
-/** Fetch with retry for transient gateway errors (502/503/504). */
-async function fetchWithRetry(
-  url: string,
-  init: RequestInit,
-  signal: AbortSignal,
-): Promise<Response> {
-  const RETRYABLE = [502, 503, 504];
-  for (let attempt = 0; attempt <= 2; attempt++) {
-    const response = await fetch(url, { ...init, signal });
-    if (response.ok || !RETRYABLE.includes(response.status) || attempt >= 2) {
-      return response;
-    }
-    // 504: wait 15s (first-chat cold path); 502/503: 5s then 15s
-    const delay = response.status === 504 ? 15000 : attempt === 0 ? 5000 : 15000;
-    await sleep(delay, signal);
-  }
-  // Unreachable — fallback to one last fetch
-  return fetch(url, { ...init, signal });
-}
-
 /**
  * ChatModelAdapter that connects to the backend SSE API.
  *
@@ -147,15 +113,12 @@ export const chatAdapter: ChatModelAdapter = {
         }
       }
 
-      let response = await fetchWithRetry(
-        `${baseUrl}/invocations`,
-        {
-          method: "POST",
-          headers,
-          body: JSON.stringify({ message: query, stream: true }),
-        },
-        abortSignal,
-      );
+      let response = await fetch(`${baseUrl}/invocations`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ message: query, stream: true }),
+        signal: abortSignal,
+      });
 
       // Token may have expired — try silent refresh once
       if ((response.status === 401 || response.status === 403) && idToken) {
@@ -167,15 +130,12 @@ export const chatAdapter: ChatModelAdapter = {
           if (userId) {
             headers["X-HW-AgentGateway-User-Id"] = userId;
           }
-          response = await fetchWithRetry(
-            `${baseUrl}/invocations`,
-            {
-              method: "POST",
-              headers,
-              body: JSON.stringify({ message: query, stream: true }),
-            },
-            abortSignal,
-          );
+          response = await fetch(`${baseUrl}/invocations`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({ message: query, stream: true }),
+            signal: abortSignal,
+          });
         } else {
           useAuthStore.getState().clearToken();
           throw new Error("Authentication required. Please sign in.");
