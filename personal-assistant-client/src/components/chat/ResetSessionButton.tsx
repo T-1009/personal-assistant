@@ -27,22 +27,20 @@ export function ResetSessionButton() {
   const handleConfirm = async () => {
     try {
       // 1. 停止当前 streaming（cancelRun 同步，幂等）
-      //    Panel 修正：.thread() 是访问器函数调用，非 property 访问
       aui.thread().cancelRun();
 
-      // 2. 清除 localStorage 中的 session ID
-      resetSessionId();
-
-      // 3. 清空 thread 中所有消息，界面回到 welcome 状态
+      // 2. 清空 thread 消息，界面回到 welcome 状态
       aui.thread().reset();
 
-      // 4. 清空输入框（异步操作）
+      // 3. 清空输入框（异步操作）
       await aui.composer().reset();
+
+      // 4. 最后清除 localStorage session ID
+      //    放在 UI 重置之后：若 UI 重置失败，session ID 保持不变，用户可重试
+      resetSessionId();
     } catch (e) {
-      // Panel 修正：composer().reset() reject 时不影响 Dialog 关闭
       console.error("Failed during session reset:", e);
     } finally {
-      // Panel 修正：无论成功失败，Dialog 必须关闭
       setOpen(false);
     }
   };
@@ -83,7 +81,7 @@ export function ResetSessionButton() {
             取消
           </DialogClose>
           <Button
-            variant="destructive"
+            variant="apple-secondary"
             onClick={handleConfirm}
           >
             确认

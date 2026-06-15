@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { TooltipProvider } from "@/components/ui/tooltip";
 
 // ────────────────────────────────────────────────────
 // 1. Create hoisted mock functions so vi.mock can reference them
@@ -89,7 +90,11 @@ describe("ResetSessionButton", () => {
   // ── CT-RS-02: Tooltip display ────────────────────
   it("CT-RS-02: shows Tooltip with text '新对话' on hover", async () => {
     const user = userEvent.setup();
-    render(<ResetSessionButton />);
+    render(
+      <TooltipProvider>
+        <ResetSessionButton />
+      </TooltipProvider>,
+    );
 
     const button = screen.getByRole("button", { name: "新对话" });
 
@@ -138,7 +143,7 @@ describe("ResetSessionButton", () => {
       screen.getByRole("button", { name: "取消" }),
     ).toBeInTheDocument();
 
-    // Confirm button (destructive variant)
+    // Confirm button (apple-secondary variant)
     const confirmButton = screen.getByRole("button", { name: "确认" });
     expect(confirmButton).toBeInTheDocument();
   });
@@ -162,7 +167,7 @@ describe("ResetSessionButton", () => {
   });
 
   // ── CT-RS-06: Confirm executes full reset sequence ─
-  it("CT-RS-06: clicking Confirm calls cancelRun → resetSessionId → thread.reset → composer.reset → closes dialog", async () => {
+  it("CT-RS-06: clicking Confirm calls cancelRun → thread.reset → composer.reset → resetSessionId → closes dialog", async () => {
     const user = userEvent.setup();
     render(<ResetSessionButton />);
 
@@ -181,20 +186,19 @@ describe("ResetSessionButton", () => {
     expect(mockComposer).toHaveBeenCalledTimes(1);
     expect(mockComposerReset).toHaveBeenCalledTimes(1);
 
-    // Verify order: cancelRun before resetSessionId before thread.reset
-    // before composer.reset
+    // Verify order: cancelRun → thread.reset → composer.reset → resetSessionId
+    // (Panel H-02 fix: session ID cleared LAST to prevent inconsistency on UI failure)
     const callOrder = [
       mockCancelRun,
-      mockResetSessionId,
       mockThreadReset,
       mockComposer,
       mockComposerReset,
+      mockResetSessionId,
     ].map((m) => m.mock?.invocationCallOrder?.[0] ?? Infinity);
 
-    expect(callOrder[0]).toBeLessThan(callOrder[1]);
-    expect(callOrder[1]).toBeLessThan(callOrder[2]);
-    expect(callOrder[2]).toBeLessThan(callOrder[3]);
-    expect(callOrder[3]).toBeLessThan(callOrder[4]);
+    expect(callOrder[0]).toBeLessThan(callOrder[1]); // cancelRun before thread.reset
+    expect(callOrder[1]).toBeLessThan(callOrder[2]); // thread.reset before composer
+    expect(callOrder[3]).toBeLessThan(callOrder[4]); // composer.reset before resetSessionId
   });
 
   // ── CT-RS-07: Button disabled during streaming ───
@@ -244,5 +248,73 @@ describe("ResetSessionButton", () => {
 
     const button = screen.getByRole("button", { name: "新对话" });
     expect(button).toBeInTheDocument();
+  });
+
+  // ── CT-RS-10: cancelRun error — no subsequent ops ─
+  it("CT-RS-10: when cancelRun() throws, subsequent operations are NOT called and dialog still closes", async () => {
+    // cancelRun throws — should NOT proceed to thread.reset / composer.reset / resetSessionId
+    mockCancelRun.mockImplementation(() => {
+      throw new Error("cancelRun failed");
+    });
+
+    const consoleSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
+
+    // Dialog must close (finally block)
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    // cancelRun should have been called
+    expect(mockCancelRun).toHaveBeenCalledTimes(1);
+
+    // Subsequent operations must NOT have been called
+    expect(mockThreadReset).not.toHaveBeenCalled();
+    expect(mockComposerReset).not.toHaveBeenCalled();
+    expect(mockResetSessionId).not.toHaveBeenCalled();
+
+    consoleSpy.mockRestore();
+  });
+
+  // ── CT-RS-11: thread.reset error — resetSessionId NOT called ─
+  it("CT-RS-11: when thread.reset() throws, resetSessionId is NOT called (UI-first ordering, H-02)", async () => {
+    // thread.reset throws after cancelRun succeeds
+    mockThreadReset.mockImplementation(() => {
+      throw new Error("thread reset failed");
+    });
+
+    const consoleSpy = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+
+    const user = userEvent.setup();
+    render(<ResetSessionButton />);
+
+    await user.click(screen.getByRole("button", { name: "新对话" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
+
+    // Dialog must close (finally block)
+    await vi.waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    // cancelRun should have been called
+    expect(mockCancelRun).toHaveBeenCalledTimes(1);
+
+    // thread.reset should have been called (it threw)
+    expect(mockThreadReset).toHaveBeenCalledTimes(1);
+
+    // H-02 fix: since thread.reset threw, resetSessionId must NOT be called
+    // (session ID preserved → user can retry with same session)
+    expect(mockResetSessionId).not.toHaveBeenCalled();
+
+    consoleSpy.mockRestore();
   });
 });
