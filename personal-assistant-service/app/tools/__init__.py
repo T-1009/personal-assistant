@@ -42,9 +42,10 @@ def build_tools() -> list[Any]:
 
         # Pre-create the OAuth2 credential provider on AgentArts Identity.
         # Don't gate tool registration on this — tools are always available
-        # to the LLM. If provider creation fails, the _handle_provider_error
-        # wrapper on each tool catches it and returns a user-friendly error
-        # instead of crashing.
+        # to the LLM. If provider creation fails, each tool's access_token guard
+        # (if not access_token → _auth_required_response()) handles the auth
+        # flow gracefully, and handle_auth_url pushes the authorization URL
+        # to the user via the shared message queue.
         ensure_provider_sync()
     except ImportError as e:
         logger.warning(

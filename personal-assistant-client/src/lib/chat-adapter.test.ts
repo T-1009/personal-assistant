@@ -659,4 +659,260 @@ describe("chatAdapter", () => {
       vi.restoreAllMocks();
     });
   });
+
+  describe("system_message events", () => {
+    it("CT-SYS-01: system_message without auth_url renders as text", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({
+              system_message: "系统通知：服务将在 10 分钟后维护",
+              auth_required: false,
+            }) +
+            "\n",
+        ),
+      ];
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const results = await collectResults("system message test");
+      const texts = results
+        .map((r) => r.content?.[0])
+        .filter(
+          (c): c is { type: "text"; text: string } => c?.type === "text",
+        )
+        .map((c) => c.text);
+
+      expect(
+        texts.some((t) =>
+          t.includes("系统通知：服务将在 10 分钟后维护"),
+        ),
+      ).toBe(true);
+    });
+
+    it("CT-SYS-02: system_message with auth_url renders auth link", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({
+              system_message: "邮件功能需要您的授权",
+              auth_url: "https://login.microsoftonline.com/test",
+              auth_required: true,
+            }) +
+            "\n",
+        ),
+      ];
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const results = await collectResults("auth url test");
+      const texts = results
+        .map((r) => r.content?.[0])
+        .filter(
+          (c): c is { type: "text"; text: string } => c?.type === "text",
+        )
+        .map((c) => c.text);
+
+      expect(
+        texts.some(
+          (t) =>
+            t.includes("邮件功能需要您的授权") &&
+            t.includes("[点击授权](https://login.microsoftonline.com/test)"),
+        ),
+      ).toBe(true);
+    });
+
+    it("CT-SYS-03: system_message interleaved with tokens accumulates correctly", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ system_message: "请授权" }) +
+            "\n",
+        ),
+        encoder.encode(
+          "data: " + JSON.stringify({ token: "点击" }) + "\n",
+        ),
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ token: "上方链接" }) +
+            "\n",
+        ),
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ token: "完成授权" }) +
+            "\n",
+        ),
+        encoder.encode(
+          "data: " + JSON.stringify({ done: true }) + "\n",
+        ),
+      ];
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const results = await collectResults("interleaved test");
+
+      const texts = results
+        .map((r) => r.content?.[0])
+        .filter(
+          (c): c is { type: "text"; text: string } => c?.type === "text",
+        )
+        .map((c) => c.text);
+      expect(texts[texts.length - 1]).toBe("请授权点击上方链接完成授权");
+
+      const finalResult = results[results.length - 1];
+      expect(finalResult?.status).toEqual({
+        type: "complete",
+        reason: "stop",
+      });
+    });
+
+    it("CT-SYS-04: system_message before first token — stream continues normally", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ system_message: "系统提示" }) +
+            "\n",
+        ),
+        encoder.encode(
+          "data: " + JSON.stringify({ token: "Hello" }) + "\n",
+        ),
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ token: " World" }) +
+            "\n",
+        ),
+        encoder.encode(
+          "data: " + JSON.stringify({ done: true }) + "\n",
+        ),
+      ];
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const results = await collectResults("sys before token test");
+      const texts = results
+        .map((r) => r.content?.[0])
+        .filter(
+          (c): c is { type: "text"; text: string } => c?.type === "text",
+        )
+        .map((c) => c.text);
+
+      expect(texts[texts.length - 1]).toBe("系统提示Hello World");
+
+      const finalResult = results[results.length - 1];
+      expect(finalResult?.status).toEqual({
+        type: "complete",
+        reason: "stop",
+      });
+    });
+
+    it("CT-SYS-05: system_message after done event — stream already closed, no crash", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ done: true }) +
+            "\n" +
+            "data: " +
+            JSON.stringify({ system_message: "after done" }) +
+            "\n",
+        ),
+      ];
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const results = await collectResults("after done test");
+
+      // system_message after done should NOT appear in any text
+      const texts = results
+        .map((r) => r.content?.[0])
+        .filter(
+          (c): c is { type: "text"; text: string } => c?.type === "text",
+        )
+        .map((c) => c.text);
+      expect(texts.every((t) => !t.includes("after done"))).toBe(true);
+
+      // Should still yield complete status from outer yield
+      const finalResult = results[results.length - 1];
+      expect(finalResult?.status).toEqual({
+        type: "complete",
+        reason: "stop",
+      });
+    });
+
+    it("CT-SYS-06: empty system_message string skipped gracefully", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ system_message: "" }) +
+            "\n",
+        ),
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ token: "real content" }) +
+            "\n",
+        ),
+        encoder.encode(
+          "data: " + JSON.stringify({ done: true }) + "\n",
+        ),
+      ];
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const results = await collectResults("empty sys msg test");
+      const texts = results
+        .map((r) => r.content?.[0])
+        .filter(
+          (c): c is { type: "text"; text: string } => c?.type === "text",
+        )
+        .map((c) => c.text);
+
+      // Empty system_message should be skipped; fullText = "real content"
+      expect(texts[texts.length - 1]).toBe("real content");
+    });
+
+    it("CT-SYS-07: auth_required without auth_url still renders system_message", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({
+              system_message: "需要授权",
+              auth_required: true,
+            }) +
+            "\n",
+        ),
+      ];
+      const mockFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      });
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+
+      const results = await collectResults("auth required no url test");
+      const texts = results
+        .map((r) => r.content?.[0])
+        .filter(
+          (c): c is { type: "text"; text: string } => c?.type === "text",
+        )
+        .map((c) => c.text);
+
+      expect(texts.some((t) => t.includes("需要授权"))).toBe(true);
+    });
+  });
 });

@@ -1,11 +1,19 @@
 """Unit tests for app.agent_handler.AgentHandler and get_agent_handler singleton."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from app.agent_handler import SYSTEM_PROMPT, AgentHandler, get_agent_handler
+
+
+def _fake_chunk(content: str):
+    """Create a mock chunk object with a .content attribute."""
+    chunk = MagicMock()
+    chunk.content = content
+    return chunk
 
 
 @pytest.fixture
@@ -351,3 +359,262 @@ class TestGetAgentHandlerSingleton:
                 )
         finally:
             app.agent_handler._handler_instance = None
+
+
+# ═══════════════════════════════════════════════════════════════
+# handle_stream with message_queue — auth URL delivery
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestHandleStreamWithMessageQueue:
+    """Tests for handle_stream() with the message_queue parameter."""
+
+    @pytest.mark.asyncio
+    async def test_queue_drain_yields_system_message_event(self, mock_deps):
+        """UT-HSM-01: pending queue messages are drained and yielded as SSE events."""
+        import json
+
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        q = asyncio.Queue()
+        await q.put({
+            "type": "system_message",
+            "content": "Please authorize",
+            "auth_url": "https://auth.example.com",
+            "auth_required": True,
+        })
+
+        async def mock_astream_events(_input, version="v2", config=None):
+            yield {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": _fake_chunk("Hello")},
+            }
+
+        mock_agent.astream_events = mock_astream_events
+
+        events = [
+            data async for data in handler.handle_stream(
+                message="Hi", message_queue=q,
+            )
+        ]
+
+        parsed = [json.loads(e[6:]) for e in events]
+        system_msgs = [p for p in parsed if "system_message" in p]
+        assert len(system_msgs) == 1
+        assert system_msgs[0]["system_message"] == "Please authorize"
+        assert system_msgs[0]["auth_url"] == "https://auth.example.com"
+        assert system_msgs[0]["auth_required"] is True
+
+    @pytest.mark.asyncio
+    async def test_drain_occurs_before_token_streaming(self, mock_deps):
+        """UT-HSM-02: queue is drained BEFORE each token is streamed."""
+        import json
+
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        q = asyncio.Queue()
+        await q.put({
+            "type": "system_message",
+            "content": "Auth needed",
+            "auth_url": "https://auth.example.com",
+            "auth_required": True,
+        })
+
+        async def mock_astream_events(_input, version="v2", config=None):
+            yield {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": _fake_chunk("Hello")},
+            }
+
+        mock_agent.astream_events = mock_astream_events
+
+        events = [
+            data async for data in handler.handle_stream(
+                message="Hi", message_queue=q,
+            )
+        ]
+
+        parsed = [json.loads(e[6:]) for e in events]
+        assert "system_message" in parsed[0]
+        assert "token" in parsed[1]
+        assert parsed[-1]["done"] is True
+
+    @pytest.mark.asyncio
+    async def test_final_drain_after_agent_completes(self, mock_deps):
+        """UT-HSM-03: messages that arrive late are drained in final drain."""
+        import json
+
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        q = asyncio.Queue()
+
+        async def mock_astream_events(_input, version="v2", config=None):
+            yield {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": _fake_chunk("Hi")},
+            }
+            await q.put({
+                "type": "system_message",
+                "content": "Late message",
+                "auth_url": "https://late.example.com",
+                "auth_required": True,
+            })
+
+        mock_agent.astream_events = mock_astream_events
+
+        events = [
+            data async for data in handler.handle_stream(
+                message="Hi", message_queue=q,
+            )
+        ]
+
+        parsed = [json.loads(e[6:]) for e in events]
+        system_msgs = [p for p in parsed if "system_message" in p]
+        assert len(system_msgs) == 1
+        assert system_msgs[0]["system_message"] == "Late message"
+
+    @pytest.mark.asyncio
+    async def test_finally_clears_message_queue(self, mock_deps):
+        """UT-HSM-04: set_message_queue(None) is called in finally block."""
+        from unittest.mock import patch
+
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        q = asyncio.Queue()
+
+        async def mock_astream_events(_input, version="v2", config=None):
+            yield {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": _fake_chunk("ok")},
+            }
+
+        mock_agent.astream_events = mock_astream_events
+
+        with patch("app.tools.email_tools.set_message_queue") as mock_set:
+            events = [
+                data async for data in handler.handle_stream(
+                    message="Hi", message_queue=q,
+                )
+            ]
+            _ = list(events)
+
+        assert mock_set.call_count == 2
+        mock_set.assert_any_call(q)
+        mock_set.assert_any_call(None)
+
+    @pytest.mark.asyncio
+    async def test_message_queue_none_backward_compat(self, mock_deps):
+        """UT-HSM-05: message_queue=None does not break existing streaming."""
+        import json
+
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        async def mock_astream_events(_input, version="v2", config=None):
+            yield {
+                "event": "on_chat_model_stream",
+                "data": {"chunk": _fake_chunk("Hello")},
+            }
+
+        mock_agent.astream_events = mock_astream_events
+
+        events = [data async for data in handler.handle_stream(message="Hi")]
+
+        parsed = [json.loads(e[6:]) for e in events]
+        system_msgs = [p for p in parsed if "system_message" in p]
+        assert len(system_msgs) == 0
+        assert any(p.get("done") for p in parsed)
+
+    @pytest.mark.asyncio
+    async def test_error_still_triggers_finally_cleanup(self, mock_deps):
+        """UT-HSM-06: when astream_events raises, finally block still runs cleanup."""
+        from unittest.mock import patch
+
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        q = asyncio.Queue()
+
+        async def mock_astream_events_error(_input, version="v2", config=None):
+            raise RuntimeError("Stream failed")
+            yield  # unreachable
+
+        mock_agent.astream_events = mock_astream_events_error
+
+        with patch("app.tools.email_tools.set_message_queue") as mock_set:
+            events = [
+                data async for data in handler.handle_stream(
+                    message="Hi", message_queue=q,
+                )
+            ]
+            _ = list(events)
+
+        mock_set.assert_any_call(None)
+
+    @pytest.mark.asyncio
+    async def test_sequential_streams_isolated_queues(self, mock_deps):
+        """UT-HSM-07: Sequential handle_stream calls with separate queues remain isolated."""
+        import json
+
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        q_a = asyncio.Queue()
+        q_b = asyncio.Queue()
+
+        await q_a.put({
+            "type": "system_message",
+            "content": "Auth for User A",
+            "auth_url": "https://auth.example.com/a",
+            "auth_required": True,
+        })
+        await q_b.put({
+            "type": "system_message",
+            "content": "Auth for User B",
+            "auth_url": "https://auth.example.com/b",
+            "auth_required": True,
+        })
+
+        async def mock_astream_a(_input, version="v2", config=None):
+            yield {"event": "on_chat_model_stream", "data": {"chunk": _fake_chunk("A")}}
+
+        async def mock_astream_b(_input, version="v2", config=None):
+            yield {"event": "on_chat_model_stream", "data": {"chunk": _fake_chunk("B")}}
+
+        mock_agent.astream_events = mock_astream_a
+        events_a = [
+            d async for d in handler.handle_stream(
+                message="Hi A", message_queue=q_a,
+            )
+        ]
+        mock_agent.astream_events = mock_astream_b
+        events_b = [
+            d async for d in handler.handle_stream(
+                message="Hi B", message_queue=q_b,
+            )
+        ]
+
+        parsed_a = [json.loads(e[6:]) for e in events_a]
+        parsed_b = [json.loads(e[6:]) for e in events_b]
+
+        system_a = [p for p in parsed_a if "system_message" in p]
+        system_b = [p for p in parsed_b if "system_message" in p]
+
+        assert len(system_a) == 1
+        assert "User A" in system_a[0]["system_message"]
+        assert "https://auth.example.com/a" in system_a[0]["auth_url"]
+
+        assert len(system_b) == 1
+        assert "User B" in system_b[0]["system_message"]
+        assert "https://auth.example.com/b" in system_b[0]["auth_url"]

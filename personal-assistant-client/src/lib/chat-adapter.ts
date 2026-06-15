@@ -182,16 +182,29 @@ export const chatAdapter: ChatModelAdapter = {
               throw new Error(parsed.error);
             }
 
-            if (parsed.done) {
-              isDone = true;
-              break;
-            }
-
             if (typeof parsed.token === "string") {
               fullText += parsed.token;
               yield {
                 content: [{ type: "text", text: fullText }],
               };
+            }
+
+            if (
+              typeof parsed.system_message === "string" &&
+              parsed.system_message.trim()
+            ) {
+              fullText += parsed.system_message;
+              if (parsed.auth_url) {
+                fullText += ` [点击授权](${parsed.auth_url})`;
+              }
+              yield {
+                content: [{ type: "text", text: fullText }],
+              };
+            }
+
+            if (parsed.done) {
+              isDone = true;
+              break;
             }
           } catch (e) {
             // If JSON parsing threw, bubble it up (real errors).

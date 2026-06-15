@@ -1,12 +1,12 @@
 """Integration tests for app.main FastAPI application."""
 
+import asyncio
 import json
 import os
 from unittest.mock import patch
 
 import httpx
 import pytest
-
 from agentarts.sdk.runtime.model import (
     ACCESS_TOKEN_HEADER,
     SESSION_HEADER,
@@ -40,8 +40,9 @@ class FakeAgentHandler:
         message: str,
         user_id: str = "anonymous",
         session_id: str | None = None,
+        message_queue: "asyncio.Queue | None" = None,  # NEW
     ):
-        self.stream_calls.append((message, user_id, session_id))
+        self.stream_calls.append((message, user_id, session_id, message_queue))
         yield 'data: {"token": "Hello", "done": false}\n\n'
         yield 'data: {"token": " world", "done": false}\n\n'
         yield 'data: {"token": "", "done": true}\n\n'
@@ -375,7 +376,12 @@ async def test_invocations_stream_returns_sse(client, fake_handler):
     assert "text/event-stream" in content_type, f"Got: {content_type}"
     assert response.headers["cache-control"] == "no-cache"
     assert response.headers["connection"] == "keep-alive"
-    assert fake_handler.stream_calls == [("hello", "user-1", "sess-test")]
+    assert fake_handler.stream_calls[0][:3] == ("hello", "user-1", "sess-test")
+
+    # Verify message_queue is passed and is an asyncio.Queue instance
+    import asyncio
+    assert fake_handler.stream_calls[0][3] is not None
+    assert isinstance(fake_handler.stream_calls[0][3], asyncio.Queue)
 
     body = response.text
     assert "data:" in body

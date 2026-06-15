@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 from collections.abc import AsyncGenerator
@@ -136,15 +137,34 @@ class AgentHandler:
     async def handle_stream(
         self, message: str, user_id: str = "anonymous",
         session_id: str | None = None,
+        message_queue: asyncio.Queue | None = None,
     ) -> AsyncGenerator[str, None]:
         """Stream tokens from the agent using astream_events v2."""
         config = self._build_config(user_id, session_id)
+
+        # Inject the queue into email_tools module for tool callbacks
+        from app.tools.email_tools import set_message_queue
+        set_message_queue(message_queue)
+
         try:
             async for event in self.agent.astream_events(
                 {"messages": [{"role": "user", "content": message}]},
                 version="v2",
                 config=config,
             ):
+                # ── Drain pending out-of-band messages from tool callbacks ──
+                if message_queue:
+                    while not message_queue.empty():
+                        msg = message_queue.get_nowait()
+                        if msg.get("type") != "system_message":
+                            continue
+                        payload = {
+                            "system_message": msg["content"],
+                            "auth_url": msg.get("auth_url"),
+                            "auth_required": True,
+                        }
+                        yield f"data: {json.dumps(payload)}\n\n"
+
                 kind = event["event"]
                 if kind == "on_chat_model_stream":
                     chunk = event["data"]["chunk"]
@@ -152,8 +172,25 @@ class AgentHandler:
                     if token:
                         yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
 
+            # ── Drain any remaining messages after agent completes ──
+            if message_queue:
+                while not message_queue.empty():
+                    msg = message_queue.get_nowait()
+                    if msg.get("type") != "system_message":
+                        continue
+                    payload = {
+                        "system_message": msg["content"],
+                        "auth_url": msg.get("auth_url"),
+                        "auth_required": True,
+                    }
+                    yield f"data: {json.dumps(payload)}\n\n"
+
             # Signal completion
             yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
 
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+
+        finally:
+            # Clean up per-task queue reference
+            set_message_queue(None)

@@ -10,4 +10,7 @@ export interface SSEEvent {
   token?: string;
   done?: boolean;
   error?: string;
+  system_message?: string;
+  auth_url?: string;
+  auth_required?: boolean;
 }
