@@ -35,6 +35,7 @@ class FakeAgentHandler:
         message: str,
         user_id: str = "anonymous",
         session_id: str | None = None,
+        message_queue=None,
     ):
         self.stream_calls.append((message, user_id, session_id))
         for token in self._tokens:

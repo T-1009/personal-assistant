@@ -3,6 +3,7 @@
 Feature 10a: Outbound Email — tests all 5 tool functions
 """
 
+import asyncio
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +11,6 @@ import httpx
 import pytest
 
 import app.tools.email_tools as et
-from app.tools.email_tools import AuthUrlRequired, _handle_provider_error
 
 # ── Shared Fixtures ──
 
@@ -20,6 +20,10 @@ from app.tools.email_tools import AuthUrlRequired, _handle_provider_error
 # no effect because the wrapper is already bound.  Instead we replace the
 # module-level names with their undecorated originals (accessible via
 # __wrapped__ thanks to @functools.wraps in the decorator).
+
+# Note: initial access_token=None protection is now handled by the
+# `if not access_token` guard inside each function body rather than
+# a separate decorator, so we only need to unwrap @require_access_token.
 
 _TOOL_NAMES = [
     "list_emails",
@@ -34,8 +38,8 @@ _TOOL_NAMES = [
 def unwrap_email_tools():
     """Replace decorated tool functions with their undecorated originals.
 
-    Each tool has two decorators: @_handle_provider_error (outer) and
-    @require_access_token (inner).  We unwrap both to get the raw function.
+    Each tool has one decorator: @require_access_token. We unwrap it
+    to get the raw function for direct unit testing.
     """
     saved = {}
     for name in _TOOL_NAMES:
@@ -182,7 +186,7 @@ class TestListEmails:
 
     @pytest.mark.asyncio
     async def test_list_emails_http_error(self):
-        """UT-LE-06: HTTP error propagates as exception."""
+        """UT-LE-06: HTTP error returns error dict (caught by try/except)."""
         resp = _make_resp(200, {"value": []})
         error = httpx.HTTPStatusError(
             "Server error",
@@ -191,11 +195,11 @@ class TestListEmails:
         )
         resp.raise_for_status.side_effect = error
 
-        with (
-            _mock_httpx("get", resp) as _rc,  # noqa: F841
-            pytest.raises(httpx.HTTPStatusError),
-        ):
-            await et.list_emails(access_token="mock-token")
+        with _mock_httpx("get", resp) as _rc:  # noqa: F841
+            result = await et.list_emails(access_token="mock-token")
+
+        assert "error" in result
+        assert "500" in result["error"] or "邮件服务" in result["error"]
 
     @pytest.mark.asyncio
     async def test_list_emails_null_from_field(self):
@@ -342,7 +346,7 @@ class TestGetEmail:
 
     @pytest.mark.asyncio
     async def test_get_email_not_found(self):
-        """UT-GE-04: 404 error propagates as exception."""
+        """UT-GE-04: 404 error returns error dict (caught by try/except)."""
         resp = _make_resp(200, {})
         error = httpx.HTTPStatusError(
             "Not found",
@@ -351,11 +355,13 @@ class TestGetEmail:
         )
         resp.raise_for_status.side_effect = error
 
-        with (
-            _mock_httpx("get", resp) as _rc,  # noqa: F841
-            pytest.raises(httpx.HTTPStatusError),
-        ):
-            await et.get_email(email_id="invalid", access_token="mock-token")
+        with _mock_httpx("get", resp) as _rc:  # noqa: F841
+            result = await et.get_email(
+                email_id="invalid", access_token="mock-token"
+            )
+
+        assert "error" in result
+        assert "get_email" in result["error"] or "404" in result["error"]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -435,7 +441,7 @@ class TestSearchEmails:
 
     @pytest.mark.asyncio
     async def test_search_emails_http_error(self):
-        """UT-SE-05: HTTP error propagates."""
+        """UT-SE-05: HTTP error returns error dict (caught by try/except)."""
         resp = _make_resp(200, {"value": []})
         error = httpx.HTTPStatusError(
             "Bad request",
@@ -444,11 +450,13 @@ class TestSearchEmails:
         )
         resp.raise_for_status.side_effect = error
 
-        with (
-            _mock_httpx("get", resp) as _rc,  # noqa: F841
-            pytest.raises(httpx.HTTPStatusError),
-        ):
-            await et.search_emails(query="test", access_token="mock-token")
+        with _mock_httpx("get", resp) as _rc:  # noqa: F841
+            result = await et.search_emails(
+                query="test", access_token="mock-token"
+            )
+
+        assert "error" in result
+        assert "search_emails" in result["error"] or "400" in result["error"]
 
     @pytest.mark.asyncio
     async def test_search_emails_escapes_quotes(self):
@@ -715,20 +723,18 @@ class TestReplyToEmail:
 
     @pytest.mark.asyncio
     async def test_reply_to_email_no_access_token(self):
-        """UT-RE-04: function can be called with access_token=None."""
-        resp = _make_resp(202)
-
-        with _mock_httpx("post", resp) as mock_client:
+        """UT-RE-04: access_token=None returns auth_required without HTTP call."""
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
                 confirm=True,
                 access_token=None,
             )
-            headers = mock_client.post.call_args[1]["headers"]
 
-        assert result["sent"] is True
-        assert headers["Authorization"] == "Bearer None"
+        assert result["auth_required"] is True
+        assert "Authorization pending" in result["error"]
+        mock_client.post.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reply_to_email_formats_body(self):
@@ -833,143 +839,211 @@ class TestReplyToEmail:
 
 
 # ═══════════════════════════════════════════════════════════════
-# _handle_provider_error decorator tests
+# handle_auth_url — ContextVar-based auth URL delivery
 # ═══════════════════════════════════════════════════════════════
 
 
-class TestHandleProviderError:
-    """Tests for the @_handle_provider_error decorator behavior.
+class TestHandleAuthUrl:
+    """Tests for handle_auth_url() with ContextVar-isolated message queue.
 
-    The autouse unwrap_email_tools fixture strips both decorator layers,
-    so we manually re-apply @_handle_provider_error to test its error
-    handling in isolation.
+    Replaces TestHandleProviderError which tested the deprecated
+    @_handle_provider_error decorator / AuthUrlRequired exception.
     """
 
-    @pytest.mark.asyncio
-    async def test_empty_exception_message_falls_back_to_type_name(self):
-        """UT-HPE-01: empty str(e) falls back to exception type name."""
-
-        @_handle_provider_error
-        async def _failing_tool(access_token=None):
-            raise RuntimeError()
-
-        result = await _failing_tool()
-
-        assert "RuntimeError" in result["error"]
-        assert result["detail"] == "RuntimeError"
+    @pytest.fixture(autouse=True)
+    def reset_contextvar(self):
+        """Reset the ContextVar before each test to ensure clean isolation."""
+        et._message_queue.set(None)
+        yield
+        et._message_queue.set(None)
 
     @pytest.mark.asyncio
-    async def test_empty_exception_message_uses_args(self):
-        """UT-HPE-02: empty str(e) with non-empty e.args uses args."""
+    async def test_handle_auth_url_writes_to_queue(self):
+        """UT-HAU-01: handle_auth_url puts message to the ContextVar queue."""
+        q = asyncio.Queue()
+        et._message_queue.set(q)
 
-        @_handle_provider_error
-        async def _failing_tool(access_token=None):
-            raise RuntimeError("detail from args")
+        await et.handle_auth_url("https://auth.example.com/login")
 
-        result = await _failing_tool()
-
-        assert "detail from args" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_whitespace_only_exception_message_falls_back(self):
-        """UT-HPE-03: whitespace-only str(e) treated as empty."""
-
-        @_handle_provider_error
-        async def _failing_tool(access_token=None):
-            e = RuntimeError()
-            e.args = ("   ",)
-            raise e
-
-        result = await _failing_tool()
-
-        assert "RuntimeError" in result["error"]
+        assert not q.empty()
+        msg = q.get_nowait()
+        assert msg["type"] == "system_message"
+        assert msg["auth_url"] == "https://auth.example.com/login"
+        assert msg["auth_required"] is True
+        assert "https://auth.example.com/login" in msg["content"]
 
     @pytest.mark.asyncio
-    async def test_write_tool_exception_includes_sent_false(self):
-        """UT-HPE-04: send_email exception includes sent=False in result."""
+    async def test_handle_auth_url_no_queue_no_error(self):
+        """UT-HAU-02: handle_auth_url is a no-op when ContextVar is None."""
+        et._message_queue.set(None)
 
-        @_handle_provider_error
-        async def send_email(access_token=None):
-            raise RuntimeError()
-
-        result = await send_email()
-
-        assert result["sent"] is False
-        assert "RuntimeError" in result["error"]
+        # Should not raise — this is the key behavior change from AuthUrlRequired
+        await et.handle_auth_url("https://auth.example.com/login")
 
     @pytest.mark.asyncio
-    async def test_reply_to_email_exception_includes_sent_false(self):
-        """UT-HPE-05: reply_to_email exception includes sent=False in result."""
+    async def test_handle_auth_url_message_fields(self):
+        """UT-HAU-03: message dict has correct keys and auth_required=True."""
+        q = asyncio.Queue()
+        et._message_queue.set(q)
 
-        @_handle_provider_error
-        async def reply_to_email(access_token=None):
-            raise RuntimeError()
+        await et.handle_auth_url("https://login.example.com/oauth")
 
-        result = await reply_to_email()
-
-        assert result["sent"] is False
-
-    @pytest.mark.asyncio
-    async def test_read_tool_exception_excludes_sent(self):
-        """UT-HPE-06: list_emails exception does NOT include sent field."""
-
-        @_handle_provider_error
-        async def list_emails(access_token=None):
-            raise RuntimeError()
-
-        result = await list_emails()
-
-        assert "sent" not in result
+        msg = q.get_nowait()
+        assert msg["type"] == "system_message"
+        assert msg["auth_required"] is True
+        assert msg["auth_url"] == "https://login.example.com/oauth"
 
     @pytest.mark.asyncio
-    async def test_auth_url_required_returns_auth_info(self):
-        """UT-HPE-07: AuthUrlRequired returns auth_url and auth_required."""
+    async def test_handle_auth_url_content_includes_url(self):
+        """UT-HAU-04: message content text contains the provided auth URL."""
+        q = asyncio.Queue()
+        et._message_queue.set(q)
+        test_url = "https://microsoft.com/oauth/authorize?state=abc123"
 
-        @_handle_provider_error
-        async def _failing_tool(access_token=None):
-            raise AuthUrlRequired("https://auth.example.com/login")
+        await et.handle_auth_url(test_url)
 
-        result = await _failing_tool()
+        msg = q.get_nowait()
+        assert test_url in msg["content"]
 
+
+# ═══════════════════════════════════════════════════════════════
+# Access token guard — if not access_token → auth_required
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestAccessTokenGuard:
+    """Tests for the `if not access_token` guard in each tool function."""
+
+    @pytest.mark.asyncio
+    async def test_list_emails_no_token_returns_auth_required(self):
+        """UT-ATG-01: list_emails with access_token=None returns auth_required."""
+        result = await et.list_emails(access_token=None)
         assert result["auth_required"] is True
-        assert "https://auth.example.com/login" in result["error"]
+        assert "Authorization pending" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_provider_not_found_returns_setup_required(self):
-        """UT-HPE-08: 'm365-provider' error returns setup_required."""
+    async def test_send_email_no_token_returns_auth_required(self):
+        """UT-ATG-02: send_email with access_token=None returns auth_required."""
+        result = await et.send_email(
+            to=["bob@x.com"],
+            subject="Test",
+            body="Body",
+            confirm=True,
+            access_token=None,
+        )
+        assert result["auth_required"] is True
+        assert "Authorization pending" in result["error"]
 
-        @_handle_provider_error
-        async def _failing_tool(access_token=None):
-            raise Exception("m365-provider not found")
-
-        result = await _failing_tool()
-
-        assert result["setup_required"] is True
-
-    @pytest.mark.asyncio
-    async def test_provider_not_found_write_tool_includes_sent(self):
-        """UT-HPE-09: 'm365-provider' error on write tool includes sent=False."""
-
-        @_handle_provider_error
-        async def send_email(access_token=None):
-            raise Exception("m365-provider not found")
-
-        result = await send_email()
-
-        assert result["setup_required"] is True
-        assert result["sent"] is False
+    def test_auth_required_response_format(self):
+        """UT-ATG-03: _auth_required_response() returns correct dict format."""
+        resp = et._auth_required_response()
+        assert resp["auth_required"] is True
+        assert "error" in resp
+        assert "Authorization pending" in resp["error"]
 
     @pytest.mark.asyncio
-    async def test_500_error_returns_retryable(self):
-        """UT-HPE-10: 500 error returns retryable."""
+    async def test_list_emails_with_token_proceeds_normally(self):
+        """UT-ATG-04: with valid access_token, guard passes through to normal logic."""
+        resp = _make_resp(200, {"value": []})
+        with _mock_httpx("get", resp) as _rc:
+            result = await et.list_emails(access_token="valid-token")
+        assert result["count"] == 0
+        assert "auth_required" not in result
 
-        @_handle_provider_error
-        async def _failing_tool(access_token=None):
-            raise Exception("internal server error (500)")
+    @pytest.mark.asyncio
+    async def test_get_email_no_token_returns_auth_required(self):
+        """UT-ATG-05: get_email with access_token=None returns auth_required."""
+        result = await et.get_email(email_id="msg-1", access_token=None)
+        assert result["auth_required"] is True
 
-        result = await _failing_tool()
+    @pytest.mark.asyncio
+    async def test_search_emails_no_token_returns_auth_required(self):
+        """UT-ATG-06: search_emails with access_token=None returns auth_required."""
+        result = await et.search_emails(query="test", access_token=None)
+        assert result["auth_required"] is True
 
-        assert result["retryable"] is True
+    @pytest.mark.asyncio
+    async def test_reply_to_email_no_token_returns_auth_required(self):
+        """UT-ATG-07: reply_to_email with access_token=None returns auth_required."""
+        result = await et.reply_to_email(
+            email_id="msg-1",
+            body="Thanks",
+            confirm=True,
+            access_token=None,
+        )
+        assert result["auth_required"] is True
+
+
+# ═══════════════════════════════════════════════════════════════
+# _format_tool_error — user-friendly error conversion
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestToolErrorFormatting:
+    """Tests for _format_tool_error() — user-friendly error conversion."""
+
+    def test_format_timeout_error(self):
+        """UT-ERR-01: TimeoutException → 中文超时提示."""
+        import httpx
+        result = et._format_tool_error(
+            httpx.TimeoutException("timeout"), "list_emails"
+        )
+        assert "请求超时" in result["error"]
+        assert "list_emails" in result["error"]
+
+    def test_format_connect_error(self):
+        """UT-ERR-02: ConnectError → 中文连接失败提示."""
+        import httpx
+        result = et._format_tool_error(
+            httpx.ConnectError("connection refused"), "get_email"
+        )
+        assert "无法连接到邮件服务器" in result["error"]
+        assert "get_email" in result["error"]
+
+    def test_format_429_rate_limit(self):
+        """UT-ERR-03: HTTPStatusError 429 → 限流提示."""
+        from unittest.mock import MagicMock
+
+        import httpx
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        exc = httpx.HTTPStatusError(
+            "rate limited", request=MagicMock(), response=mock_response
+        )
+        result = et._format_tool_error(exc, "search_emails")
+        assert "请求过于频繁" in result["error"]
+
+    def test_format_503_unavailable(self):
+        """UT-ERR-04: HTTPStatusError 503 → 服务不可用提示."""
+        from unittest.mock import MagicMock
+
+        import httpx
+        mock_response = MagicMock()
+        mock_response.status_code = 503
+        exc = httpx.HTTPStatusError(
+            "unavailable", request=MagicMock(), response=mock_response
+        )
+        result = et._format_tool_error(exc, "send_email")
+        assert "邮件服务暂时不可用" in result["error"]
+
+    def test_format_401_expired(self):
+        """UT-ERR-05: HTTPStatusError 401 → 授权过期提示."""
+        from unittest.mock import MagicMock
+
+        import httpx
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        exc = httpx.HTTPStatusError(
+            "unauthorized", request=MagicMock(), response=mock_response
+        )
+        result = et._format_tool_error(exc, "reply_to_email")
+        assert "授权已过期" in result["error"]
+
+    def test_format_generic_exception_fallback(self):
+        """UT-ERR-06: Unknown exception → 通用错误提示."""
+        result = et._format_tool_error(ValueError("unexpected"), "list_emails")
+        assert "操作失败" in result["error"]
+        assert "list_emails" in result["error"]
 
 
 # ═══════════════════════════════════════════════════════════════
