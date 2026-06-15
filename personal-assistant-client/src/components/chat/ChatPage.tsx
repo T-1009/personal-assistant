@@ -2,6 +2,7 @@ import { Thread } from "@/components/assistant-ui/thread";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { RuntimeProvider } from "@/components/RuntimeProvider";
 import { LoginButton } from "@/components/LoginButton";
+import { ResetSessionButton } from "./ResetSessionButton";
 
 function ChatPage() {
   return (
@@ -12,7 +13,10 @@ function ChatPage() {
             <span className="text-sm text-muted-foreground">
               Personal Assistant
             </span>
-            <LoginButton />
+            <div className="flex items-center gap-2">
+              <ResetSessionButton />
+              <LoginButton />
+            </div>
           </div>
           <div className="flex-1 min-h-0">
             <Thread />

@@ -54,7 +54,7 @@ function isTokenExpiringSoon(idToken: string): boolean {
   }
 }
 
-function getSessionId(): string {
+export function getSessionId(): string {
   try {
     const existing = localStorage.getItem("agentarts-session-id");
     if (existing) return existing;
@@ -63,6 +63,21 @@ function getSessionId(): string {
     return id;
   } catch {
     return crypto.randomUUID();
+  }
+}
+
+/**
+ * Remove the persisted session ID from localStorage to trigger a new
+ * conversation on the next chat-adapter run.
+ *
+ * Safe to call when localStorage is unavailable (privacy mode, storage
+ * quota exceeded, etc.) — errors are silently swallowed.
+ */
+export function resetSessionId(): void {
+  try {
+    localStorage.removeItem("agentarts-session-id");
+  } catch {
+    // privacy mode / localStorage unavailable — silent no-op
   }
 }
 

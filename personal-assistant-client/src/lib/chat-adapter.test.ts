@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
-import { chatAdapter } from "./chat-adapter";
+import { chatAdapter, getSessionId, resetSessionId } from "./chat-adapter";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
 import type { ThreadMessage, ThreadUserMessagePart } from "@assistant-ui/core";
@@ -657,6 +657,68 @@ describe("chatAdapter", () => {
       expect(setItemSpy).not.toHaveBeenCalled();
 
       vi.restoreAllMocks();
+    });
+  });
+
+  describe("resetSessionId", () => {
+    beforeEach(() => {
+      localStorage.clear();
+    });
+
+    afterEach(() => {
+      localStorage.clear();
+      vi.restoreAllMocks();
+    });
+
+    it("UT-RS-01: removes agentarts-session-id from localStorage", () => {
+      localStorage.setItem("agentarts-session-id", "test-session-id");
+      expect(localStorage.getItem("agentarts-session-id")).toBe("test-session-id");
+
+      resetSessionId();
+
+      expect(localStorage.getItem("agentarts-session-id")).toBeNull();
+    });
+
+    it("UT-RS-02: is a no-op when key does not exist", () => {
+      expect(localStorage.getItem("agentarts-session-id")).toBeNull();
+
+      expect(() => resetSessionId()).not.toThrow();
+
+      expect(localStorage.getItem("agentarts-session-id")).toBeNull();
+    });
+
+    it("UT-RS-03: silently handles localStorage errors (privacy mode)", () => {
+      vi.spyOn(Storage.prototype, "removeItem").mockImplementation(() => {
+        throw new DOMException("Blocked", "SecurityError");
+      });
+
+      expect(() => resetSessionId()).not.toThrow();
+    });
+
+    it("UT-RS-04: after resetSessionId, getSessionId returns a new UUID", () => {
+      // Set an existing session ID
+      localStorage.setItem("agentarts-session-id", "old-session-id");
+
+      // Record the old value
+      const oldId = getSessionId();
+      expect(oldId).toBe("old-session-id");
+
+      // Reset the session ID
+      resetSessionId();
+
+      // Get new session ID
+      const newId = getSessionId();
+
+      // New ID should differ from old
+      expect(newId).not.toBe(oldId);
+
+      // New ID should be a valid UUID v4
+      const uuidV4Regex =
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      expect(newId).toMatch(uuidV4Regex);
+
+      // New ID should also be persisted in localStorage
+      expect(localStorage.getItem("agentarts-session-id")).toBe(newId);
     });
   });
 });
