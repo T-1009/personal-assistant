@@ -15,14 +15,12 @@ class TestBuildTools:
 
     def test_build_tools_returns_list(self) -> None:
         """UT-TI-01: build_tools() returns a list."""
-        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
-            result = build_tools()
+        result = build_tools()
         assert isinstance(result, list)
 
     def test_build_tools_includes_email_tools(self) -> None:
         """UT-TI-02: build_tools() includes all 5 email tools."""
-        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
-            result = build_tools()
+        result = build_tools()
 
         result_names = [t.__name__ for t in result]
         expected = [
@@ -51,8 +49,7 @@ class TestBuildTools:
 
     def test_build_tools_deduplicates(self) -> None:
         """UT-TI-04: each tool function appears only once in the result list."""
-        with patch("app.tools.email_tools.ensure_provider_sync", return_value=True):
-            result = build_tools()
+        result = build_tools()
 
         names = [t.__name__ for t in result]
         assert len(names) == len(set(names)), (

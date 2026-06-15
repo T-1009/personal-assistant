@@ -19,22 +19,19 @@ def build_tools() -> list[Any]:
     """
     tools: list[Any] = []
 
-    # ── Email tools (Feature 10a) ──
+    # ── Email tools (Feature 10a) — always register ──
     try:
         from app.tools.email_tools import EMAIL_TOOLS, ensure_provider_sync
 
-        # Pre-create the OAuth2 credential provider BEFORE registering tools.
-        # The @require_access_token decorator fires before the tool function body,
-        # so the provider must already exist on the AgentArts Identity service.
-        if ensure_provider_sync():
-            tools.extend(EMAIL_TOOLS)
-            logger.info("Email tools registered (%d tools).", len(EMAIL_TOOLS))
-        else:
-            logger.warning(
-                "Email tools skipped — failed to create m365-provider. "
-                "Check M365_CLIENT_ID, M365_CLIENT_SECRET, M365_TENANT_ID env vars "
-                "and AgentArts Identity service availability."
-            )
+        tools.extend(EMAIL_TOOLS)
+        logger.info("Email tools registered (%d tools).", len(EMAIL_TOOLS))
+
+        # Pre-create the OAuth2 credential provider on AgentArts Identity.
+        # Don't gate tool registration on this — tools are always available
+        # to the LLM. If provider creation fails, the _handle_provider_error
+        # wrapper on each tool catches it and returns a user-friendly error
+        # instead of crashing.
+        ensure_provider_sync()
     except ImportError as e:
         logger.warning(
             "Email tools not available (import failed): %s. "
