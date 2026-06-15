@@ -1,6 +1,6 @@
 ---
 description: Merge latest main into feature branch. Delegates to panel-chair for conflict resolution.
-mode: subagent
+mode: all
 model: deepseek/deepseek-v4-pro
 options:
   reasoningEffort: max
