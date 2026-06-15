@@ -64,7 +64,7 @@ You then run this loop:
   ↓
   ├─ issues found → back to ① (fix), re-test with ②, re-review with ③
   └─ approved ↓
-④ Report DONE to personal-assistant-dev-manager
+④ Return completion summary
 ```
 
 ### Decision Authority (Three-Tier)
@@ -123,7 +123,7 @@ Record the returned `task_id`. Reuse on re-review.
 - **APPROVED** → Proceed to ④.
 - **CHANGES REQUESTED** → Apply three-tier decision.
 
-#### ④ Report to personal-assistant-dev-manager
+#### ④ Return Completion Summary
 
 ```
 ## Infra Phase Complete
