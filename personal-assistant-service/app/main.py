@@ -133,15 +133,12 @@ async def invocations(request: Request):
         if not message.strip():
             raise HTTPException(status_code=400, detail="message is required")
 
-        message_queue = asyncio.Queue()
-
         async def event_generator():
             try:
                 async for sse_data in handler.handle_stream(
                     message=message,
                     user_id=user_id,
                     session_id=session_id,
-                    message_queue=message_queue,
                 ):
                     yield sse_data
             except Exception as e:
