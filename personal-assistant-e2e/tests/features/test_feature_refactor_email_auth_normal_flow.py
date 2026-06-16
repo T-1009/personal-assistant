@@ -68,16 +68,7 @@ AUTH_MESSAGE_CONTENT = (
 
 
 class FakeAuthHandler:
-    """Fake AgentHandler that supports the ContextVar message_queue flow.
-
-    Mimics the real AgentHandler.handle_stream() behaviour:
-    1. Accepts message_queue parameter (like the real one)
-    2. Calls set_message_queue(message_queue) to inject into email_tools
-    3. When simulate_auth=True, puts a system_message into the queue
-       (simulating handle_auth_url being called by the SDK)
-    4. Drains the queue before each token yield
-    5. Drains remaining messages after all tokens
-    6. Calls set_message_queue(None) in finally for cleanup
+    """Fake AgentHandler that supports the adispatch_custom_event flow.
     """
 
     def __init__(self):
@@ -90,73 +81,27 @@ class FakeAuthHandler:
         self, message: str, user_id: str = "anonymous",
         session_id: str | None = None,
     ) -> str:
-        """Non-streaming handler — always returns a canned response."""
         self.handle_calls.append((message, user_id, session_id))
         return f"Response to: '{message}'"
 
     async def handle_stream(
         self, message: str, user_id: str = "anonymous",
         session_id: str | None = None,
-        message_queue: "asyncio.Queue | None" = None,
     ):
-        """Streaming handler with message_queue support.
-
-        Drains system_message events from the queue before each token,
-        exactly like the real agent_handler.AgentHandler.handle_stream().
-        """
         self.stream_calls.append((message, user_id, session_id))
 
-        # Import the actual ContextVar setter from email_tools to test
-        # the real ContextVar isolation mechanism.
-        from app.tools.email_tools import set_message_queue
+        if self.simulate_auth:
+            payload = {
+                "system_message": AUTH_MESSAGE_CONTENT,
+                "auth_url": AUTH_URL,
+                "auth_required": True,
+            }
+            yield f"data: {json.dumps(payload)}\n\n"
 
-        set_message_queue(message_queue)
+        for _idx, token in enumerate(self._tokens):
+            yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
 
-        try:
-            # ── Simulate handle_auth_url being called by the SDK ──
-            if self.simulate_auth and message_queue is not None:
-                await message_queue.put({
-                    "type": "system_message",
-                    "content": AUTH_MESSAGE_CONTENT,
-                    "auth_url": AUTH_URL,
-                    "auth_required": True,
-                })
-
-            for _idx, token in enumerate(self._tokens):
-                # ── Drain pending out-of-band messages from tool callbacks ──
-                if message_queue is not None:
-                    while not message_queue.empty():
-                        msg = message_queue.get_nowait()
-                        if msg.get("type") != "system_message":
-                            continue
-                        payload = {
-                            "system_message": msg["content"],
-                            "auth_url": msg.get("auth_url"),
-                            "auth_required": True,
-                        }
-                        yield f"data: {json.dumps(payload)}\n\n"
-
-                yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
-
-            # ── Drain any remaining messages after agent completes ──
-            if message_queue is not None:
-                while not message_queue.empty():
-                    msg = message_queue.get_nowait()
-                    if msg.get("type") != "system_message":
-                        continue
-                    payload = {
-                        "system_message": msg["content"],
-                        "auth_url": msg.get("auth_url"),
-                        "auth_required": True,
-                    }
-                    yield f"data: {json.dumps(payload)}\n\n"
-
-            # Signal completion
-            yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
-
-        finally:
-            # Clean up per-task queue reference
-            set_message_queue(None)
+        yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -562,172 +507,4 @@ def test_queue_lifecycle_no_cross_request_leakage(auth_test_client):
     assert len(fake_handler.stream_calls) == 2
 
 
-# ═════════════════════════════════════════════════════════════════════════════
-# E2E-AUTH-08: Concurrency isolation
-# ═════════════════════════════════════════════════════════════════════════════
 
-
-@pytest.mark.feature
-@pytest.mark.asyncio
-async def test_concurrency_isolation(async_auth_client):
-    """E2E-AUTH-08: ContextVar isolation prevents cross-contamination.
-
-    Two concurrent streaming requests each get their own message_queue.
-    Verify that:
-    - Request A (with auth URL A) does NOT see auth URL in B's events
-    - Request B (with auth URL B) does NOT see auth URL in A's events
-    - ContextVar isolation ensures per-task queue separation.
-
-    Uses asyncio.gather for true concurrent execution.
-    """
-    client, _base_handler = async_auth_client
-
-    AUTH_URL_A = "https://login.microsoftonline.com/auth-for-user-a"
-    AUTH_URL_B = "https://login.microsoftonline.com/auth-for-user-b"
-
-    async def stream_a() -> tuple[int, list[dict]]:
-        """Request A: simulate auth with unique URL."""
-        resp = await client.post(
-            "/invocations",
-            json={"message": "帮用户A看收件箱", "stream": True},
-            headers={
-                "X-HW-AgentGateway-User-Id": "user-a",
-                "x-hw-agentarts-session-id": "session-a",
-                "Accept": "text/event-stream",
-            },
-        )
-        return resp.status_code, _parse_sse_events(resp.text)
-
-    async def stream_b() -> tuple[int, list[dict]]:
-        """Request B: simulate auth with different unique URL."""
-        resp = await client.post(
-            "/invocations",
-            json={"message": "帮用户B看收件箱", "stream": True},
-            headers={
-                "X-HW-AgentGateway-User-Id": "user-b",
-                "x-hw-agentarts-session-id": "session-b",
-                "Accept": "text/event-stream",
-            },
-        )
-        return resp.status_code, _parse_sse_events(resp.text)
-
-    # Need to set simulate_auth for the concurrency test. However, both
-    # requests use the same handler instance, and simulate_auth is a
-    # boolean flag. For real ContextVar isolation, the handler's
-    # simulate_auth needs to be per-request.
-    #
-    # We handle this by modifying the handler to check the message content
-    # instead of a shared flag. We dynamically patch the handler's
-    # handle_stream to simulate auth only for user-a's message.
-    #
-    # Both requests will get the same handler instance (patched, single).
-    # The handler's handle_stream will:
-    # - For user-a: put auth URL A in the queue
-    # - For user-b: don't put anything (or put a different URL)
-
-    # Override the handler for this test: it checks the message content
-    # to decide which auth URL (if any) to put in the queue.
-    from app.tools.email_tools import set_message_queue as real_set_mq
-
-    original_handle_stream = _base_handler.handle_stream
-
-    async def concurrency_handle_stream(
-        message, user_id="anonymous", session_id=None, message_queue=None,
-    ):
-        real_set_mq(message_queue)
-        try:
-            tokens = ["并发", "测试", "!"]
-            if "用户A" in message and message_queue is not None:
-                await message_queue.put({
-                    "type": "system_message",
-                    "content": f"授权链接: {AUTH_URL_A}",
-                    "auth_url": AUTH_URL_A,
-                    "auth_required": True,
-                })
-            elif "用户B" in message and message_queue is not None:
-                await message_queue.put({
-                    "type": "system_message",
-                    "content": f"授权链接: {AUTH_URL_B}",
-                    "auth_url": AUTH_URL_B,
-                    "auth_required": True,
-                })
-
-            for token in tokens:
-                if message_queue is not None:
-                    while not message_queue.empty():
-                        msg = message_queue.get_nowait()
-                        if msg.get("type") != "system_message":
-                            continue
-                        payload = {
-                            "system_message": msg["content"],
-                            "auth_url": msg.get("auth_url"),
-                            "auth_required": True,
-                        }
-                        yield f"data: {json.dumps(payload)}\n\n"
-                yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
-
-            if message_queue is not None:
-                while not message_queue.empty():
-                    msg = message_queue.get_nowait()
-                    if msg.get("type") != "system_message":
-                        continue
-                    payload = {
-                        "system_message": msg["content"],
-                        "auth_url": msg.get("auth_url"),
-                        "auth_required": True,
-                    }
-                    yield f"data: {json.dumps(payload)}\n\n"
-
-            yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
-        finally:
-            real_set_mq(None)
-
-    _base_handler.handle_stream = concurrency_handle_stream  # type: ignore[method-assign]
-
-    # Execute both requests concurrently
-    (status_a, events_a), (status_b, events_b) = await asyncio.gather(
-        stream_a(), stream_b(),
-    )
-
-    # Restore original
-    _base_handler.handle_stream = original_handle_stream  # type: ignore[method-assign]
-
-    # Both should succeed
-    assert status_a == 200, f"Request A failed: {status_a}"
-    assert status_b == 200, f"Request B failed: {status_b}"
-
-    # Extract system_message events
-    system_a = [e for e in events_a if "system_message" in e]
-    system_b = [e for e in events_b if "system_message" in e]
-
-    # Each request should have its own system_message
-    assert len(system_a) >= 1, (
-        f"Request A: Expected system_message with auth URL A. "
-        f"Events: {[list(e.keys()) for e in events_a]}"
-    )
-    assert len(system_b) >= 1, (
-        f"Request B: Expected system_message with auth URL B. "
-        f"Events: {[list(e.keys()) for e in events_b]}"
-    )
-
-    # Verify isolation: Request A should have AUTH_URL_A, NOT AUTH_URL_B
-    auth_urls_a = [e.get("auth_url", "") for e in system_a]
-    auth_urls_b = [e.get("auth_url", "") for e in system_b]
-
-    assert any(AUTH_URL_A in url for url in auth_urls_a), (
-        f"Request A should contain AUTH_URL_A ({AUTH_URL_A}), "
-        f"got auth URLs: {auth_urls_a}"
-    )
-    assert not any(AUTH_URL_B in url for url in auth_urls_a), (
-        f"Request A must NOT contain AUTH_URL_B ({AUTH_URL_B}) — "
-        f"cross-contamination detected! Auth URLs in A: {auth_urls_a}"
-    )
-
-    assert any(AUTH_URL_B in url for url in auth_urls_b), (
-        f"Request B should contain AUTH_URL_B ({AUTH_URL_B}), "
-        f"got auth URLs: {auth_urls_b}"
-    )
-    assert not any(AUTH_URL_A in url for url in auth_urls_b), (
-        f"Request B must NOT contain AUTH_URL_A ({AUTH_URL_A}) — "
-        f"cross-contamination detected! Auth URLs in B: {auth_urls_b}"
-    )

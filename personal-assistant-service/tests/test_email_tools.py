@@ -843,67 +843,25 @@ class TestReplyToEmail:
 # ═══════════════════════════════════════════════════════════════
 
 
+
 class TestHandleAuthUrl:
-    """Tests for handle_auth_url() with ContextVar-isolated message queue.
-
-    Replaces TestHandleProviderError which tested the deprecated
-    @_handle_provider_error decorator / AuthUrlRequired exception.
-    """
-
-    @pytest.fixture(autouse=True)
-    def reset_contextvar(self):
-        """Reset the ContextVar before each test to ensure clean isolation."""
-        et._message_queue.set(None)
-        yield
-        et._message_queue.set(None)
+    """Tests for handle_auth_url() with adispatch_custom_event."""
 
     @pytest.mark.asyncio
-    async def test_handle_auth_url_writes_to_queue(self):
-        """UT-HAU-01: handle_auth_url puts message to the ContextVar queue."""
-        q = asyncio.Queue()
-        et._message_queue.set(q)
-
-        await et.handle_auth_url("https://auth.example.com/login")
-
-        assert not q.empty()
-        msg = q.get_nowait()
-        assert msg["type"] == "system_message"
-        assert msg["auth_url"] == "https://auth.example.com/login"
-        assert msg["auth_required"] is True
-        assert "https://auth.example.com/login" in msg["content"]
-
-    @pytest.mark.asyncio
-    async def test_handle_auth_url_no_queue_no_error(self):
-        """UT-HAU-02: handle_auth_url is a no-op when ContextVar is None."""
-        et._message_queue.set(None)
-
-        # Should not raise — this is the key behavior change from AuthUrlRequired
-        await et.handle_auth_url("https://auth.example.com/login")
-
-    @pytest.mark.asyncio
-    async def test_handle_auth_url_message_fields(self):
-        """UT-HAU-03: message dict has correct keys and auth_required=True."""
-        q = asyncio.Queue()
-        et._message_queue.set(q)
-
-        await et.handle_auth_url("https://login.example.com/oauth")
-
-        msg = q.get_nowait()
-        assert msg["type"] == "system_message"
-        assert msg["auth_required"] is True
-        assert msg["auth_url"] == "https://login.example.com/oauth"
-
-    @pytest.mark.asyncio
-    async def test_handle_auth_url_content_includes_url(self):
-        """UT-HAU-04: message content text contains the provided auth URL."""
-        q = asyncio.Queue()
-        et._message_queue.set(q)
-        test_url = "https://microsoft.com/oauth/authorize?state=abc123"
-
-        await et.handle_auth_url(test_url)
-
-        msg = q.get_nowait()
-        assert test_url in msg["content"]
+    async def test_handle_auth_url_dispatches_event(self):
+        """UT-HAU-01: handle_auth_url calls adispatch_custom_event."""
+        with patch("app.tools.email_tools.adispatch_custom_event") as mock_dispatch:
+            await et.handle_auth_url("https://auth.example.com/login")
+            
+            mock_dispatch.assert_called_once()
+            args, kwargs = mock_dispatch.call_args
+            assert args[0] == "auth_required"
+            
+            data = args[1]
+            assert data["type"] == "system_message"
+            assert data["auth_url"] == "https://auth.example.com/login"
+            assert data["auth_required"] is True
+            assert "https://auth.example.com/login" in data["content"]
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -1047,3 +1005,5 @@ class TestToolErrorFormatting:
 
 
 # ═══════════════════════════════════════════════════════════════
+
+
