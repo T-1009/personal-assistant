@@ -1,4 +1,3 @@
-import asyncio
 import json
 import os
 from collections.abc import AsyncGenerator
@@ -182,35 +181,26 @@ class AgentHandler:
         user_id: str = "anonymous",
         session_id: str | None = None,
     ) -> AsyncGenerator[str, None]:
-        """Stream tokens from the agent using astream_events v2."""
+        """Stream tokens and custom events via LangGraph stream_mode."""
         config = self._build_config(user_id, session_id)
 
         try:
             agent = self.create_agent()
-            async for event in agent.astream_events(
+            async for chunk in agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
-                version="v2",
+                stream_mode=["messages", "custom"],
                 config=config,
             ):
-                kind = event["event"]
-                
-                # ── 1. Intercept custom event for auth URLs ──
-                if kind == "on_custom_event" and event.get("name") == "auth_required":
-                    payload = {
-                        "system_message": event["data"]["content"],
-                        "auth_url": event["data"].get("auth_url"),
-                        "auth_required": event["data"].get("auth_required", True),
-                    }
-                    yield f"data: {json.dumps(payload)}\n\n"
+                mode, data = chunk
 
-                # ── 2. Process streaming token event ──
-                elif kind == "on_chat_model_stream":
-                    chunk = event["data"]["chunk"]
-                    token = (
-                        chunk.content
-                        if hasattr(chunk, "content")
-                        else str(chunk)
-                    )
+                # ── 1. Custom event from get_stream_writer() (auth URLs) ──
+                if mode == "custom":
+                    yield f"data: {json.dumps(data)}\n\n"
+
+                # ── 2. Token streaming ──
+                elif mode == "messages":
+                    token_chunk, _metadata = data
+                    token = getattr(token_chunk, "content", "") or ""
                     if token:
                         yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
 
@@ -218,7 +208,6 @@ class AgentHandler:
             yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
 
         except GeneratorExit:
-            # Generator being closed (client disconnected) — let it propagate.
             raise
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"

@@ -1,10 +1,9 @@
-import asyncio
 import logging
 from typing import Any
 
 import httpx
 from agentarts.sdk import require_access_token
-from langchain_core.callbacks.manager import adispatch_custom_event
+from langgraph.config import get_stream_writer
 
 logger = logging.getLogger(__name__)
 
@@ -12,24 +11,31 @@ logger = logging.getLogger(__name__)
 async def handle_auth_url(auth_url: str) -> None:
     """Callback triggered by the SDK when user authentication is required.
 
-    Dispatches a custom event to the LangGraph astream_events loop
-    so the SSE stream can present the authorization URL directly to the
-    user — no exception, no LLM round-trip.
+    Uses LangGraph's native stream_writer to push the authorization URL
+    through the ``custom`` stream channel directly to the SSE consumer
+    — no exception, no LLM round-trip.
     """
     logger.info("User authorization required — auth URL: %s", auth_url)
-    await adispatch_custom_event(
-        "auth_required",
-        {
-            "type": "system_message",
-            "content": (
-                "邮件功能需要您的授权。请点击以下链接进行授权：\n\n"
-                f"{auth_url}\n\n"
-                "授权完成后，请再次告诉我您需要做什么。"
-            ),
-            "auth_url": auth_url,
-            "auth_required": True,
-        },
-    )
+    try:
+        writer = get_stream_writer()
+        writer(
+            {
+                "type": "system_message",
+                "system_message": (
+                    "邮件功能需要您的授权。请点击以下链接进行授权：\n\n"
+                    f"{auth_url}\n\n"
+                    "授权完成后，请再次告诉我您需要做什么。"
+                ),
+                "auth_url": auth_url,
+                "auth_required": True,
+            }
+        )
+    except RuntimeError:
+        logger.warning(
+            "get_stream_writer unavailable (not in graph context) — "
+            "auth URL not streamed: %s",
+            auth_url,
+        )
 
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
@@ -69,7 +75,10 @@ def _auth_required_response() -> dict[str, Any]:
     """Return a tool result indicating authorization is pending."""
     return {
         "auth_required": True,
-        "error": "Authorization pending. Please follow the authorization link sent to you.",
+        "error": (
+            "Authorization pending. Please follow the authorization link "
+            "sent to you."
+        ),
     }
 
 

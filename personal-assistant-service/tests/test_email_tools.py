@@ -3,7 +3,6 @@
 Feature 10a: Outbound Email — tests all 5 tool functions
 """
 
-import asyncio
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -845,23 +844,36 @@ class TestReplyToEmail:
 
 
 class TestHandleAuthUrl:
-    """Tests for handle_auth_url() with adispatch_custom_event."""
+    """Tests for handle_auth_url() with get_stream_writer."""
 
     @pytest.mark.asyncio
-    async def test_handle_auth_url_dispatches_event(self):
-        """UT-HAU-01: handle_auth_url calls adispatch_custom_event."""
-        with patch("app.tools.email_tools.adispatch_custom_event") as mock_dispatch:
+    async def test_handle_auth_url_writes_to_stream_writer(self):
+        """UT-HAU-01: handle_auth_url calls get_stream_writer with auth URL."""
+        writer_mock = MagicMock()
+        with patch(
+            "app.tools.email_tools.get_stream_writer", return_value=writer_mock
+        ):
             await et.handle_auth_url("https://auth.example.com/login")
-            
-            mock_dispatch.assert_called_once()
-            args, kwargs = mock_dispatch.call_args
-            assert args[0] == "auth_required"
-            
-            data = args[1]
-            assert data["type"] == "system_message"
+
+            writer_mock.assert_called_once()
+            data = writer_mock.call_args[0][0]
             assert data["auth_url"] == "https://auth.example.com/login"
             assert data["auth_required"] is True
-            assert "https://auth.example.com/login" in data["content"]
+            assert "https://auth.example.com/login" in data["system_message"]
+
+    @pytest.mark.asyncio
+    async def test_handle_auth_url_runtime_error_graceful(self):
+        """UT-HAU-02: handle_auth_url logs warning when get_stream_writer fails."""
+        with patch(
+            "app.tools.email_tools.get_stream_writer",
+            side_effect=RuntimeError("not in graph context"),
+        ), patch("app.tools.email_tools.logger") as mock_logger:
+            await et.handle_auth_url("https://auth.example.com/login")
+
+            mock_logger.warning.assert_called_once()
+            assert (
+                "get_stream_writer unavailable" in mock_logger.warning.call_args[0][0]
+            )
 
 
 # ═══════════════════════════════════════════════════════════════
