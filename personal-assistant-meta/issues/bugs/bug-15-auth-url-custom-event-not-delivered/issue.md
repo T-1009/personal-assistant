@@ -73,47 +73,56 @@ sequenceDiagram
 
 ## 解决方案
 
-### 短期方案：共享 asyncio.Queue 桥接
+### 短期方案：`ContextVar[asyncio.Queue]` 桥接（Panel 共识方案）
 
-在 `handle_auth_url` 和 `handle_stream()` 事件循环之间建立一个 `asyncio.Queue`，两者共享：
+在 `handle_stream()` 中创建 per-session 的 `asyncio.Queue`，通过 `contextvars.ContextVar` 共享给 `handle_auth_url`，利用 **共享可变对象** 实现跨 Task 通信：
 
-1. **`handle_auth_url` 端**：将 auth URL 写入 Queue（不再依赖 `adispatch_custom_event`）
-2. **`handle_stream()` 端**：在事件循环中轮询 Queue，有消息时立即 yield SSE payload
+1. **`handle_stream()` 端**：创建 Queue → 存入 ContextVar → 事件循环中非阻塞轮询 → 最后清理
+2. **`handle_auth_url` 端**：从 ContextVar 读取 Queue → `queue.put(auth_url)` → 事件被 `handle_stream()` 轮询消费
+
+**关键设计**：使用 `ContextVar[asyncio.Queue]` 而非 `ContextVar[str]`。因为 Queue 是可变对象，即使 LangGraph 内部使用了 `asyncio.create_task` 导致 ContextVar 被 Copy-on-Write，**两个 Task 持有的是同一个 Queue 对象引用**——写入和读取操作的都是同一个队列实例。
 
 优点：
-- 不依赖 LangGraph run context
-- 实现简单，无额外依赖
-- 消息传递保证不丢失
+- ✅ Session 天然隔离（每个 `handle_stream()` 调用创建独立 Queue）
+- ✅ 无跨用户数据泄露风险（Queue 生命周期绑定到 `handle_stream()` 调用）
+- ✅ 实时交付（事件循环中 `get_nowait()` 非阻塞轮询，延迟 < 1 个 event 间隔）
+- ✅ 不依赖 LangGraph run context
+- ✅ 无需 thread_id 解析或 dict 注册表
+- ✅ 无额外依赖（`contextvars` + `asyncio` 均为标准库）
 
 ```mermaid
 sequenceDiagram
     participant U as 用户
     participant SSE as handle_stream()
+    participant CV as ContextVar[Queue]
     participant Q as asyncio.Queue
     participant SDK as @require_access_token
     participant Tool as tool function
     participant LLM
 
     U->>SSE: POST /invocations (stream)
-    SSE->>SSE: 创建 event queue
+    SSE->>Q: Queue = asyncio.Queue()
+    SSE->>CV: auth_queue_ctx.set(Queue)
 
-    Note over SSE,Q: ✅ 共享 asyncio.Queue 作为 out-of-band 通道
+    Note over CV,Q: ✅ 共享可变对象 — 同一 Queue 引用<br/>即使跨 asyncio.Task 也可见
 
     SSE->>LG: agent.astream_events(...)
     LG->>SDK: 准备调用 tool
     SDK->>SDK: 检测到无 token
-    SDK->>Q: handle_auth_url → queue.put(auth_url)
+    SDK->>CV: handle_auth_url → auth_queue_ctx.get() → Queue
+    SDK->>Q: Queue.put(auth_url)
     SDK-->>LG: access_token = None
     LG->>Tool: list_emails(access_token=None)
     Tool->>LLM: return _auth_required_response()
 
     loop SSE 事件循环
         SSE->>SSE: 处理 astream_events token
-        SSE->>Q: queue.get_nowait() 非阻塞轮询
+        SSE->>Q: Queue.get_nowait() 非阻塞轮询
         Q-->>SSE: auth_url
         SSE->>U: data: {"system_message":"...", "auth_url":"..."}
     end
 
+    SSE->>CV: auth_queue_ctx.set(None) cleanup
     U->>U: ✅ 收到可点击的授权链接
 ```
 

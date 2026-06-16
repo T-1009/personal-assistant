@@ -119,7 +119,6 @@ def _get_client() -> httpx.AsyncClient:
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def list_emails(
     folder: str = "inbox",
@@ -188,7 +187,6 @@ async def list_emails(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def get_email(
     email_id: str,
@@ -263,7 +261,6 @@ async def get_email(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def search_emails(
     query: str,
@@ -332,7 +329,6 @@ async def search_emails(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def send_email(
     to: list[str],
@@ -443,7 +439,6 @@ async def send_email(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def reply_to_email(
     email_id: str,
