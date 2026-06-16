@@ -10,6 +10,7 @@
 | [11](bug-11-agentarts-platform-issues/issue.md) | AgentArts 平台级缺陷与限制汇总 | — | backlog |
 | [12](bug-12-agentarts-sandbox-cold-start-504/issue.md) | AgentArts Sandbox 冷启动触发 504 Gateway Timeout | — | todo |
 | [13](resolved/bug-13-b2b-guest-user-401/issue.md) | 部分 Azure AD B2B Guest 用户调用 /invocations 返回 401 | feature-4-inbound-identity | todo |
+| [14](bug-14-email-tool-b2b-guest-401/issue.md) | 邮件工具对 B2B Guest 用户（MSA）返回 401 | — | todo |
 
 ## 已解决 Bug
 
