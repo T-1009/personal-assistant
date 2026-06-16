@@ -8,14 +8,14 @@ Uses SDK header constants from agentarts.sdk.runtime.model.
 from unittest.mock import patch
 
 import pytest
+from agentarts.sdk.runtime.model import (
+    ACCESS_TOKEN_HEADER,
+    SESSION_HEADER,
+    USER_ID_HEADER,
+)
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from agentarts.sdk.runtime.model import (
-    SESSION_HEADER,
-    USER_ID_HEADER,
-    ACCESS_TOKEN_HEADER,
-)
 from app.auth import (
     extract_gateway_session_id,
     extract_gateway_user_id,

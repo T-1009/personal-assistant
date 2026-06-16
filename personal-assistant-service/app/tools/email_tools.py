@@ -1,4 +1,5 @@
-import functools
+import asyncio
+from contextvars import ContextVar
 import logging
 from typing import Any
 
@@ -8,22 +9,41 @@ from agentarts.sdk import require_access_token
 logger = logging.getLogger(__name__)
 
 
-class AuthUrlRequired(Exception):  # noqa: N818
-    """Raised when user authorization is required for an OAuth2 resource."""
+_message_queue: ContextVar["asyncio.Queue | None"] = (
+    ContextVar("email_message_queue", default=None)
+)
 
-    def __init__(self, auth_url: str) -> None:
-        self.auth_url = auth_url
-        super().__init__(f"User authorization required: {auth_url}")
+
+def set_message_queue(q: asyncio.Queue | None) -> None:
+    """Set the per-task isolated message queue for out-of-band system messages."""
+    _message_queue.set(q)
 
 
 async def handle_auth_url(auth_url: str) -> None:
     """Callback triggered by the SDK when user authentication is required.
 
-    Raises AuthUrlRequired to short-circuit the token polling loop so the
-    agent can immediately present the authorization URL to the user.
+    Writes a system_message to the per-task ContextVar-isolated queue
+    so the SSE stream can present the authorization URL directly to the
+    user — no exception, no LLM round-trip.
     """
     logger.info("User authorization required — auth URL: %s", auth_url)
-    raise AuthUrlRequired(auth_url)
+    q = _message_queue.get(None)
+    if q is not None:
+        await q.put({
+            "type": "system_message",
+            "content": (
+                "邮件功能需要您的授权。请点击以下链接进行授权：\n\n"
+                f"{auth_url}\n\n"
+                "授权完成后，请再次告诉我您需要做什么。"
+            ),
+            "auth_url": auth_url,
+            "auth_required": True,
+        })
+    else:
+        logger.warning(
+            "No message queue available (sync handle() path or cleanup "
+            "already ran). Auth URL not pushed to user."
+        )
 
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
@@ -59,92 +79,33 @@ def _extract_graph_error(resp: httpx.Response) -> str:
     return f"[{status}] {resp.reason_phrase or 'Unknown error'}"
 
 
+def _auth_required_response() -> dict[str, Any]:
+    """Return a tool result indicating authorization is pending."""
+    return {
+        "auth_required": True,
+        "error": "Authorization pending. Please follow the authorization link sent to you.",
+    }
+
+
+def _format_tool_error(e: Exception, tool_name: str) -> dict[str, Any]:
+    """Convert known exceptions to user-friendly Chinese error dicts."""
+    if isinstance(e, httpx.TimeoutException):
+        return {"error": f"请求超时，请稍后再试。（{tool_name}）"}
+    if isinstance(e, httpx.ConnectError):
+        return {"error": f"无法连接到邮件服务器，请检查网络。（{tool_name}）"}
+    if isinstance(e, httpx.HTTPStatusError):
+        status = e.response.status_code
+        if status == 429:
+            return {"error": "请求过于频繁，请稍后再试。"}
+        if status == 503:
+            return {"error": "邮件服务暂时不可用，请稍后再试。"}
+        if status == 401:
+            return {"error": "授权已过期，请重新授权。"}
+        return {"error": f"邮件服务返回错误（{status}），请稍后再试。"}
+    return {"error": f"操作失败: {tool_name}。如果问题持续，请联系支持。"}
+
+
 _client: httpx.AsyncClient | None = None
-
-
-def _handle_provider_error(fn):
-    """Wrap a tool function to gracefully handle AgentArts Identity errors.
-
-    The @require_access_token decorator fires BEFORE the function body,
-    so any Identity service error (404 provider not found, 500 internal error,
-    network timeout, etc.) would crash the frontend via the SSE stream.
-    This wrapper catches all such errors and returns a user-friendly message.
-    """
-
-    @functools.wraps(fn)
-    async def wrapper(*args, **kwargs):
-        try:
-            return await fn(*args, **kwargs)
-        except AuthUrlRequired as e:
-            logger.info("Email tool '%s' requires user authorization.", fn.__name__)
-            return {
-                "error": (
-                    "邮件功能需要您的授权。请点击以下链接进行授权：\n\n"
-                    f"{e.auth_url}\n\n"
-                    "授权完成后，请再次告诉我您需要做什么。"
-                ),
-                "auth_url": e.auth_url,
-                "auth_required": True,
-            }
-        except Exception as e:
-            error_msg = str(e).strip()
-            error_type = type(e).__name__
-            logger.error(
-                "Email tool failed — %s. Tool: %s. "
-                "Exception args: %s, Exception repr: %s",
-                error_type,
-                fn.__name__,
-                e.args,
-                repr(e),
-                exc_info=True,
-            )
-            is_write_tool = fn.__name__ in ("send_email", "reply_to_email")
-            if "m365-provider" in error_msg or "Resource not found" in error_msg:
-                res = {
-                    "error": (
-                        "邮件功能暂不可用：M365 Provider 未配置。"
-                        "请在 AgentArts Identity 中预先配置 OAuth2 provider "
-                        "`m365-provider`，并确保 AgentArts Identity 服务可用。"
-                    ),
-                    "setup_required": True,
-                }
-                if is_write_tool:
-                    res["sent"] = False
-                return res
-            if "500" in error_msg or "internal server error" in error_msg.lower():
-                res = {
-                    "error": (
-                        "邮件功能暂时不可用：AgentArts Identity 服务返回内部错误"
-                        " (500)。请稍后重试。如果持续出现，请检查 M365 Provider "
-                        "在华为云控制台的配置。"
-                    ),
-                    "retryable": True,
-                }
-                if is_write_tool:
-                    res["sent"] = False
-                return res
-
-            display_error = error_msg
-            if not display_error:
-                if e.args:
-                    arg_strs = [str(a) for a in e.args if str(a).strip()]
-                    display_error = "; ".join(arg_strs[:3]) if arg_strs else ""
-                if not display_error:
-                    display_error = f"未知错误 ({error_type})"
-
-            res = {
-                "error": (
-                    f"邮件工具执行失败：{display_error[:300]}。"
-                    "请检查 AgentArts Identity 服务和 m365-provider 配置。"
-                ),
-                "detail": error_type,
-            }
-            if fn.__name__ in ("send_email", "reply_to_email"):
-                res["sent"] = False
-
-            return res
-
-    return wrapper
 
 
 def _get_client() -> httpx.AsyncClient:
@@ -163,8 +124,6 @@ def _get_client() -> httpx.AsyncClient:
 
 # ── 1. list_emails ──
 
-
-@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
@@ -189,41 +148,47 @@ async def list_emails(
         isRead, importance}), count (int), folder (str)
     """
     logger.debug("list_emails access_token: %s", access_token)
-    client = _get_client()
-    resp = await client.get(
-        f"{GRAPH_BASE_URL}/mailFolders/{folder}/messages",
-        headers={"Authorization": f"Bearer {access_token}"},
-        params={
-            "$top": limit,
-            "$select": (
-                "id,subject,from,receivedDateTime,isRead,importance,bodyPreview"
-            ),
-            "$orderby": "receivedDateTime desc",
-        },
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    emails = [
-        {
-            "id": m.get("id"),
-            "subject": m.get("subject"),
-            "from": (
-                (m.get("from") or {}).get("emailAddress", {}).get("name", "Unknown")
-            ),
-            "receivedDateTime": m.get("receivedDateTime"),
-            "isRead": m.get("isRead"),
-            "importance": m.get("importance", "normal"),
-            "bodyPreview": m.get("bodyPreview", ""),
-        }
-        for m in data.get("value", [])
-    ]
-    return {"emails": emails, "count": len(emails), "folder": folder}
+    if not access_token:
+        return _auth_required_response()
+    try:
+        client = _get_client()
+        resp = await client.get(
+            f"{GRAPH_BASE_URL}/mailFolders/{folder}/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "$top": limit,
+                "$select": (
+                    "id,subject,from,receivedDateTime,isRead,importance,bodyPreview"
+                ),
+                "$orderby": "receivedDateTime desc",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        emails = [
+            {
+                "id": m.get("id"),
+                "subject": m.get("subject"),
+                "from": (
+                    (m.get("from") or {})
+                    .get("emailAddress", {})
+                    .get("name", "Unknown")
+                ),
+                "receivedDateTime": m.get("receivedDateTime"),
+                "isRead": m.get("isRead"),
+                "importance": m.get("importance", "normal"),
+                "bodyPreview": m.get("bodyPreview", ""),
+            }
+            for m in data.get("value", [])
+        ]
+        return {"emails": emails, "count": len(emails), "folder": folder}
+    except Exception as e:
+        logger.exception("list_emails failed")
+        return _format_tool_error(e, "list_emails")
 
 
 # ── 2. get_email ──
 
-
-@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
@@ -246,51 +211,55 @@ async def get_email(
         ccRecipients, receivedDateTime, attachments (list of {name, size, contentType})
     """
     logger.debug("get_email access_token: %s", access_token)
-    client = _get_client()
-    resp = await client.get(
-        f"{GRAPH_BASE_URL}/messages/{email_id}",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Prefer": 'outlook.body-content-type="text"',
-        },
-        params={
-            "$select": (
-                "id,subject,body,from,toRecipients,ccRecipients,receivedDateTime"
-            ),
-            "$expand": "attachments($select=name,contentType,size)",
-        },
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    return {
-        "id": data.get("id"),
-        "subject": data.get("subject"),
-        "body": data.get("body", {}).get("content", ""),
-        "from": (data.get("from") or {}).get("emailAddress", {}),
-        "toRecipients": [
-            r.get("emailAddress", {}) for r in data.get("toRecipients", [])
-        ],
-        "ccRecipients": [
-            r.get("emailAddress", {}) for r in data.get("ccRecipients", [])
-        ],
-        "receivedDateTime": data.get("receivedDateTime"),
-        "attachments": [
-            {
-                "name": a.get("name"),
-                "size": a.get("size"),
-                "contentType": a.get("contentType"),
-            }
-            for a in data.get("attachments", [])
-        ]
-        if data.get("hasAttachments")
-        else [],
-    }
+    if not access_token:
+        return _auth_required_response()
+    try:
+        client = _get_client()
+        resp = await client.get(
+            f"{GRAPH_BASE_URL}/messages/{email_id}",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Prefer": 'outlook.body-content-type="text"',
+            },
+            params={
+                "$select": (
+                    "id,subject,body,from,toRecipients,ccRecipients,receivedDateTime"
+                ),
+                "$expand": "attachments($select=name,contentType,size)",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return {
+            "id": data.get("id"),
+            "subject": data.get("subject"),
+            "body": data.get("body", {}).get("content", ""),
+            "from": (data.get("from") or {}).get("emailAddress", {}),
+            "toRecipients": [
+                r.get("emailAddress", {})
+                for r in data.get("toRecipients", [])
+            ],
+            "ccRecipients": [
+                r.get("emailAddress", {})
+                for r in data.get("ccRecipients", [])
+            ],
+            "receivedDateTime": data.get("receivedDateTime"),
+            "attachments": [
+                {
+                    "name": a.get("name"),
+                    "size": a.get("size"),
+                    "contentType": a.get("contentType"),
+                }
+                for a in data.get("attachments", [])
+            ] if data.get("hasAttachments") else [],
+        }
+    except Exception as e:
+        logger.exception("get_email failed")
+        return _format_tool_error(e, "get_email")
 
 
 # ── 3. search_emails ──
 
-
-@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Mail.Read"],
@@ -317,39 +286,45 @@ async def search_emails(
         count (int), query (str)
     """
     logger.debug("search_emails access_token: %s", access_token)
-    escaped_query = query.replace('"', '\\"')
-    client = _get_client()
-    resp = await client.get(
-        f"{GRAPH_BASE_URL}/messages",
-        headers={"Authorization": f"Bearer {access_token}"},
-        params={
-            "$search": f'"{escaped_query}"',
-            "$top": limit,
-            "$select": "id,subject,from,receivedDateTime,isRead,bodyPreview",
-        },
-    )
-    resp.raise_for_status()
-    data = resp.json()
-    results = [
-        {
-            "id": m.get("id"),
-            "subject": m.get("subject"),
-            "from": (
-                (m.get("from") or {}).get("emailAddress", {}).get("name", "Unknown")
-            ),
-            "receivedDateTime": m.get("receivedDateTime"),
-            "isRead": m.get("isRead"),
-            "bodyPreview": m.get("bodyPreview", ""),
-        }
-        for m in data.get("value", [])
-    ]
-    return {"results": results, "count": len(results), "query": query}
+    if not access_token:
+        return _auth_required_response()
+    try:
+        escaped_query = query.replace('"', '\\"')
+        client = _get_client()
+        resp = await client.get(
+            f"{GRAPH_BASE_URL}/messages",
+            headers={"Authorization": f"Bearer {access_token}"},
+            params={
+                "$search": f'"{escaped_query}"',
+                "$top": limit,
+                "$select": "id,subject,from,receivedDateTime,isRead,bodyPreview",
+            },
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        results = [
+            {
+                "id": m.get("id"),
+                "subject": m.get("subject"),
+                "from": (
+                    (m.get("from") or {})
+                    .get("emailAddress", {})
+                    .get("name", "Unknown")
+                ),
+                "receivedDateTime": m.get("receivedDateTime"),
+                "isRead": m.get("isRead"),
+                "bodyPreview": m.get("bodyPreview", ""),
+            }
+            for m in data.get("value", [])
+        ]
+        return {"results": results, "count": len(results), "query": query}
+    except Exception as e:
+        logger.exception("search_emails failed")
+        return _format_tool_error(e, "search_emails")
 
 
 # ── 4. send_email (Guard protected) ──
 
-
-@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=[
@@ -388,70 +363,78 @@ async def send_email(
         confirm=False
     """
     logger.debug("send_email access_token: %s", access_token)
+    if not access_token:
+        return _auth_required_response()
     if not to:
         return {
             "sent": False,
             "message_id": None,
             "error": "At least one recipient is required",
         }
-    if not confirm:
+    try:
+        if not confirm:
+            return {
+                "sent": False,
+                "requires_confirmation": True,
+                "preview": {
+                    "to": to,
+                    "subject": subject,
+                    "body_preview": body[:200],
+                },
+                "error": "请确认收件人、主题和正文后再发送。调用时设置 confirm=True。",
+            }
+        message: dict[str, Any] = {
+            "subject": subject,
+            "body": {
+                "contentType": "Text",
+                "content": body,
+            },
+            "toRecipients": [
+                {"emailAddress": {"address": addr}} for addr in to
+            ],
+        }
+        if cc:
+            message["ccRecipients"] = [
+                {"emailAddress": {"address": addr}} for addr in cc
+            ]
+
+        client = _get_client()
+        resp = await client.post(
+            f"{GRAPH_BASE_URL}/sendMail",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"message": message, "saveToSentItems": True},
+        )
+        if resp.status_code == 202:
+            return {
+                "sent": True,
+                "message_id": None,
+                "error": None,
+                "status_code": 202,
+            }
+
+        # ── Non-202: extract a human-readable error from the Graph API ──
+        error_msg = _extract_graph_error(resp)
+        logger.error(
+            "send_email failed — status=%d, body=%s",
+            resp.status_code,
+            resp.text[:500] if resp.text else "(empty)",
+        )
         return {
             "sent": False,
-            "requires_confirmation": True,
-            "preview": {
-                "to": to,
-                "subject": subject,
-                "body_preview": body[:200],
-            },
-            "error": "请确认收件人、主题和正文后再发送。调用时设置 confirm=True。",
-        }
-    message: dict[str, Any] = {
-        "subject": subject,
-        "body": {
-            "contentType": "Text",
-            "content": body,
-        },
-        "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
-    }
-    if cc:
-        message["ccRecipients"] = [{"emailAddress": {"address": addr}} for addr in cc]
-
-    client = _get_client()
-    resp = await client.post(
-        f"{GRAPH_BASE_URL}/sendMail",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
-        json={"message": message, "saveToSentItems": True},
-    )
-    if resp.status_code == 202:
-        return {
-            "sent": True,
             "message_id": None,
-            "error": None,
-            "status_code": 202,
+            "error": error_msg,
+            "status_code": resp.status_code,
         }
-
-    # ── Non-202: extract a human-readable error from the Graph API ──
-    error_msg = _extract_graph_error(resp)
-    logger.error(
-        "send_email failed — status=%d, body=%s",
-        resp.status_code,
-        resp.text[:500] if resp.text else "(empty)",
-    )
-    return {
-        "sent": False,
-        "message_id": None,
-        "error": error_msg,
-        "status_code": resp.status_code,
-    }
+    except Exception as e:
+        logger.exception("send_email failed")
+        return _format_tool_error(e, "send_email")
 
 
 # ── 5. reply_to_email ──
 
-
-@_handle_provider_error
 @require_access_token(
     provider_name="m365-provider",
     scopes=[
@@ -485,43 +468,49 @@ async def reply_to_email(
         confirm=False
     """
     logger.debug("reply_to_email access_token: %s", access_token)
+    if not access_token:
+        return _auth_required_response()
     if not email_id or not email_id.strip():
         return {"sent": False, "error": "email_id is required for reply_to_email"}
     if not body or not body.strip():
         return {"sent": False, "error": "reply body is required"}
-    if not confirm:
+    try:
+        if not confirm:
+            return {
+                "sent": False,
+                "requires_confirmation": True,
+                "preview": {
+                    "email_id": email_id,
+                    "body_preview": body[:200],
+                },
+                "error": "请确认回复内容后再发送。调用时设置 confirm=True。",
+            }
+        client = _get_client()
+        resp = await client.post(
+            f"{GRAPH_BASE_URL}/messages/{email_id}/reply",
+            headers={
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/json",
+            },
+            json={"message": {"body": {"contentType": "Text", "content": body}}},
+        )
+        if resp.status_code == 202:
+            return {"sent": True, "error": None, "status_code": 202}
+
+        error_msg = _extract_graph_error(resp)
+        logger.error(
+            "reply_to_email failed — status=%d, body=%s",
+            resp.status_code,
+            resp.text[:500] if resp.text else "(empty)",
+        )
         return {
             "sent": False,
-            "requires_confirmation": True,
-            "preview": {
-                "email_id": email_id,
-                "body_preview": body[:200],
-            },
-            "error": "请确认回复内容后再发送。调用时设置 confirm=True。",
+            "error": error_msg,
+            "status_code": resp.status_code,
         }
-    client = _get_client()
-    resp = await client.post(
-        f"{GRAPH_BASE_URL}/messages/{email_id}/reply",
-        headers={
-            "Authorization": f"Bearer {access_token}",
-            "Content-Type": "application/json",
-        },
-        json={"message": {"body": {"contentType": "Text", "content": body}}},
-    )
-    if resp.status_code == 202:
-        return {"sent": True, "error": None, "status_code": 202}
-
-    error_msg = _extract_graph_error(resp)
-    logger.error(
-        "reply_to_email failed — status=%d, body=%s",
-        resp.status_code,
-        resp.text[:500] if resp.text else "(empty)",
-    )
-    return {
-        "sent": False,
-        "error": error_msg,
-        "status_code": resp.status_code,
-    }
+    except Exception as e:
+        logger.exception("reply_to_email failed")
+        return _format_tool_error(e, "reply_to_email")
 
 
 # ── Module-level tool list (no side-effects at import time) ──

@@ -1,6 +1,6 @@
 # Service Plan: 从 Request Header 提取 Workload Access Token
 
-> Issue: [chore-5-workload-access-token-from-header](./issue.md)
+> Issue: [chore-5-workload-access-token-from-header](issue.md)
 > Target branch: `chore-5-workload-access-token-from-header`
 
 ---

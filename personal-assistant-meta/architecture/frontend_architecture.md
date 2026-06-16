@@ -67,6 +67,7 @@ sequenceDiagram
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
 | **技术栈** | Vite + React + TypeScript + Tailwind CSS，assistant-ui AI Chat 组件库（含 `@assistant-ui/react-ai-sdk`）。详见 [ADR-013](../ADR/ADR-013-assistant-ui-chat-library.md) |
+| **SSE 事件类型** | `token`（LLM 流式 token）、`done`（流结束）、`error`（错误）、`system_message`（带外系统消息，如 OAuth2 鉴权 URL）。详见 §2.1.4 |
 
 **OAuth 前后端职责分离**：token 交换必须在后端，因为 client_secret 不能暴露在前端浏览器中。
 
@@ -207,6 +208,64 @@ flowchart TB
 **设计系统依据**：[`DESIGN.md`](../../../personal-assistant-client/DESIGN.md)
 
 > **注意**：本节 §2.1 描述的 OAuth callback / JWT Cookie 认证模式反映的是早期后端驱动的 auth 流程，与当前 MSAL-based SPA 认证（`@azure/msal-react` redirect + zustand token store）不一致。应在 follow-up issue 中更新 §2.1 以反映当前的 MSAL + zustand 架构。
+
+#### 2.1.4 SSE 事件协议
+
+Web Chat 与后端通过 SSE (Server-Sent Events) 进行流式通信。后端 `handle_stream` 在 `astream_events` 迭代过程中 yield 以下事件类型：
+
+| 事件字段 | 类型 | 说明 | 示例 |
+|----------|------|------|------|
+| `token` | `string` | LLM 流式输出的单个 token | `{"token": "你好", "done": false}` |
+| `done` | `boolean` | 流结束标记。`done: true` 表示 agent 推理完成 | `{"token": "", "done": true}` |
+| `error` | `string` | 流式过程中发生的异常（exception handler yield） | `{"error": "...", "done": true}` |
+| `system_message` | `string` | **带外系统消息**（Tool callback 通过 shared queue 注入，非 LLM 输出） | 见下方 |
+| `auth_url` | `string` | OAuth2 鉴权 URL（与 `system_message` 同时出现） | `{"system_message": "...", "auth_url": "https://...", "auth_required": true}` |
+| `auth_required` | `boolean` | 标记该 system_message 为 OAuth2 鉴权请求 | `true` |
+
+**`system_message` 事件的产生机制**：
+
+当 `@require_access_token` 装饰器的 `on_auth_url` 回调被触发时（用户尚未授权 OAuth2 provider），`handle_auth_url` 回调通过 shared `asyncio.Queue` 将鉴权 URL 写入 queue。`handle_stream` 在 `astream_events` 迭代间隙 drain queue 并 yield `system_message` 事件，使前端可以**不经过 LLM 转述**直接向用户呈现鉴权链接。
+
+```mermaid
+sequenceDiagram
+    participant Backend as handle_stream
+    participant Q as asyncio.Queue
+    participant Frontend as chat-adapter.ts
+
+    Note over Backend,Q: Tool callback 写入 system_message 到 queue
+    Q->>Backend: drain queue → get system_message
+
+    Backend->>Frontend: data: {"system_message": "邮件功能需要您的授权...", "auth_url": "https://...", "auth_required": true}
+
+    Note over Frontend: 识别 auth_required → 在聊天界面渲染授权卡片/链接
+```
+
+**前端处理**（`chat-adapter.ts`）：
+
+```typescript
+// SSEEvent type 扩展
+export interface SSEEvent {
+  token?: string;
+  done?: boolean;
+  error?: string;
+  system_message?: string;    // 新增
+  auth_url?: string;           // 新增
+  auth_required?: boolean;     // 新增
+}
+
+// chat-adapter.ts 处理逻辑
+if (parsed.system_message) {
+  // 将 system_message 作为 assistant 消息渲染到聊天流中
+  // 若 parsed.auth_required 为 true，可渲染为特殊的授权卡片组件
+  yield {
+    content: [{ type: "text", text: parsed.system_message }],
+  };
+}
+```
+
+> **设计决策**：`system_message` 通过 SSE 的 `data:` 行内嵌 JSON 传递，复用现有 SSE 协议框架，不需要新增 WebSocket 或 EventSource channel。详见 [backend_architecture.md §5.2.1](../architecture/backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递)。
+
+<!-- updated by issue: refactor-email-auth-normal-control-flow -->
 
 ### 2.2 飞书直连
 

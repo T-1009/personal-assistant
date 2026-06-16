@@ -76,8 +76,10 @@ flowchart LR
 - **草拟回复**：根据上下文草拟邮件回复内容，用户确认后执行
 - **邮件发送**：通过对话撰写并发送邮件，支持指定收件人、抄送
 - **敏感操作拦截**：发送邮件等写操作需用户二次确认（Guard 机制）
+- **OAuth2 鉴权**：首次使用邮件功能时，系统通过 `system_message` SSE 事件直接向用户呈现 Microsoft 365 授权链接，用户点击完成授权后即可正常使用邮件工具。授权链接不经过 LLM 转述，确保 URL 完整准确
 - **实现方式**：通过 AgentArts Identity SDK 的 `m365-provider` OAuth2 Credential Provider，以 User Federation 模式调用 Microsoft Graph API。详见 Feature 10a。
   <!-- updated by issue: feature-10a-outbound-email -->
+  <!-- updated by issue: refactor-email-auth-normal-control-flow -->
 
 ### 3.2 云资源查询（OBS）
 
