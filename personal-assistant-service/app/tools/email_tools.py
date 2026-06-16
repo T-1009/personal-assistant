@@ -112,7 +112,11 @@ def _get_client() -> httpx.AsyncClient:
 
 @require_access_token(
     provider_name="m365-provider",
-    scopes=["https://graph.microsoft.com/Mail.Read"],
+    scopes=[
+        "https://graph.microsoft.com/Mail.Read",
+        "https://graph.microsoft.com/Mail.ReadWrite",
+        "https://graph.microsoft.com/Mail.Send",
+    ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
     force_authentication=True,
@@ -177,7 +181,11 @@ async def list_emails(
 
 @require_access_token(
     provider_name="m365-provider",
-    scopes=["https://graph.microsoft.com/Mail.Read"],
+    scopes=[
+        "https://graph.microsoft.com/Mail.Read",
+        "https://graph.microsoft.com/Mail.ReadWrite",
+        "https://graph.microsoft.com/Mail.Send",
+    ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
     force_authentication=True,
@@ -248,7 +256,11 @@ async def get_email(
 
 @require_access_token(
     provider_name="m365-provider",
-    scopes=["https://graph.microsoft.com/Mail.Read"],
+    scopes=[
+        "https://graph.microsoft.com/Mail.Read",
+        "https://graph.microsoft.com/Mail.ReadWrite",
+        "https://graph.microsoft.com/Mail.Send",
+    ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
     force_authentication=True,
@@ -314,8 +326,9 @@ async def search_emails(
 @require_access_token(
     provider_name="m365-provider",
     scopes=[
-        "https://graph.microsoft.com/Mail.Send",
         "https://graph.microsoft.com/Mail.Read",
+        "https://graph.microsoft.com/Mail.ReadWrite",
+        "https://graph.microsoft.com/Mail.Send",
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
@@ -424,8 +437,9 @@ async def send_email(
 @require_access_token(
     provider_name="m365-provider",
     scopes=[
-        "https://graph.microsoft.com/Mail.Send",
         "https://graph.microsoft.com/Mail.Read",
+        "https://graph.microsoft.com/Mail.ReadWrite",
+        "https://graph.microsoft.com/Mail.Send",
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
