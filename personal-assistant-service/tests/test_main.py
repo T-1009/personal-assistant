@@ -37,7 +37,7 @@ class FakeAgentHandler:
         session_id: str | None = None,
         message_queue: "asyncio.Queue | None" = None,  # NEW
     ):
-        self.stream_calls.append((message, user_id, session_id, message_queue))
+        self.stream_calls.append((message, user_id, session_id))
         yield 'data: {"token": "Hello", "done": false}\n\n'
         yield 'data: {"token": " world", "done": false}\n\n'
         yield 'data: {"token": "", "done": true}\n\n'
@@ -371,8 +371,10 @@ async def test_invocations_stream_returns_sse(client, fake_handler):
 
     # Verify message_queue is passed and is an asyncio.Queue instance
     import asyncio
-    assert fake_handler.stream_calls[0][3] is not None
-    assert isinstance(fake_handler.stream_calls[0][3], asyncio.Queue)
+    call_args = fake_handler.stream_calls[0]
+    assert call_args[0] == "hello"
+    assert call_args[1] == "user-1"
+    assert call_args[2] == "sess-test"
 
     body = response.text
     assert "data:" in body
@@ -812,3 +814,4 @@ class TestCORSEnvVar:
         finally:
             monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
             importlib.reload(app_main)
+

@@ -1,35 +1,25 @@
 import asyncio
-from contextvars import ContextVar
 import logging
 from typing import Any
 
 import httpx
 from agentarts.sdk import require_access_token
+from langchain_core.callbacks.manager import adispatch_custom_event
 
 logger = logging.getLogger(__name__)
-
-
-_message_queue: ContextVar["asyncio.Queue | None"] = (
-    ContextVar("email_message_queue", default=None)
-)
-
-
-def set_message_queue(q: asyncio.Queue | None) -> None:
-    """Set the per-task isolated message queue for out-of-band system messages."""
-    _message_queue.set(q)
 
 
 async def handle_auth_url(auth_url: str) -> None:
     """Callback triggered by the SDK when user authentication is required.
 
-    Writes a system_message to the per-task ContextVar-isolated queue
+    Dispatches a custom event to the LangGraph astream_events loop
     so the SSE stream can present the authorization URL directly to the
     user — no exception, no LLM round-trip.
     """
     logger.info("User authorization required — auth URL: %s", auth_url)
-    q = _message_queue.get(None)
-    if q is not None:
-        await q.put({
+    await adispatch_custom_event(
+        "auth_required",
+        {
             "type": "system_message",
             "content": (
                 "邮件功能需要您的授权。请点击以下链接进行授权：\n\n"
@@ -38,12 +28,8 @@ async def handle_auth_url(auth_url: str) -> None:
             ),
             "auth_url": auth_url,
             "auth_required": True,
-        })
-    else:
-        logger.warning(
-            "No message queue available (sync handle() path or cleanup "
-            "already ran). Auth URL not pushed to user."
-        )
+        },
+    )
 
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
