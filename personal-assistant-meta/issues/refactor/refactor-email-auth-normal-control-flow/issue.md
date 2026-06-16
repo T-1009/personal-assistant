@@ -36,8 +36,8 @@
 `handle_auth_url(auth_url: str)` 需要能够向聊天用户呈现鉴权 URL。可能的方案包括但不限于：
 
 - 扩展 SSE stream 支持 `tool_message` / `system_message` 事件类型
-- 通过 shared queue 让 `handle_auth_url` 写入消息，`event_generator` 读取并 yield SSE event
-- 其他可行方案
+- 使用 LangChain Core 提供的 `adispatch_custom_event`，通过 LangGraph 的 `on_custom_event` 事件直接穿透阻塞，将消息下发
+- 在 `handle_stream` 的事件循环中拦截该 custom event，并作为 `system_message` SSE payload 推送给客户端
 
 ### 3. 各 tool function 使用正常控制流
 
@@ -47,9 +47,8 @@
 
 | 文件 | 变更 |
 |------|------|
-| `personal-assistant-service/app/tools/email_tools.py` | 删除装饰器/异常类，改写 `handle_auth_url`，添加 `if not access_token` guard |
-| `personal-assistant-service/app/agent_handler.py` | 可能需要扩展 `handle_stream()` 支持非 LLM SSE events |
-| `personal-assistant-service/app/main.py` | 可能需要传递新的通信 channel（如 shared queue）|
+| `personal-assistant-service/app/tools/email_tools.py` | 删除装饰器/异常类，改写 `handle_auth_url` 使用 `adispatch_custom_event`，添加 `if not access_token` guard |
+| `personal-assistant-service/app/agent_handler.py` | 在 `handle_stream()` 中捕获 `on_custom_event` 并推送 SSE |
 | `personal-assistant-client/src/lib/chat-adapter.ts` | 可能需要支持新的 SSE event type |
 | `personal-assistant-client/src/types/chat.ts` | 扩展 `SSEEvent` 类型 |
 | `personal-assistant-meta/architecture/backend_architecture.md` | 更新 SSE streaming / message flow 架构文档 |
