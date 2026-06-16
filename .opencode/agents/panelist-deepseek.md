@@ -4,7 +4,9 @@ description: >-
   technical discussions, code reviews, design plans, and issue scoping.
   Supports web search and URL fetching for external context.
 mode: subagent
-model: deepseek/deepseek-v4-flash
+model: deepseek/deepseek-v4-pro
+options:
+  reasoningEffort: max
 permission:
   webfetch: allow
   websearch: allow
