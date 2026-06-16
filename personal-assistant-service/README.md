@@ -1,6 +1,8 @@
 # Personal Assistant Service
 
-基于 [AgentArts](https://www.huaweicloud.com/product/agentarts.html) 平台的 AI Agent 后端服务。处理对话逻辑、日程/邮件/笔记/任务管理，支持非流式与 SSE 流式两种对话模式。
+Personal Assistant 的 Agent Identity 后端服务，运行在 AgentArts Runtime 上。服务通过 FastAPI + deepagents 处理对话逻辑，并通过 AgentArts Identity SDK 获取 LLM API Key、OAuth2 用户委托 token 和 STS 临时凭证，支持非流式与 SSE 流式两种对话模式。
+
+当前后端重点验证 Agent Identity 的生产落地方式：Inbound 可信用户身份、Outbound Credential Provider、用户委托访问外部 API、Workload Access Token 复用、会话隔离以及敏感写操作二次确认。
 
 ## 目录结构
 
@@ -11,8 +13,16 @@ personal-assistant-service/
 │   ├── main.py              # FastAPI 应用入口 + 路由定义
 │   ├── agent_handler.py     # deepagents Agent 编排 + LLM 模型连接
 │   ├── llm_config.py        # LLM 多模型配置管理
-│   ├── auth.py              # Inbound 认证中间件（JWT / API Key）
-│   └── playground.py        # Chainlit Playground 挂载
+│   ├── auth.py              # Gateway 注入身份 header 提取
+│   ├── identity.py          # Outbound Identity provider 配置与辅助函数
+│   ├── logging_config.py    # 日志配置
+│   ├── playground.py        # Chainlit Playground 挂载
+│   └── tools/               # Identity SDK 装饰的外部工具
+│       ├── __init__.py      # 工具注册工厂
+│       ├── email_tools.py   # Microsoft 365 邮件工具
+│       ├── github_tools.py  # GitHub 工具
+│       ├── gitee_tools.py   # Gitee 工具
+│       └── iam_tools.py     # 华为云 IAM STS 工具
 ├── tests/
 │   ├── __init__.py
 │   ├── test_main.py         # FastAPI 端点集成测试
@@ -20,6 +30,12 @@ personal-assistant-service/
 │   ├── test_llm_config.py   # LLM 配置管理测试
 │   ├── test_auth.py         # 认证中间件测试
 │   ├── test_checkpointer.py # Checkpoint 持久化测试
+│   ├── test_email_tools.py  # Microsoft 365 邮件工具测试
+│   ├── test_github_tools.py # GitHub 工具测试
+│   ├── test_gitee_tools.py  # Gitee 工具测试
+│   ├── test_iam_tools.py    # IAM STS 工具测试
+│   ├── test_identity.py     # Identity 配置辅助函数测试
+│   ├── test_tools_init.py   # 工具注册测试
 │   └── test_playground.py   # Chainlit Playground 测试
 ├── scripts/                 # 运维脚本（部署、冒烟测试等）
 ├── config.yaml              # LLM Provider 配置（多 provider 声明式管理）
@@ -73,6 +89,8 @@ uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 | `GET` | `/ping` | 健康检查，返回 `{"status":"ok"}` |
 | `POST` | `/invocations` | 统一对话入口；不传 `stream` 或 `stream:false` 返回 JSON，`stream:true` 返回 SSE |
 
+`/invocations` 需要可信用户身份和会话 ID。生产环境由 AgentArts Gateway 注入；本地直连时需要显式传入 `X-HW-AgentGateway-User-Id` 和 `x-hw-agentarts-session-id`。
+
 ### 示例
 
 ```bash
@@ -82,12 +100,16 @@ curl http://localhost:8080/ping
 # 非流式对话
 curl -X POST http://localhost:8080/invocations \
   -H "Content-Type: application/json" \
+  -H "X-HW-AgentGateway-User-Id: dev-user" \
+  -H "x-hw-agentarts-session-id: dev-session" \
   -d '{"message":"你好"}'
 
 # SSE 流式对话
 curl -N -X POST http://localhost:8080/invocations \
   -H "Content-Type: application/json" \
   -H "Accept: text/event-stream" \
+  -H "X-HW-AgentGateway-User-Id: dev-user" \
+  -H "x-hw-agentarts-session-id: dev-session" \
   -d '{"message":"你好","stream":true}'
 ```
 
@@ -169,7 +191,7 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
   └── POST /invocations {"stream":false} ──→ AgentHandler.handle() → agent.ainvoke()
 ```
 
-## 后续 Feature
+## Feature 状态
 
 | Feature | 内容 | 状态 |
 |---------|------|------|
@@ -177,7 +199,12 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
 | Feature 3 | OfficeClaw 渠道 | [Planned — not yet implemented] |
 | Feature 4 | 用户认证 / OAuth（Inbound Identity） | 已实现 |
 | Feature 5 | 飞书 Client Adapter（飞书 Bot 接入） | [Planned — not yet implemented] |
-| Feature 6-8 | 外部工具集成（GitHub / M2M / STS） | [Planned — not yet implemented] |
+| Feature 6 | GitHub OAuth2 User Federation 工具 | 已实现 |
+| | `app/tools/github_tools.py` — list repositories, list contents, get file, search code, star repository | |
+| Feature 7 | Gitee OAuth2 User Federation 工具 | 已实现 |
+| | `app/tools/gitee_tools.py` — list repositories | |
+| Feature 8 | 华为云 IAM STS 只读工具 | 已实现 |
+| | `app/tools/iam_tools.py` — list IAM users via `iam-users-readonly` STS provider | |
 | **Feature 10a** | **Outbound Email — Microsoft 365 邮件处理** | **已实现** |
 | | `app/tools/email_tools.py` — list_emails, get_email, search_emails, send_email, reply_to_email | |
 | | AgentArts Identity SDK `@require_access_token` + Microsoft Graph API | |

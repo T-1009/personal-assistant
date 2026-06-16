@@ -1,8 +1,8 @@
 # Personal Assistant Client
 
-基于 [AgentArts](https://www.huaweicloud.com/product/agentarts.html) 平台的 AI 助手 Web Chat 前端应用。提供对话界面、SSE 流式消息渲染、Markdown 内容展示，支持 Web Chat、飞书和 OfficeClaw 多接入渠道的客户端适配层。
+Personal Assistant 的 Web Chat 前端应用，负责用户登录、对话界面、SSE 流式消息渲染和 Markdown 内容展示。当前生产主入口为 Web Chat；飞书和 OfficeClaw 渠道仍在规划中。
 
-Vite + React + TypeScript + Tailwind CSS + assistant-ui。支持 OAuth 登录（Microsoft Entra ID）、登录落地页和聊天界面。
+Vite + React + TypeScript + Tailwind CSS + assistant-ui。支持 OAuth 登录（Microsoft Entra ID）、登录落地页和聊天界面，并在请求后端时传递 `Authorization` 与 `x-hw-agentarts-session-id`，配合 AgentArts Gateway 完成 Inbound Identity。
 
 ## 目录结构
 
@@ -66,8 +66,10 @@ npm run dev
 
 ```bash
 # 在 personal-assistant-service/ 下
-MODEL_API_KEY="<your-api-key>" uv run uvicorn app.main:app --port 8080 --reload
+uv run uvicorn app.main:app --port 8080 --reload
 ```
+
+LLM API Key 通过 AgentArts Identity 的 `DEEPSEEK_API_KEY` Credential Provider 注入，不再通过前端或后端环境变量传递。
 
 ### 3. 打开浏览器
 
