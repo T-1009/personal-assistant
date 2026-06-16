@@ -1,6 +1,6 @@
 # Test Plan — Chore 5: 从 Request Header 提取 Workload Access Token
 
-> Issue: [chore-5-workload-access-token-from-header](./issue.md)
+> Issue: [chore-5-workload-access-token-from-header](issue.md)
 > Feature branch: `chore-5-workload-access-token-from-header`
 > 版本：v1.0 | 状态：Draft
 

@@ -1,6 +1,6 @@
 # Chore 5 Implementation Plan: 从 Request Header 提取 Workload Access Token
 
-> **Issue**: [chore-5-workload-access-token-from-header](./issue.md)
+> **Issue**: [chore-5-workload-access-token-from-header](issue.md)
 > **Target Branch**: `chore-5-workload-access-token-from-header`
 > **Panel Verdict**: ✅ **APPROVED** (with refinements noted below)
 > **Review Date**: 2026-06-15
