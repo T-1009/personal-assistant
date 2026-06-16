@@ -44,6 +44,24 @@ personal-assistant/
 
 端到端测试脚本目录，使用 pytest 框架，覆盖 Service + Client 联调场景。包含回归测试（按 bug 组织，用于复现和验证修复）和功能测试（按 feature 组织）。开始前先阅读 [`personal-assistant-e2e/AGENTS.md`](./personal-assistant-e2e/AGENTS.md) 了解测试编写和运行规范。
 
+## Build and Test Commands
+
+各个子系统的构建与测试命令独立管理。
+- **Backend (`personal-assistant-service`)**: `uv sync` 进行依赖安装，`uv run ruff check .` 代码检查，`uv run pytest tests/` 进行测试。
+- **Frontend (`personal-assistant-client`)**: `npm install` 安装依赖，`npm run build` 构建，`npm run test` 进行代码检查与测试。
+- **E2E Tests (`personal-assistant-e2e`)**: 使用 `pytest` 运行端到端联调测试。
+
+## Code Style Guidelines
+
+- **Python (Service/E2E)**: 遵循 PEP8 规范。强制使用 Ruff (`ruff check` 和 `ruff format`) 统一风格。
+- **TypeScript/React (Client)**: 遵循 React 推荐规范和 TypeScript 类型安全原则，采用 Tailwind CSS 规范。样式修改必须依赖设计系统 token。
+- **文档 (Meta)**: 核心术语使用英文，如 Agent, API, SDK, 保持原样不翻译。架构图必须使用 Mermaid。
+
+## Testing Instructions
+
+- 所有的开发必须在提交前通过各自领域的单元测试（Unit Tests）和集成测试（Integration Tests）。
+- 每个 issue 开发结束后，都需要在 E2E 阶段（`personal-assistant-e2e`）运行或编写相应的端到端测试，确保 Service 和 Client 正常工作。
+
 ## How to Run Locally
 
 ### Backend（`personal-assistant-service/`）

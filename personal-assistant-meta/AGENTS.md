@@ -2,6 +2,27 @@
 
 > 本文件是 **personal-assistant-meta** 目录的专用 instructions，仅适用于该目录下的相关工作。
 
+## Project Overview
+
+**personal-assistant-meta** 是整个系统架构的 **design hub**，所有系统设计讨论、架构决策、文档规格和增量变更（Issues）规划均在此目录下进行，不包含可执行的产品代码。
+
+## Build and Test Commands
+
+- 本目录主要由 Markdown 纯文本及 Mermaid 图表组成，无传统的编译构建或自动化测试脚本执行命令。
+
+## Code Style Guidelines
+
+除了下文详述的准则，有几个核心点需牢记：
+- **Diagram-First**: 架构设计和流程设计必须优先使用 Mermaid 图表表达。
+- **Language Policy**: 正文首选中文，专业软件术语保持原汁原味的英文。
+- **The Four-Question Gate**: 每当提出新的架构决策或引入新库时，必须考虑是否满足 Best practice、Industry standard、Conventional、Modern。
+
+## Testing Instructions
+
+- 在此处 "Testing" 指代严格的 **同行评审（Design/Code Review）** 阶段。
+- 提交 Meta 变更前，确保 `specs/overall_specifications.md` 或 `architecture/overall_architecture.md` 中关联了正确的文档路径。
+- 必须确保所有的 Mermaid 图表语法正确无误，并在主流 Markdown 渲染器（如 GitHub UI 或是本地 IDE 预览）中均能正常展示不报错。
+
 ## Directory Guide
 
 `personal-assistant-meta/` 是系统的 **design hub**，所有设计讨论、架构决策和变更规划都在此目录下进行。
