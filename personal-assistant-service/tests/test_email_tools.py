@@ -499,7 +499,6 @@ class TestSendEmail:
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
-                confirm=True,
                 access_token="mock-token",
             )
 
@@ -518,7 +517,6 @@ class TestSendEmail:
                 subject="Hello",
                 body="Hi",
                 cc=["cc@x.com"],
-                confirm=True,
                 access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
@@ -539,7 +537,6 @@ class TestSendEmail:
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
-                confirm=True,
                 access_token="mock-token",
             )
 
@@ -558,7 +555,6 @@ class TestSendEmail:
                 subject="Test",
                 body="Body",
                 cc=["c@x.com"],
-                confirm=True,
                 access_token="mock-token",
             )
             msg = mock_client.post.call_args[1]["json"]["message"]
@@ -581,7 +577,6 @@ class TestSendEmail:
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
-                confirm=True,
                 access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
@@ -598,7 +593,6 @@ class TestSendEmail:
                 to=["bob@x.com"],
                 subject="Hello",
                 body="plain text",
-                confirm=True,
                 access_token="mock-token",
             )
             msg = mock_client.post.call_args[1]["json"]["message"]
@@ -614,7 +608,6 @@ class TestSendEmail:
                 to=[],
                 subject="Hello",
                 body="Hi",
-                confirm=True,
                 access_token="mock-token",
             )
 
@@ -623,41 +616,7 @@ class TestSendEmail:
         assert "At least one recipient" in result["error"]
         mock_client.post.assert_not_called()
 
-    @pytest.mark.asyncio
-    async def test_send_email_confirm_false_returns_preview(self):
-        """UT-SND-08: confirm=False returns preview, does not send."""
-        with _mock_httpx("post", _make_resp(202)) as mock_client:
-            result = await et.send_email(
-                to=["bob@x.com"],
-                subject="Hello",
-                body="Hi",
-                confirm=False,
-                access_token="mock-token",
-            )
 
-        assert result["sent"] is False
-        assert result["requires_confirmation"] is True
-        assert "preview" in result
-        assert result["preview"]["to"] == ["bob@x.com"]
-        assert result["preview"]["subject"] == "Hello"
-        assert "body_preview" in result["preview"]
-        assert "请确认" in result["error"]
-        mock_client.post.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_send_email_confirm_default_is_false(self):
-        """UT-SND-09: default confirm=False (not passed) returns preview."""
-        with _mock_httpx("post", _make_resp(202)) as mock_client:
-            result = await et.send_email(
-                to=["bob@x.com"],
-                subject="Hello",
-                body="Hi",
-                access_token="mock-token",
-            )
-
-        assert result["sent"] is False
-        assert result["requires_confirmation"] is True
-        mock_client.post.assert_not_called()
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -677,7 +636,6 @@ class TestReplyToEmail:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
-                confirm=True,
                 access_token="mock-token",
             )
 
@@ -694,7 +652,6 @@ class TestReplyToEmail:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
-                confirm=True,
                 access_token="mock-token",
             )
 
@@ -710,7 +667,6 @@ class TestReplyToEmail:
             await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
-                confirm=True,
                 access_token="mock-token",
             )
             call_url = mock_client.post.call_args[0][0]
@@ -727,7 +683,6 @@ class TestReplyToEmail:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
-                confirm=True,
                 access_token=None,
             )
 
@@ -744,7 +699,6 @@ class TestReplyToEmail:
             await et.reply_to_email(
                 email_id="msg-1",
                 body="Hello world",
-                confirm=True,
                 access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
@@ -759,46 +713,12 @@ class TestReplyToEmail:
         }
 
     @pytest.mark.asyncio
-    async def test_reply_to_email_confirm_false_returns_preview(self):
-        """UT-RE-06: confirm=False returns preview, does not send."""
-        with _mock_httpx("post", _make_resp(202)) as mock_client:
-            result = await et.reply_to_email(
-                email_id="msg-1",
-                body="Thanks for the info",
-                confirm=False,
-                access_token="mock-token",
-            )
-
-        assert result["sent"] is False
-        assert result["requires_confirmation"] is True
-        assert "preview" in result
-        assert result["preview"]["email_id"] == "msg-1"
-        assert "body_preview" in result["preview"]
-        assert "请确认" in result["error"]
-        mock_client.post.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_reply_to_email_confirm_default_is_false(self):
-        """UT-RE-07: default confirm=False returns preview."""
-        with _mock_httpx("post", _make_resp(202)) as mock_client:
-            result = await et.reply_to_email(
-                email_id="msg-1",
-                body="Thanks",
-                access_token="mock-token",
-            )
-
-        assert result["sent"] is False
-        assert result["requires_confirmation"] is True
-        mock_client.post.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_reply_to_email_empty_email_id(self):
         """UT-RE-08: empty email_id returns error without HTTP call."""
         with _mock_httpx("post", _make_resp(202)) as mock_client:
             result = await et.reply_to_email(
                 email_id="",
                 body="Thanks",
-                confirm=True,
                 access_token="mock-token",
             )
 
@@ -813,7 +733,6 @@ class TestReplyToEmail:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="",
-                confirm=True,
                 access_token="mock-token",
             )
 
@@ -828,7 +747,6 @@ class TestReplyToEmail:
             result = await et.reply_to_email(
                 email_id="   ",
                 body="Thanks",
-                confirm=True,
                 access_token="mock-token",
             )
 
@@ -898,7 +816,6 @@ class TestAccessTokenGuard:
             to=["bob@x.com"],
             subject="Test",
             body="Body",
-            confirm=True,
             access_token=None,
         )
         assert result["auth_required"] is True
@@ -938,7 +855,6 @@ class TestAccessTokenGuard:
         result = await et.reply_to_email(
             email_id="msg-1",
             body="Thanks",
-            confirm=True,
             access_token=None,
         )
         assert result["auth_required"] is True

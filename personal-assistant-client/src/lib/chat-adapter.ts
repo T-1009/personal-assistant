@@ -104,8 +104,6 @@ export const chatAdapter: ChatModelAdapter = {
 
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let fullText = "";
-    // Clear any stale auth card from a previous run
-    useAuthCardStore.getState().clearAuth();
 
     try {
       // Get current idToken and refresh if close to expiry

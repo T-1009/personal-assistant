@@ -364,34 +364,25 @@ async def search_emails(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True
 )
 async def send_email(
     to: list[str],
     subject: str,
     body: str,
     cc: list[str] | None = None,
-    confirm: bool = False,
     access_token: str | None = None,
 ) -> dict[str, Any]:
-    """发送邮件。
-
-    此操作为敏感写操作，调用前 Agent 应通过 Guard 机制向用户展示预览
-    并等待 explicit 确认。设置 confirm=False（默认）时返回预览而不发送，
-    confirm=True 时才实际发送邮件。
+    """发送邮件。此操作为敏感写操作，Agent 应在调用前向用户确认内容。
 
     Args:
         to: 收件人邮箱地址列表
         subject: 邮件主题
         body: 邮件正文（纯文本）
         cc: 抄送邮箱地址列表，可选
-        confirm: 是否已获得用户确认，默认 False（返回预览）
         access_token: AgentArts Identity SDK 自动注入
 
     Returns:
-        dict with: sent (bool), message_id (str or None), error (str or None),
-        requires_confirmation (bool) when confirm=False, preview (dict) when
-        confirm=False
+        dict with: sent (bool), message_id (str or None), error (str or None)
     """
     logger.debug("send_email access_token: %s", access_token)
     if not access_token:
@@ -404,17 +395,6 @@ async def send_email(
             "error": "At least one recipient is required",
         }
     try:
-        if not confirm:
-            return {
-                "sent": False,
-                "requires_confirmation": True,
-                "preview": {
-                    "to": to,
-                    "subject": subject,
-                    "body_preview": body[:200],
-                },
-                "error": "请确认收件人、主题和正文后再发送。调用时设置 confirm=True。",
-            }
         message: dict[str, Any] = {
             "subject": subject,
             "body": {
@@ -480,24 +460,19 @@ async def send_email(
 async def reply_to_email(
     email_id: str,
     body: str,
-    confirm: bool = False,
     access_token: str | None = None,
 ) -> dict[str, Any]:
-    """直接回复邮件 — 使用 Graph API POST /messages/{id}/reply 发送回复。
+    """回复邮件 — 使用 Graph API POST /messages/{id}/reply 直接发送。
 
-    此 API 立即发送回复（不创建草稿）。设置 confirm=False（默认）时
-    返回预览而不发送，confirm=True 时才实际发送回复。
+    Agent 应在调用前向用户确认回复内容。
 
     Args:
         email_id: 要回复的原始邮件 ID
         body: 回复正文（纯文本），将插入原邮件内容上方
-        confirm: 是否已获得用户确认，默认 False（返回预览）
         access_token: AgentArts Identity SDK 自动注入
 
     Returns:
-        dict with: sent (bool), error (str or None),
-        requires_confirmation (bool) when confirm=False, preview (dict) when
-        confirm=False
+        dict with: sent (bool), error (str or None)
     """
     logger.debug("reply_to_email access_token: %s", access_token)
     if not access_token:
@@ -508,16 +483,6 @@ async def reply_to_email(
     if not body or not body.strip():
         return {"sent": False, "error": "reply body is required"}
     try:
-        if not confirm:
-            return {
-                "sent": False,
-                "requires_confirmation": True,
-                "preview": {
-                    "email_id": email_id,
-                    "body_preview": body[:200],
-                },
-                "error": "请确认回复内容后再发送。调用时设置 confirm=True。",
-            }
         client = _get_client()
         resp = await client.post(
             f"{GRAPH_BASE_URL}/messages/{email_id}/reply",
