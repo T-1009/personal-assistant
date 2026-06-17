@@ -6,6 +6,38 @@
 
 本指南详细说明了如何配置 **Microsoft Entra ID (原 Azure Active Directory)** 作为 Personal Assistant 的 Inbound/Outbound OIDC Identity Provider。
 
+## 0. 核心概念：Tenant ID 与 common 端点
+
+### Tenant（租户 / Directory）
+
+Tenant ID（如 `2a1d3739-88c5-4314-b921-acbeac0abbfa`）是 Entra ID 中的**企业花名册（Directory）**，可以理解为"用户池（User Pool）"。每个 Tenant 内有自己的用户、组、应用注册。你的个人 Outlook 账号被邀请进这个 Tenant 后，身份是 **B2B Guest（外部访客）**。
+
+### `common` 端点
+
+`common` 不是某个特定的 Tenant，而是微软的**公共颁发端点**。它的含义随场景变化：
+
+| 场景 | `common` 的行为 |
+|------|----------------|
+| OIDC 登录（用户认证） | 接受**任何**微软账号（个人 MSA + 企业 Work/School） |
+| OAuth 令牌获取（调 Graph API） | 自动识别账号类型，个人号路由到 Consumer 侧，企业号路由到各自租户 |
+
+### 选 Tenant ID 还是 `common`？
+
+| 用途 | Tenant ID | `common` |
+|------|:---------:|:--------:|
+| **OIDC（Inbound 登录）** | ✅ 私有助手，仅花名册内用户可登录 | ✅ 公开助手，任何人可登录 |
+| **OAuth（Outbound Graph API）** | ❌ 个人账号（B2B Guest）在租户内无邮箱，401 | ✅ **必须**，个人账号的唯一正确配置 |
+
+> **结论**：OIDC 选 Tenant ID 还是 `common` 取决于你要私有还是公开。OAuth 必须用 `common`，跟公私无关——个人账号的邮箱永远在 Consumer 侧，不走企业租户。
+
+### 本项目的三处配置
+
+| 配置位置 | 配置项 | 用途 |
+|----------|--------|------|
+| 前端 `.env` → `VITE_ENTRA_TENANT_ID` | OIDC 登录时的 authority | 控制谁能登录 |
+| 后端 `.agentarts_config.yaml` → `discovery_url` | JWT 验签 | 验证 ID Token 合法性 |
+| AgentArts 平台 → `m365-provider` → Discovery URL | OAuth Token 签发 | 获取 Graph API 的 access_token |
+
 ## 1. 门户入口
 
 Microsoft 提供的 OAuth 2.0 / OIDC 应用注册界面统一收拢在 **Microsoft Entra** 体系中。开发人员可通过以下两个门户进行管理：
@@ -163,6 +195,34 @@ https://login.microsoftonline.com/common/v2.0/.well-known/openid-configuration
     *   在您的前端 React / MSAL 初始化代码中，检查 `authority` 参数。
     *   ❌ 如果写的是 `https://login.microsoftonline.com/{您的Tenant_ID}`，那么微软会将其作为**单租户**验签，外部用户依然无法登录。
     *   ✅ 必须将 `authority` 更改为微软公共终结点：`https://login.microsoftonline.com/common`（或者 `https://login.microsoftonline.com/consumers` 仅限个人账号）。
+
+### 6.4 错误提示：Graph API 返回 401 且 body 为空（邮件/日历操作失败）
+
+**问题原因**：
+
+当使用个人 Microsoft 账号（`live.com` / `outlook.com`，即 MSA）作为 B2B Guest 登录到特定企业租户后，调用 Microsoft Graph API 的邮件/日历接口（如 `POST /me/sendMail`）会返回 `401 Unauthorized` 且响应体为空。
+
+根因：Token 由特定租户签发（`iss` 包含 tenant ID），MSA 个人账号在该租户下是外部 Guest，**没有 Exchange Online 邮箱**。Graph API 在租户内找不到邮箱，直接拒绝请求。
+
+**必须检查的三处配置**：
+
+| 位置 | 配置项 | 正确值 |
+|------|--------|--------|
+| AgentArts 平台 → `m365-provider` | Discovery URL | `https://login.microsoftonline.com/common/v2.0/...` |
+| 后端 `.agentarts_config.yaml` | `discovery_url` | 同上 |
+| 前端 `.env` | `VITE_ENTRA_TENANT_ID` | `common` |
+
+> ⚠️ **三处必须全部使用 `common`，缺一不可。** 任何一处写死特定 tenant ID，都会导致个人账号邮件功能报 401。
+
+**排查方法**：
+
+解码 access_token（[jwt.ms](https://jwt.ms)），检查：
+- `iss` / `tid`：如果是特定 tenant ID（非 `9188040d-6c67-4c5b-b112-36a304b66dad` 即 MSA consumer tenant），说明配错了
+- `idp`：`live.com` = 个人账号，`https://sts.windows.net/...` = 企业账号
+
+**Azure App Registration 要求**：
+
+应用注册的"支持的账户类型"必须选择：**`Accounts in any organizational directory and personal Microsoft accounts`**（多租户 + 个人账户）。
 
 
 
