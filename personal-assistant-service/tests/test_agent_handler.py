@@ -247,9 +247,7 @@ class TestHandleStream:
         assert parsed["done"] is True
 
     @pytest.mark.asyncio
-    async def test_handle_stream_skips_chunk_without_content_attr(
-        self, mock_deps
-    ):
+    async def test_handle_stream_skips_chunk_without_content_attr(self, mock_deps):
         """Chunks without .content are treated as empty and skipped."""
         _, _, _, mock_agent, _, _ = mock_deps
 
@@ -279,28 +277,42 @@ class TestHandleStreamWithCustomEvent:
 
     @pytest.mark.asyncio
     async def test_custom_event_yields_system_message(self, mock_deps):
-        """UT-HSM-01: stream_mode custom yields system_message SSE."""
+        """UT-HSM-01: auth_required custom events emit named 'auth_card' SSE."""
         _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 
         async def mock_astream(_input, stream_mode=None, config=None):
-            yield ("custom", {
-                "system_message": "Please authorize",
-                "auth_url": "https://auth.example.com",
-                "auth_required": True,
-            })
+            yield (
+                "custom",
+                {
+                    "system_message": "Please authorize",
+                    "auth_url": "https://auth.example.com",
+                    "auth_required": True,
+                },
+            )
             yield ("messages", (_fake_chunk("Hello"), {}))
 
         mock_agent.astream = mock_astream
 
         events = [
-            data async for data in handler.handle_stream(
+            data
+            async for data in handler.handle_stream(
                 message="Hi",
             )
         ]
 
-        parsed = [json.loads(e[6:]) for e in events]
+        # Parse both named SSE (event: X\ndata: Y) and plain data: lines
+        parsed = []
+        for sse in events:
+            lines = sse.strip().split("\n")
+            data_line = None
+            for line in lines:
+                if line.startswith("data: "):
+                    data_line = line
+            if data_line:
+                parsed.append(json.loads(data_line[6:]))
+
         system_msgs = [p for p in parsed if "system_message" in p]
         assert len(system_msgs) == 1
         assert system_msgs[0]["system_message"] == "Please authorize"

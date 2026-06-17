@@ -195,14 +195,26 @@ class AgentHandler:
 
                 # ── 1. Custom event from get_stream_writer() (auth URLs) ──
                 if mode == "custom":
-                    yield f"data: {json.dumps(data)}\n\n"
+                    if isinstance(data, dict) and data.get("auth_required"):
+                        yield (
+                            f"event: auth_card\n"
+                            f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                        )
+                    else:
+                        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
 
-                # ── 2. Token streaming ──
+                # ── 2. Token streaming (LLM output only, skip tool results) ──
                 elif mode == "messages":
                     token_chunk, _metadata = data
+                    # ToolMessage content is for the LLM, not the user
+                    if getattr(token_chunk, "type", None) == "tool":
+                        continue
                     token = getattr(token_chunk, "content", "") or ""
                     if token:
-                        yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
+                        payload = json.dumps(
+                            {"token": token, "done": False}, ensure_ascii=False
+                        )
+                        yield f"data: {payload}\n\n"
 
             # ── 3. Signal completion ──
             yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
