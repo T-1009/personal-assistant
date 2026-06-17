@@ -75,8 +75,6 @@ export const Thread: FC = () => {
             <ThreadPrimitive.Messages>
               {() => <ThreadMessage />}
             </ThreadPrimitive.Messages>
-
-            <AuthCard />
           </div>
 
           <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer bg-background sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible rounded-t-(--composer-radius) pb-4 md:pb-6">
@@ -179,6 +177,7 @@ const MessageError: FC = () => {
 };
 
 const AssistantMessage: FC = () => {
+  const messageId = useAuiState((s) => s.message.id);
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
   // for pt-[n] use -mb-[n + 6] & min-h-[n + 6] to preserve compensation
@@ -250,6 +249,7 @@ const AssistantMessage: FC = () => {
           }}
         </MessagePrimitive.GroupedParts>
         <MessageError />
+        <AuthCard messageId={messageId} />
       </div>
 
       <div

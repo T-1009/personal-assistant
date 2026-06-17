@@ -2,18 +2,26 @@ import { useAuthCardStore } from "@/stores/auth-card-store";
 import { ShieldCheckIcon, XIcon, CheckCircleIcon } from "lucide-react";
 import type { FC } from "react";
 
-export const AuthCard: FC = () => {
+export interface AuthCardProps {
+  messageId?: string;
+}
+
+export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
+  const storeMessageId = useAuthCardStore((s) => s.messageId);
   const authUrl = useAuthCardStore((s) => s.authUrl);
   const message = useAuthCardStore((s) => s.message);
   const authComplete = useAuthCardStore((s) => s.authComplete);
   const clearAuth = useAuthCardStore((s) => s.clearAuth);
 
   if (!authUrl) return null;
+  // If messageId is provided, we are rendering inside a specific message bubble.
+  // Only render if the store's messageId matches this component's prop.
+  if (messageId && messageId !== storeMessageId) return null;
 
   const isComplete = authComplete;
 
   return (
-    <div className="mx-auto w-full max-w-(--thread-max-width) px-4 pt-2">
+    <div className="mt-4 w-full">
       <div
         className={
           isComplete

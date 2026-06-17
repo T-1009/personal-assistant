@@ -91,16 +91,17 @@ export function resetSessionId(): void {
  *   Runtime URL (e.g. `https://xxx.agentarts.cn-southwest-2.myhuaweicloud.com`).
  */
 export const chatAdapter: ChatModelAdapter = {
-  async *run({
-    messages,
-    abortSignal,
-  }: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
+  async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
+    const { messages, abortSignal } = options;
     // Extract the last user message text as the query
     const lastUserMessage = [...messages]
       .reverse()
       .find((m) => m.role === "user");
     const query: string =
       lastUserMessage?.content.find((p) => p.type === "text")?.text ?? "";
+    // Note: options.unstable_getMessage() cannot be safely called synchronously here
+    // for just its id, so we extract assistantMessageId if passed or default
+    const assistantMessageId = options.unstable_assistantMessageId;
 
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let fullText = "";
@@ -213,6 +214,7 @@ export const chatAdapter: ChatModelAdapter = {
               // Show a dedicated auth card instead of an inline markdown link
               if (parsed.auth_required && parsed.auth_url) {
                 useAuthCardStore.getState().setAuth(
+                  assistantMessageId || "unknown",
                   parsed.auth_url,
                   parsed.system_message,
                 );
