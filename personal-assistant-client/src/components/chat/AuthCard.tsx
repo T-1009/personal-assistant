@@ -1,30 +1,55 @@
 import { useAuthCardStore } from "@/stores/auth-card-store";
-import { ShieldCheckIcon, XIcon } from "lucide-react";
+import { ShieldCheckIcon, XIcon, CheckCircleIcon } from "lucide-react";
 import type { FC } from "react";
 
 export const AuthCard: FC = () => {
   const authUrl = useAuthCardStore((s) => s.authUrl);
   const message = useAuthCardStore((s) => s.message);
+  const authComplete = useAuthCardStore((s) => s.authComplete);
   const clearAuth = useAuthCardStore((s) => s.clearAuth);
 
   if (!authUrl) return null;
 
+  const isComplete = authComplete;
+
   return (
     <div className="mx-auto w-full max-w-(--thread-max-width) px-4 pt-2">
-      <div className="flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950">
-        <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-blue-600 dark:text-blue-400" />
-        <p className="flex-1 text-sm leading-relaxed text-blue-800 dark:text-blue-200">
+      <div
+        className={
+          isComplete
+            ? "flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-950"
+            : "flex items-start gap-3 rounded-xl border border-blue-200 bg-blue-50 p-4 dark:border-blue-800 dark:bg-blue-950"
+        }
+      >
+        {isComplete ? (
+          <CheckCircleIcon className="mt-0.5 size-5 shrink-0 text-green-600 dark:text-green-400" />
+        ) : (
+          <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-blue-600 dark:text-blue-400" />
+        )}
+        <p
+          className={
+            isComplete
+              ? "flex-1 text-sm leading-relaxed text-green-800 dark:text-green-200"
+              : "flex-1 text-sm leading-relaxed text-blue-800 dark:text-blue-200"
+          }
+        >
           {message}
         </p>
         <div className="flex shrink-0 items-center gap-2">
-          <a
-            href={authUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex h-8 items-center rounded-md bg-blue-600 px-3 text-sm font-medium text-white transition-colors hover:bg-blue-700"
-          >
-            点击授权
-          </a>
+          {isComplete ? (
+            <span className="inline-flex h-8 items-center rounded-md bg-green-600 px-3 text-sm font-medium text-white">
+              授权完成
+            </span>
+          ) : (
+            <a
+              href={authUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center rounded-md bg-blue-600 px-3 text-sm font-medium text-white transition-colors hover:bg-blue-700"
+            >
+              点击授权
+            </a>
+          )}
           <button
             type="button"
             onClick={clearAuth}

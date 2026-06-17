@@ -68,8 +68,6 @@ export const Thread: FC = () => {
             <ThreadWelcome />
           </AuiIf>
 
-          <AuthCard />
-
           <div
             data-slot="aui_message-group"
             className="mb-10 flex flex-col gap-y-8 empty:hidden"
@@ -77,6 +75,8 @@ export const Thread: FC = () => {
             <ThreadPrimitive.Messages>
               {() => <ThreadMessage />}
             </ThreadPrimitive.Messages>
+
+            <AuthCard />
           </div>
 
           <ThreadPrimitive.ViewportFooter className="aui-thread-viewport-footer bg-background sticky bottom-0 mt-auto flex flex-col gap-4 overflow-visible rounded-t-(--composer-radius) pb-4 md:pb-6">

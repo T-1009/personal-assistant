@@ -195,7 +195,9 @@ class AgentHandler:
 
                 # ── 1. Custom event from get_stream_writer() (auth URLs) ──
                 if mode == "custom":
-                    if isinstance(data, dict) and data.get("auth_required"):
+                    if isinstance(data, dict) and (
+                        data.get("auth_required") or data.get("auth_complete")
+                    ):
                         yield (
                             f"event: auth_card\n"
                             f"data: {json.dumps(data, ensure_ascii=False)}\n\n"

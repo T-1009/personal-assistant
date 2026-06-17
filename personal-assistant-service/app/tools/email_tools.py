@@ -26,6 +26,7 @@ async def handle_auth_url(auth_url: str) -> None:
                 ),
                 "auth_url": auth_url,
                 "auth_required": True,
+                "provider": "m365-provider-common",
             }
         )
     except RuntimeError:
@@ -33,6 +34,30 @@ async def handle_auth_url(auth_url: str) -> None:
             "get_stream_writer unavailable (not in graph context) — "
             "auth URL not streamed: %s",
             auth_url,
+        )
+
+
+def _push_auth_complete(provider: str) -> None:
+    """Push an ``auth_complete`` event to the frontend via the stream writer.
+
+    Called from within a tool function body after the SDK decorator has
+    successfully resolved the access token — meaning the user completed
+    authorization.  The frontend uses this to transition the AuthCard
+    from its blue "awaiting" state to a green "complete" state.
+    """
+    try:
+        writer = get_stream_writer()
+        writer(
+            {
+                "type": "system_message",
+                "system_message": "授权已完成 ✅",
+                "auth_complete": True,
+                "provider": provider,
+            }
+        )
+    except RuntimeError:
+        logger.warning(
+            "get_stream_writer unavailable — auth_complete not streamed"
         )
 
 
@@ -146,6 +171,7 @@ async def list_emails(
     logger.debug("list_emails access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     try:
         client = _get_client()
         resp = await client.get(
@@ -212,6 +238,7 @@ async def get_email(
     logger.debug("get_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     try:
         client = _get_client()
         resp = await client.get(
@@ -290,6 +317,7 @@ async def search_emails(
     logger.debug("search_emails access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     try:
         escaped_query = query.replace('"', '\\"')
         client = _get_client()
@@ -336,6 +364,7 @@ async def search_emails(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
+    force_authentication=True
 )
 async def send_email(
     to: list[str],
@@ -367,6 +396,7 @@ async def send_email(
     logger.debug("send_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     if not to:
         return {
             "sent": False,
@@ -472,6 +502,7 @@ async def reply_to_email(
     logger.debug("reply_to_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     if not email_id or not email_id.strip():
         return {"sent": False, "error": "email_id is required for reply_to_email"}
     if not body or not body.strip():

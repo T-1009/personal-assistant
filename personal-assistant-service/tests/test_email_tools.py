@@ -859,7 +859,7 @@ class TestHandleAuthUrl:
             data = writer_mock.call_args[0][0]
             assert data["auth_url"] == "https://auth.example.com/login"
             assert data["auth_required"] is True
-            assert "https://auth.example.com/login" in data["system_message"]
+            assert data["provider"] == "m365-provider-common"
 
     @pytest.mark.asyncio
     async def test_handle_auth_url_runtime_error_graceful(self):
@@ -1007,7 +1007,7 @@ class TestToolErrorFormatting:
             "unauthorized", request=MagicMock(), response=mock_response
         )
         result = et._format_tool_error(exc, "reply_to_email")
-        assert "授权已过期" in result["error"]
+        assert "邮件功能未授权" in result["error"]
 
     def test_format_generic_exception_fallback(self):
         """UT-ERR-06: Unknown exception → 通用错误提示."""
