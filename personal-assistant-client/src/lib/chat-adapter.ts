@@ -221,7 +221,7 @@ export const chatAdapter: ChatModelAdapter = {
               }
               // Transition the auth card to green on completion
               if (parsed.auth_complete) {
-                useAuthCardStore.getState().setAuthComplete(true);
+                useAuthCardStore.getState().setAuthComplete(true, parsed.system_message);
               }
               yield {
                 content: [{ type: "text", text: fullText }],

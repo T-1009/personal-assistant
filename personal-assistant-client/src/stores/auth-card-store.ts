@@ -10,7 +10,7 @@ interface AuthCardState {
   /** Whether the user has completed authorization (green card). */
   authComplete: boolean;
   setAuth: (messageId: string, url: string, message: string) => void;
-  setAuthComplete: (complete: boolean) => void;
+  setAuthComplete: (complete: boolean, message?: string) => void;
   clearAuth: () => void;
 }
 
@@ -21,6 +21,7 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
   authComplete: false,
   setAuth: (messageId, url, message) =>
     set({ messageId, authUrl: url, message, authComplete: false }),
-  setAuthComplete: (complete) => set({ authComplete: complete }),
+  setAuthComplete: (complete, message) => 
+    set((state) => ({ authComplete: complete, message: message ?? state.message })),
   clearAuth: () => set({ messageId: null, authUrl: null, message: "", authComplete: false }),
 }));
