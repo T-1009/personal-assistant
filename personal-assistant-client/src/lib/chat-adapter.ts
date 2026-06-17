@@ -4,6 +4,7 @@ import type {
   ChatModelRunResult,
 } from "@assistant-ui/react";
 import type { SSEEvent } from "../types/chat";
+import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { acquireIdTokenSilently } from "@/lib/auth";
 
@@ -103,6 +104,8 @@ export const chatAdapter: ChatModelAdapter = {
 
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let fullText = "";
+    // Clear any stale auth card from a previous run
+    useAuthCardStore.getState().clearAuth();
 
     try {
       // Get current idToken and refresh if close to expiry
@@ -209,8 +212,12 @@ export const chatAdapter: ChatModelAdapter = {
               parsed.system_message.trim()
             ) {
               fullText += parsed.system_message;
-              if (parsed.auth_url) {
-                fullText += ` [点击授权](${parsed.auth_url})`;
+              // Show a dedicated auth card instead of an inline markdown link
+              if (parsed.auth_required && parsed.auth_url) {
+                useAuthCardStore.getState().setAuth(
+                  parsed.auth_url,
+                  parsed.system_message,
+                );
               }
               yield {
                 content: [{ type: "text", text: fullText }],
