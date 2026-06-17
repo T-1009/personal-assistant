@@ -1,5 +1,5 @@
 ---
-status: todo
+|status: resolved
 related: []
 ---
 

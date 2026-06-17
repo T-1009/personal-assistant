@@ -1,10 +1,9 @@
-import asyncio
 import logging
 from typing import Any
 
 import httpx
 from agentarts.sdk import require_access_token
-from langchain_core.callbacks.manager import adispatch_custom_event
+from langgraph.config import get_stream_writer
 
 logger = logging.getLogger(__name__)
 
@@ -12,24 +11,54 @@ logger = logging.getLogger(__name__)
 async def handle_auth_url(auth_url: str) -> None:
     """Callback triggered by the SDK when user authentication is required.
 
-    Dispatches a custom event to the LangGraph astream_events loop
-    so the SSE stream can present the authorization URL directly to the
-    user — no exception, no LLM round-trip.
+    Uses LangGraph's native stream_writer to push the authorization URL
+    through the ``custom`` stream channel directly to the SSE consumer
+    — no exception, no LLM round-trip.
     """
     logger.info("User authorization required — auth URL: %s", auth_url)
-    await adispatch_custom_event(
-        "auth_required",
-        {
-            "type": "system_message",
-            "content": (
-                "邮件功能需要您的授权。请点击以下链接进行授权：\n\n"
-                f"{auth_url}\n\n"
-                "授权完成后，请再次告诉我您需要做什么。"
-            ),
-            "auth_url": auth_url,
-            "auth_required": True,
-        },
-    )
+    try:
+        writer = get_stream_writer()
+        writer(
+            {
+                "type": "system_message",
+                "system_message": (
+                    "邮件功能需要您的授权。请点击下方链接进行授权："
+                ),
+                "auth_url": auth_url,
+                "auth_required": True,
+                "provider": "m365-provider-common",
+            }
+        )
+    except RuntimeError:
+        logger.warning(
+            "get_stream_writer unavailable (not in graph context) — "
+            "auth URL not streamed: %s",
+            auth_url,
+        )
+
+
+def _push_auth_complete(provider: str) -> None:
+    """Push an ``auth_complete`` event to the frontend via the stream writer.
+
+    Called from within a tool function body after the SDK decorator has
+    successfully resolved the access token — meaning the user completed
+    authorization.  The frontend uses this to transition the AuthCard
+    from its blue "awaiting" state to a green "complete" state.
+    """
+    try:
+        writer = get_stream_writer()
+        writer(
+            {
+                "type": "system_message",
+                "system_message": "授权已完成 ✅",
+                "auth_complete": True,
+                "provider": provider,
+            }
+        )
+    except RuntimeError:
+        logger.warning(
+            "get_stream_writer unavailable — auth_complete not streamed"
+        )
 
 
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
@@ -69,7 +98,10 @@ def _auth_required_response() -> dict[str, Any]:
     """Return a tool result indicating authorization is pending."""
     return {
         "auth_required": True,
-        "error": "Authorization pending. Please follow the authorization link sent to you.",
+        "error": (
+            "Authorization pending. Please follow the authorization link "
+            "sent to you."
+        ),
     }
 
 
@@ -86,7 +118,7 @@ def _format_tool_error(e: Exception, tool_name: str) -> dict[str, Any]:
         if status == 503:
             return {"error": "邮件服务暂时不可用，请稍后再试。"}
         if status == 401:
-            return {"error": "授权已过期，请重新授权。"}
+            return {"error": "邮件功能未授权或当前账号类型不支持（访客/个人账号需使用 common 租户端点）。"}
         return {"error": f"邮件服务返回错误（{status}），请稍后再试。"}
     return {"error": f"操作失败: {tool_name}。如果问题持续，请联系支持。"}
 
@@ -111,7 +143,7 @@ def _get_client() -> httpx.AsyncClient:
 # ── 1. list_emails ──
 
 @require_access_token(
-    provider_name="m365-provider",
+    provider_name="m365-provider-common",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -119,7 +151,6 @@ def _get_client() -> httpx.AsyncClient:
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def list_emails(
     folder: str = "inbox",
@@ -140,6 +171,7 @@ async def list_emails(
     logger.debug("list_emails access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     try:
         client = _get_client()
         resp = await client.get(
@@ -180,7 +212,7 @@ async def list_emails(
 # ── 2. get_email ──
 
 @require_access_token(
-    provider_name="m365-provider",
+    provider_name="m365-provider-common",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -188,7 +220,6 @@ async def list_emails(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def get_email(
     email_id: str,
@@ -207,6 +238,7 @@ async def get_email(
     logger.debug("get_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     try:
         client = _get_client()
         resp = await client.get(
@@ -255,7 +287,7 @@ async def get_email(
 # ── 3. search_emails ──
 
 @require_access_token(
-    provider_name="m365-provider",
+    provider_name="m365-provider-common",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -263,7 +295,6 @@ async def get_email(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def search_emails(
     query: str,
@@ -286,6 +317,7 @@ async def search_emails(
     logger.debug("search_emails access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     try:
         escaped_query = query.replace('"', '\\"')
         client = _get_client()
@@ -324,7 +356,7 @@ async def search_emails(
 # ── 4. send_email (Guard protected) ──
 
 @require_access_token(
-    provider_name="m365-provider",
+    provider_name="m365-provider-common",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -332,38 +364,30 @@ async def search_emails(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def send_email(
     to: list[str],
     subject: str,
     body: str,
     cc: list[str] | None = None,
-    confirm: bool = False,
     access_token: str | None = None,
 ) -> dict[str, Any]:
-    """发送邮件。
-
-    此操作为敏感写操作，调用前 Agent 应通过 Guard 机制向用户展示预览
-    并等待 explicit 确认。设置 confirm=False（默认）时返回预览而不发送，
-    confirm=True 时才实际发送邮件。
+    """发送邮件。此操作为敏感写操作，Agent 应在调用前向用户确认内容。
 
     Args:
         to: 收件人邮箱地址列表
         subject: 邮件主题
         body: 邮件正文（纯文本）
         cc: 抄送邮箱地址列表，可选
-        confirm: 是否已获得用户确认，默认 False（返回预览）
         access_token: AgentArts Identity SDK 自动注入
 
     Returns:
-        dict with: sent (bool), message_id (str or None), error (str or None),
-        requires_confirmation (bool) when confirm=False, preview (dict) when
-        confirm=False
+        dict with: sent (bool), message_id (str or None), error (str or None)
     """
     logger.debug("send_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     if not to:
         return {
             "sent": False,
@@ -371,17 +395,6 @@ async def send_email(
             "error": "At least one recipient is required",
         }
     try:
-        if not confirm:
-            return {
-                "sent": False,
-                "requires_confirmation": True,
-                "preview": {
-                    "to": to,
-                    "subject": subject,
-                    "body_preview": body[:200],
-                },
-                "error": "请确认收件人、主题和正文后再发送。调用时设置 confirm=True。",
-            }
         message: dict[str, Any] = {
             "subject": subject,
             "body": {
@@ -435,7 +448,7 @@ async def send_email(
 # ── 5. reply_to_email ──
 
 @require_access_token(
-    provider_name="m365-provider",
+    provider_name="m365-provider-common",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -443,48 +456,33 @@ async def send_email(
     ],
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
-    force_authentication=True,
 )
 async def reply_to_email(
     email_id: str,
     body: str,
-    confirm: bool = False,
     access_token: str | None = None,
 ) -> dict[str, Any]:
-    """直接回复邮件 — 使用 Graph API POST /messages/{id}/reply 发送回复。
+    """回复邮件 — 使用 Graph API POST /messages/{id}/reply 直接发送。
 
-    此 API 立即发送回复（不创建草稿）。设置 confirm=False（默认）时
-    返回预览而不发送，confirm=True 时才实际发送回复。
+    Agent 应在调用前向用户确认回复内容。
 
     Args:
         email_id: 要回复的原始邮件 ID
         body: 回复正文（纯文本），将插入原邮件内容上方
-        confirm: 是否已获得用户确认，默认 False（返回预览）
         access_token: AgentArts Identity SDK 自动注入
 
     Returns:
-        dict with: sent (bool), error (str or None),
-        requires_confirmation (bool) when confirm=False, preview (dict) when
-        confirm=False
+        dict with: sent (bool), error (str or None)
     """
     logger.debug("reply_to_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
+    _push_auth_complete("m365-provider-common")
     if not email_id or not email_id.strip():
         return {"sent": False, "error": "email_id is required for reply_to_email"}
     if not body or not body.strip():
         return {"sent": False, "error": "reply body is required"}
     try:
-        if not confirm:
-            return {
-                "sent": False,
-                "requires_confirmation": True,
-                "preview": {
-                    "email_id": email_id,
-                    "body_preview": body[:200],
-                },
-                "error": "请确认回复内容后再发送。调用时设置 confirm=True。",
-            }
         client = _get_client()
         resp = await client.post(
             f"{GRAPH_BASE_URL}/messages/{email_id}/reply",

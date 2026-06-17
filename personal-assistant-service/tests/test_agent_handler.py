@@ -1,6 +1,5 @@
 """Unit tests for app.agent_handler.AgentHandler and get_agent_handler singleton."""
 
-import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -121,7 +120,6 @@ class TestAgentHandlerInit:
 
     def test_system_prompt_contains_guard_instruction(self):
         """UT-AH-03: SYSTEM_PROMPT contains Guard instructions for sensitive ops."""
-        # Must contain confirmation-related language
         assert (
             "必须先确认" in SYSTEM_PROMPT or "必须先向用户展示预览" in SYSTEM_PROMPT
         ), "SYSTEM_PROMPT missing confirmation guard instruction"
@@ -136,7 +134,6 @@ class TestHandle:
 
         handler = AgentHandler()
 
-        # Configure mock agent.ainvoke to return a messages list
         mock_message = MagicMock()
         mock_message.content = "你好！有什么可以帮助你的？"
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_message]})
@@ -149,7 +146,6 @@ class TestHandle:
 
         assert result == "你好！有什么可以帮助你的？"
         mock_agent.ainvoke.assert_called_once()
-        # Verify the input message structure
         call_arg = mock_agent.ainvoke.call_args[0][0]
         assert call_arg["messages"][0]["role"] == "user"
         assert call_arg["messages"][0]["content"] == "你好"
@@ -171,7 +167,7 @@ class TestHandle:
 
 
 class TestHandleStream:
-    """Tests for AgentHandler.handle_stream()."""
+    """Tests for AgentHandler.handle_stream() using stream_mode."""
 
     @pytest.mark.asyncio
     async def test_handle_stream_yields_sse_events(self, mock_deps):
@@ -179,27 +175,21 @@ class TestHandleStream:
 
         handler = AgentHandler()
 
-        # Mock astream_events to yield streaming chunks
-        async def mock_astream_events(_input, version="v2", config=None):
+        async def mock_astream(_input, stream_mode=None, config=None):
             chunk1 = MagicMock()
             chunk1.content = "Hello"
-            yield {"event": "on_chat_model_stream", "data": {"chunk": chunk1}}
+            yield ("messages", (chunk1, {}))
 
             chunk2 = MagicMock()
             chunk2.content = " world"
-            yield {"event": "on_chat_model_stream", "data": {"chunk": chunk2}}
+            yield ("messages", (chunk2, {}))
 
-            # Non-stream event — should be skipped by the handler
-            yield {"event": "on_chain_end", "data": {}}
-
-        mock_agent.astream_events = mock_astream_events
+        mock_agent.astream = mock_astream
 
         events = [data async for data in handler.handle_stream(message="Hi")]
 
-        # Should have at least 2 token events + 1 done event
         assert len(events) >= 3
 
-        # Parse SSE data to verify content
         parsed = []
         for event in events:
             assert event.startswith("data: ")
@@ -209,7 +199,6 @@ class TestHandleStream:
         assert "Hello" in tokens
         assert " world" in tokens
 
-        # Last event should signal completion
         assert parsed[-1]["done"] is True
 
     @pytest.mark.asyncio
@@ -218,27 +207,19 @@ class TestHandleStream:
 
         handler = AgentHandler()
 
-        async def mock_astream_events(_input, version="v2", config=None):
-            # Empty token should be skipped
+        async def mock_astream(_input, stream_mode=None, config=None):
             chunk_empty = MagicMock()
             chunk_empty.content = ""
-            yield {
-                "event": "on_chat_model_stream",
-                "data": {"chunk": chunk_empty},
-            }
+            yield ("messages", (chunk_empty, {}))
 
             chunk_good = MagicMock()
             chunk_good.content = "real"
-            yield {
-                "event": "on_chat_model_stream",
-                "data": {"chunk": chunk_good},
-            }
+            yield ("messages", (chunk_good, {}))
 
-        mock_agent.astream_events = mock_astream_events
+        mock_agent.astream = mock_astream
 
         events = [data async for data in handler.handle_stream(message="Hi")]
 
-        # Only the non-empty token + the completion should appear
         token_events = [
             json.loads(e[6:]) for e in events if not json.loads(e[6:]).get("done")
         ]
@@ -251,15 +232,14 @@ class TestHandleStream:
 
         handler = AgentHandler()
 
-        async def mock_astream_events_error(_input, version="v2", config=None):
+        async def mock_astream_error(_input, stream_mode=None, config=None):
             raise ConnectionError("API connection failed")
             yield  # unreachable
 
-        mock_agent.astream_events = mock_astream_events_error
+        mock_agent.astream = mock_astream_error
 
         events = [data async for data in handler.handle_stream(message="Hi")]
 
-        # Should have exactly one event — the error event
         assert len(events) == 1
         parsed = json.loads(events[0][6:])
         assert "error" in parsed
@@ -267,56 +247,81 @@ class TestHandleStream:
         assert parsed["done"] is True
 
     @pytest.mark.asyncio
-    async def test_handle_stream_fallback_when_chunk_has_no_content_attr(
-        self, mock_deps
-    ):
-        """Test that handle_stream uses str(chunk) when chunk lacks .content."""
+    async def test_handle_stream_skips_chunk_without_content_attr(self, mock_deps):
+        """Chunks without .content are treated as empty and skipped."""
         _, _, _, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
 
-        async def mock_astream_events(_input, version="v2", config=None):
-            # Chunk without .content attribute (will use str(chunk))
-            chunk_no_content = object()  # has no .content
-            yield {
-                "event": "on_chat_model_stream",
-                "data": {"chunk": chunk_no_content},
-            }
+        async def mock_astream(_input, stream_mode=None, config=None):
+            chunk_no_content = object()
+            yield ("messages", (chunk_no_content, {}))
 
-        mock_agent.astream_events = mock_astream_events
+        mock_agent.astream = mock_astream
 
         events = [data async for data in handler.handle_stream(message="Hi")]
 
-        # Should have the token event + done event
-        assert len(events) == 2
-        parsed = [json.loads(e[6:]) for e in events]
-        token_event = parsed[0]
-        assert not token_event["done"]
-        assert token_event["token"]  # str() representation is non-empty
-
-    @pytest.mark.asyncio
-    async def test_handle_stream_ignores_non_stream_events(self, mock_deps):
-        """Test that only on_chat_model_stream events produce SSE data."""
-        _, _, _, mock_agent, _, _ = mock_deps
-
-        handler = AgentHandler()
-
-        async def mock_astream_events(_input, version="v2", config=None):
-            # Various non-stream events
-            yield {"event": "on_chain_start", "data": {}}
-            yield {"event": "on_tool_start", "data": {}}
-            yield {"event": "on_tool_end", "data": {}}
-            yield {"event": "on_chain_end", "data": {}}
-
-        mock_agent.astream_events = mock_astream_events
-
-        events = [data async for data in handler.handle_stream(message="Hi")]
-
-        # Only the completion event should appear (no token events)
+        # Only the completion event — chunk without .content → empty → skipped
         assert len(events) == 1
         parsed = json.loads(events[0][6:])
         assert parsed["done"] is True
-        assert "token" not in parsed or parsed["token"] == ""
+
+
+# ═══════════════════════════════════════════════════════════════
+# handle_stream with stream_mode=["messages", "custom"]
+# ═══════════════════════════════════════════════════════════════
+
+
+class TestHandleStreamWithCustomEvent:
+    """Tests for handle_stream() custom mode (auth URL delivery)."""
+
+    @pytest.mark.asyncio
+    async def test_custom_event_yields_system_message(self, mock_deps):
+        """UT-HSM-01: auth_required custom events emit named 'auth_card' SSE."""
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+
+        async def mock_astream(_input, stream_mode=None, config=None):
+            yield (
+                "custom",
+                {
+                    "system_message": "Please authorize",
+                    "auth_url": "https://auth.example.com",
+                    "auth_required": True,
+                },
+            )
+            yield ("messages", (_fake_chunk("Hello"), {}))
+
+        mock_agent.astream = mock_astream
+
+        events = [
+            data
+            async for data in handler.handle_stream(
+                message="Hi",
+            )
+        ]
+
+        # Parse both named SSE (event: X\ndata: Y) and plain data: lines
+        parsed = []
+        for sse in events:
+            lines = sse.strip().split("\n")
+            data_line = None
+            for line in lines:
+                if line.startswith("data: "):
+                    data_line = line
+            if data_line:
+                parsed.append(json.loads(data_line[6:]))
+
+        system_msgs = [p for p in parsed if "system_message" in p]
+        assert len(system_msgs) == 1
+        assert system_msgs[0]["system_message"] == "Please authorize"
+        assert system_msgs[0]["auth_url"] == "https://auth.example.com"
+        assert system_msgs[0]["auth_required"] is True
+
+        tokens = [p for p in parsed if "token" in p and not p.get("done")]
+        assert len(tokens) == 1
+        assert tokens[0]["token"] == "Hello"
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +334,6 @@ class TestGetAgentHandlerSingleton:
 
     def test_get_agent_handler_returns_same_instance(self, mock_deps):
         """Calling get_agent_handler() twice returns the same object (is check)."""
-        # Reset the module-level singleton to ensure a clean test state
         import app.agent_handler
 
         app.agent_handler._handler_instance = None
@@ -346,7 +350,6 @@ class TestGetAgentHandlerSingleton:
                 f"Expected AgentHandler instance, got {type(h1)}"
             )
         finally:
-            # Clean up: reset the singleton so other tests are not affected
             app.agent_handler._handler_instance = None
 
     def test_get_agent_handler_creates_only_one_instance(self, mock_deps):
@@ -361,93 +364,9 @@ class TestGetAgentHandlerSingleton:
                 get_agent_handler()
                 get_agent_handler()
 
-                # __init__ should be called exactly once, not three times
                 assert mock_init.call_count == 1, (
                     f"Expected AgentHandler.__init__ to be called once, "
                     f"got {mock_init.call_count}"
                 )
         finally:
             app.agent_handler._handler_instance = None
-
-
-# ═══════════════════════════════════════════════════════════════
-# handle_stream with message_queue — auth URL delivery
-# ═══════════════════════════════════════════════════════════════
-
-
-
-
-class TestHandleStreamWithCustomEvent:
-    """Tests for handle_stream() with the adispatch_custom_event."""
-
-    @pytest.mark.asyncio
-    async def test_custom_event_yields_system_message(self, mock_deps):
-        """UT-HSM-01: on_custom_event for auth_required yields system_message SSE."""
-        import json
-
-        _, _, _, mock_agent, _, _ = mock_deps
-
-        handler = AgentHandler()
-
-        async def mock_astream_events(_input, version="v2", config=None):
-            yield {
-                "event": "on_custom_event",
-                "name": "auth_required",
-                "data": {
-                    "content": "Please authorize",
-                    "auth_url": "https://auth.example.com",
-                    "auth_required": True,
-                }
-            }
-            yield {
-                "event": "on_chat_model_stream",
-                "data": {"chunk": _fake_chunk("Hello")},
-            }
-
-        mock_agent.astream_events = mock_astream_events
-
-        events = [
-            data async for data in handler.handle_stream(
-                message="Hi",
-            )
-        ]
-
-        parsed = [json.loads(e[6:]) for e in events]
-        system_msgs = [p for p in parsed if "system_message" in p]
-        assert len(system_msgs) == 1
-        assert system_msgs[0]["system_message"] == "Please authorize"
-        assert system_msgs[0]["auth_url"] == "https://auth.example.com"
-        assert system_msgs[0]["auth_required"] is True
-
-        tokens = [p for p in parsed if "token" in p and not p.get("done")]
-        assert len(tokens) == 1
-        assert tokens[0]["token"] == "Hello"
-
-    @pytest.mark.asyncio
-    async def test_custom_event_ignores_other_events(self, mock_deps):
-        """UT-HSM-02: on_custom_event with different name is ignored."""
-        import json
-
-        _, _, _, mock_agent, _, _ = mock_deps
-
-        handler = AgentHandler()
-
-        async def mock_astream_events(_input, version="v2", config=None):
-            yield {
-                "event": "on_custom_event",
-                "name": "other_event",
-                "data": {"foo": "bar"}
-            }
-
-        mock_agent.astream_events = mock_astream_events
-
-        events = [
-            data async for data in handler.handle_stream(
-                message="Hi",
-            )
-        ]
-
-        parsed = [json.loads(e[6:]) for e in events]
-        system_msgs = [p for p in parsed if "system_message" in p]
-        assert len(system_msgs) == 0
-

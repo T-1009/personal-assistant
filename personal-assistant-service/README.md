@@ -75,7 +75,7 @@ DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Ident
 ### 3. 启动服务
 
 ```bash
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
 ### 4. 打开浏览器

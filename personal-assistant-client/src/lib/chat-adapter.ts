@@ -4,6 +4,7 @@ import type {
   ChatModelRunResult,
 } from "@assistant-ui/react";
 import type { SSEEvent } from "../types/chat";
+import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useAuthStore } from "@/stores/auth-store";
 import { acquireIdTokenSilently } from "@/lib/auth";
 
@@ -90,16 +91,17 @@ export function resetSessionId(): void {
  *   Runtime URL (e.g. `https://xxx.agentarts.cn-southwest-2.myhuaweicloud.com`).
  */
 export const chatAdapter: ChatModelAdapter = {
-  async *run({
-    messages,
-    abortSignal,
-  }: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
+  async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
+    const { messages, abortSignal } = options;
     // Extract the last user message text as the query
     const lastUserMessage = [...messages]
       .reverse()
       .find((m) => m.role === "user");
     const query: string =
       lastUserMessage?.content.find((p) => p.type === "text")?.text ?? "";
+    // Note: options.unstable_getMessage() cannot be safely called synchronously here
+    // for just its id, so we extract assistantMessageId if passed or default
+    const assistantMessageId = options.unstable_assistantMessageId;
 
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let fullText = "";
@@ -209,8 +211,17 @@ export const chatAdapter: ChatModelAdapter = {
               parsed.system_message.trim()
             ) {
               fullText += parsed.system_message;
-              if (parsed.auth_url) {
-                fullText += ` [点击授权](${parsed.auth_url})`;
+              // Show a dedicated auth card instead of an inline markdown link
+              if (parsed.auth_required && parsed.auth_url) {
+                useAuthCardStore.getState().setAuth(
+                  assistantMessageId || "unknown",
+                  parsed.auth_url,
+                  parsed.system_message,
+                );
+              }
+              // Transition the auth card to green on completion
+              if (parsed.auth_complete) {
+                useAuthCardStore.getState().setAuthComplete(true, parsed.system_message);
               }
               yield {
                 content: [{ type: "text", text: fullText }],

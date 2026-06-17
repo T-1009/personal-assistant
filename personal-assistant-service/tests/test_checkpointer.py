@@ -208,15 +208,15 @@ class TestConfigPassing:
 
     @pytest.mark.asyncio
     async def test_handle_stream_passes_config(self, patched_handler):
-        """handle_stream() passes config with correct thread_id to astream_events()."""
+        """handle_stream() passes config with correct thread_id to astream()."""
         handler, mock_agent, _ = patched_handler
 
-        async def mock_astream(_input, version="v2", config=None):
+        async def mock_astream(_input, stream_mode=None, config=None):
             chunk = MagicMock()
             chunk.content = "Hello"
-            yield {"event": "on_chat_model_stream", "data": {"chunk": chunk}}
+            yield ("messages", (chunk, {}))
 
-        mock_agent.astream_events = mock_astream
+        mock_agent.astream = mock_astream
 
         events = [
             event
@@ -234,12 +234,12 @@ class TestConfigPassing:
         """handle_stream(msg, session_id="s1") works correctly."""
         handler, mock_agent, _ = patched_handler
 
-        async def mock_astream(_input, version="v2", config=None):
+        async def mock_astream(_input, stream_mode=None, config=None):
             chunk = MagicMock()
             chunk.content = "Token"
-            yield {"event": "on_chat_model_stream", "data": {"chunk": chunk}}
+            yield ("messages", (chunk, {}))
 
-        mock_agent.astream_events = mock_astream
+        mock_agent.astream = mock_astream
 
         events = [
             event
