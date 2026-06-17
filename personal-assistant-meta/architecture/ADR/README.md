@@ -21,6 +21,7 @@ Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 
 | [ADR-013](ADR-013-assistant-ui-chat-library.md) | AI Chat UI 组件库选型 | Accepted | assistant-ui 替代 shadcn/ui 作为 Web Chat 组件库，保留 Chainlit 为 Playground |
 | [ADR-014](ADR-014-netlify-edge-function-auth-proxy.md) | Netlify Edge Function 认证代理 | Accepted | Edge Function 在服务端注入 Gateway 认证 header 后转发，解决 redirect 无法注入 header 的硬限制 |
 | [ADR-015](ADR-015-obs-cdn-path-routing-no-cors.md) | OBS + CDN 路径分发同域部署 | Accepted | 华为云 CDN 路径分发配置同域，消除 CORS 并绕开 AgentArts Gateway 对无凭据 OPTIONS 预检请求的拦截 |
+| [ADR-016](ADR-016-secretless-credential-injection.md) | Secretless Credential Injection via AgentArts Identity | Accepted | 所有敏感凭据通过 AgentArts Identity 存储，代码通过 `@require_api_key` / `@require_access_token` / `@require_sts_token` 声明依赖，运行时由平台注入，代码仓库和 CI/CD 零密钥 |
 
 ## 决策原则
 
