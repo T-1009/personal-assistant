@@ -20,9 +20,9 @@ flowchart TB
     PagesFunction["Cloudflare Pages Function<br/>/api/invocations"]
 
     subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
-        APIGW["API Gateway<br/>defaultgw-xxx...<br/>IAM 签名认证<br/>仅转发 /invocations"]
+        APIGW["API Gateway<br/>defaultgw-xxx...<br/>JWT 认证<br/>PREFIX_MATCH: /invocations/*"]
         subgraph Container["容器 :8080"]
-            Routes["FastAPI 路由层<br/>/ping /invocations<br/>/invocations/playground（本地）"]
+            Routes["FastAPI 路由层<br/>/ping /invocations<br/>/invocations/playground（调试）"]
             Handler["Agent 处理逻辑<br/>deepagents 编排"]
             SDK["agentarts-sdk<br/>Memory / Identity / Sandbox"]
         end
@@ -57,7 +57,7 @@ flowchart TB
 | 层 | 负责 | 详细文档 |
 |----|------|----------|
 | **前端** | Cloudflare Pages 静态站点、Pages Function Proxy、消息通道 | `frontend_architecture.md` |
-| **API Gateway** | IAM 签名认证、路由转发（生产仅 `/invocations` 精确路径） | `cloud-service/agentarts.md` §9 |
+| **API Gateway** | JWT 认证、`PREFIX_MATCH` 路由转发（`/invocations` 及其子路径） | `cloud-service/agentarts.md` §9 |
 | **后端（容器）** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
 | **Session 状态** | 短期会话状态持久化（Checkpoint）+ 长期记忆（Memory） | `session-state-management.md` |
 | **平台服务** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
@@ -86,6 +86,7 @@ flowchart TB
 
 | 文档 | 内容 |
 |------|------|
+| [`api.md`](api.md) | Web Chat、Cloudflare Pages Function、AgentArts Gateway 与 FastAPI 的 API path 及映射关系 |
 | `frontend_architecture.md` | 三种客户端渠道（Web Chat / 飞书直连 / OfficeClaw）、渠道对比、选择指南、部署拓扑 |
 | `backend_architecture.md` | FastAPI 路由设计、Agent 处理逻辑、LangGraph 编排、AgentArts SDK 集成、项目结构 |
 

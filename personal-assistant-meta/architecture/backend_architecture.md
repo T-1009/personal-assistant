@@ -51,20 +51,20 @@ flowchart TB
 
 ### 2.1 AgentArts Gateway 路由约束
 
-AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。生产环境当前只能可靠使用 `ACCURATE_MATCH`，Gateway 仅转发 `/invocations` 精确路径；`PREFIX_MATCH` 尚未上线，不能依赖 `/invocations/*` 子路径转发。
+AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。生产环境当前配置为 `PREFIX_MATCH`，Gateway 转发 `/invocations` 及其所有子路径。
 
 ```
 浏览器/客户端 ──→ Gateway (defaultgw-xxx...) ──→ 容器 :8080
                        │
-                   ACCURATE_MATCH: /invocations → ✅ 转发
-                   /invocations/* 子路径 → ❌ 404 No matching policy found
+                   PREFIX_MATCH: /invocations → ✅ 转发
+                   /invocations/* 子路径 → ✅ 转发
 ```
 
 **关键约束**：
 - `/ping` 是平台内部健康检查端点，**不走 Gateway**，AgentArts 控制面直接调容器。必须保留在根路径。
 - `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**，也是浏览器 Web Chat 的生产流式入口。
-- **所有面向外部客户端的生产调用**必须收敛到 `POST /invocations` 单一路径，通过 JSON body 字段区分同步或流式模式。
-- `/invocations/playground` 仅用于本地调试；生产 Gateway 不转发该子路径。
+- Web Chat 对话调用收敛到 `POST /invocations` 单一路径，通过 JSON body 字段区分同步或流式模式。
+- `/invocations/playground` 可通过 Gateway 的完整 Runtime 子路径访问，但 Cloudflare Pages Function 当前不代理该路径。
 
 > **Inbound authentication**：Gateway 使用 `authorizer_type: CUSTOM_JWT`。
 > Browser 将 Microsoft JWT 发送到 same-origin Cloudflare Pages Function，
@@ -79,7 +79,7 @@ runtime:
   invoke_config:
     protocol: HTTP
     port: 8080
-    url_match_type: ACCURATE_MATCH  # 仅转发 /invocations 精确路径
+    url_match_type: PREFIX_MATCH  # 转发 /invocations 及其子路径
 ```
 
 ### 2.2 路由表
@@ -147,15 +147,15 @@ async def oauth_callback(code: str):
     response.set_cookie("session", token["id_token"])
     return response
 
-# Chainlit 调试 UI（本地调试；生产 ACCURATE_MATCH Gateway 不转发该子路径）
+# Chainlit 调试 UI（PREFIX_MATCH Gateway 可转发该子路径）
 mount_chainlit(app=app, target=..., path="/invocations/playground")
 ```
 
 | 路由 | 方法 | 调用方 | 用途 | Gateway 可见 |
 |------|------|--------|------|-------------|
 | `/ping` | GET | AgentArts 平台（控制面） | 健康检查 | ❌ 平台内部 |
-| `/invocations` | POST | AgentArts SDK / OfficeClaw / 浏览器 | `stream: false` 或未传返回 JSON；`stream: true` 返回 SSE | ✅（ACCURATE_MATCH） |
-| `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI，仅本地可用 | ❌ 生产 Gateway 不转发子路径 |
+| `/invocations` | POST | AgentArts SDK / OfficeClaw / 浏览器 | `stream: false` 或未传返回 JSON；`stream: true` 返回 SSE | ✅（PREFIX_MATCH） |
+| `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅ 通过完整 Runtime path；Cloudflare Function 不代理 |
 
 > **注意**：`/feishu/webhook`、`/auth/callback` 等需要独立 URL 的路由无法通过 Gateway 暴露。这些路由对应的功能需要通过 AgentArts 平台侧 MCP Gateway 或 Identity 组件实现，或由 Web Chat 前端在浏览器侧直接处理 OAuth 流程并将结果回传。
 
@@ -547,4 +547,7 @@ personal-assistant/
 
 AgentArts 平台只看容器 `:8080` 上有没有 `/ping` 和 `/invocations`，不关心 HTTP Server 用什么框架启动。
 
-> ⚠️ **关键限制**：虽然 FastAPI 可以定义任意路由，但 AgentArts Gateway 生产环境当前只可靠转发 `/invocations` 精确路径（`ACCURATE_MATCH`）。本地 `agentarts dev` 时所有路由可达；生产部署后外部客户端必须通过 `POST /invocations` 单一路径访问，`/invocations/*` 子路径会被 Gateway 拒绝。常见陷阱见 [AgentArts 部署 runbook §15.12](devops/agentarts-deploy-runbook.md#1512-runtimearch-与镜像架构不一致)。
+> **关键限制**：AgentArts Gateway 生产环境使用 `PREFIX_MATCH`，因此仅
+> `/invocations` 及其子路径可对外转发；其他 root-level FastAPI route 不会
+> 自动暴露。外部 URL 仍必须使用完整
+> `/runtimes/personal-assistant/invocations...` Runtime path。

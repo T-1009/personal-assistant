@@ -91,6 +91,18 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
 
 `/invocations` 需要可信用户身份和会话 ID。生产环境由 AgentArts Gateway 注入；本地直连时需要显式传入 `X-HW-AgentGateway-User-Id` 和 `x-hw-agentarts-session-id`。
 
+### OpenAPI 规范
+
+`openapi.json` 是从当前 FastAPI app 自动生成并提交到 repository 的
+versioned artifact。修改 route 或 request schema 后执行：
+
+```bash
+uv run python scripts/generate_openapi.py
+```
+
+提交前检查 `openapi.json` diff，确保生成物与 `app.main:app` 一致。不要手工
+编辑 `openapi.json`。
+
 ### 示例
 
 ```bash
