@@ -58,6 +58,7 @@ flowchart TB
 | **后端（容器）** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
 | **Session 状态** | 短期会话状态持久化（Checkpoint）+ 长期记忆（Memory） | `session-state-management.md` |
 | **平台服务** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
+| **Netlify Routing** | SPA fallback、redirect rule 作用域与 API Proxy 判定 | [`cloud-service/netlify/routing.md`](cloud-service/netlify/routing.md) |
 
 ### 1.2 技术选型
 
