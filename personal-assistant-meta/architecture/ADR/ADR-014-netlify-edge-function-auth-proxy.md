@@ -1,132 +1,237 @@
-# ADR-014: Netlify Edge Function 作为 API 认证代理
+# ADR-014: Netlify Proxy 与生产 CORS 直连评估
 
-> 状态：Accepted | 日期：2025-06-11
+> 状态：Accepted（2026-06-18 修订） | 原始日期：2025-06-11 | 关联文档：[`ADR-015`](./ADR-015-obs-cdn-path-routing-no-cors.md)
 
 ---
 
 ## 背景
 
-Web Chat 前端部署在 Netlify（`agentarts-personal-assistant.netlify.app`），后端运行在 AgentArts Gateway（`defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com`）。前端 SPA 通过 `POST /invocations` 与后端 Agent 通信。
+Web Chat 前端当前部署在 Netlify
+（`agentarts-personal-assistant.netlify.app`），后端运行在 AgentArts
+Gateway（`defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com`）。
 
-**两个硬约束同时存在**：
+项目当前按环境使用两种 Proxy：
 
-| 约束 | 来源 | 详情 |
-|------|------|------|
-| **Gateway 要求认证 header** | `.agentarts_config.yaml` → `authorizer_type: API_KEY` | 所有进入 Gateway 的请求必须携带 `Authorization: Bearer <api-key>`，否则返回 401/403 |
-| **浏览器不能持有 API Key** | 安全铁律 | API Key 出现在浏览器 JS 中即视为泄露——任何人 F12 就能拿走 |
+| 环境 | 当前请求方式 | Proxy 职责 |
+|------|--------------|------------|
+| Local development | 浏览器请求 Vite `/invocations` | 转发到本地 FastAPI；当 `PROXY_TARGET=prod` 时补充 Gateway Runtime path |
+| Production | 浏览器请求 Netlify `/invocations` | Netlify redirect 转发到 AgentArts Gateway 的完整 Runtime path |
 
-这两条约束意味着：**前端发起的请求，必须在服务端某处注入认证 header 后再转发到 Gateway，而不能让浏览器直接调 Gateway。**
+Gateway 对外暴露的真实路径不是前端使用的逻辑路径：
+
+```text
+Frontend path: /invocations
+Gateway path:  /runtimes/personal-assistant/invocations
+```
+
+Vite Proxy 当前通过以下 rewrite 解决该差异：
+
+```ts
+path.replace(
+  /^\/invocations/,
+  "/runtimes/personal-assistant/invocations",
+)
+```
+
+原 ADR 假设生产 Gateway 使用 `API_KEY`，因此选择 Netlify Edge Function
+在服务端注入 API Key。当前实现和认证模型已变化：
+
+- Gateway 使用 `authorizer_type: CUSTOM_JWT`
+- 浏览器通过 Microsoft 登录取得用户 JWT，并发送
+  `Authorization: Bearer <id-token>`
+- Netlify 当前使用 `netlify.toml` redirect，只负责 URL rewrite，不再注入
+  API Key
+
+因此需要重新评估：生产环境能否删除 Netlify Proxy，让浏览器通过 CORS
+直接调用 AgentArts Gateway。
 
 ---
 
 ## 决策
 
-**使用 Netlify Edge Function（`netlify/edge-functions/invocations.ts`）在服务端注入 `Authorization: Bearer` 和 `x-hw-agentarts-session-id` 后转发请求到 AgentArts Gateway。**
+**Local development 继续使用 Vite Proxy。生产环境暂时保留 Netlify Proxy，
+不切换到浏览器 CORS 直连。**
+
+删除生产 Proxy 是目标方向，但只有在 AgentArts Gateway 能正确处理
+unauthenticated CORS preflight 后才能实施。当前 Gateway 会在请求到达
+FastAPI `CORSMiddleware` 之前拒绝 `OPTIONS`，因此生产 CORS 直连不可用。
 
 ```mermaid
 flowchart LR
-    Browser["浏览器<br/>fetch('/invocations')"] -->|"同源 POST<br/>无认证 header"| EF["Netlify Edge Function<br/>invocations.ts"]
-    EF -->|"注入 Authorization: Bearer xxx<br/>注入 x-hw-agentarts-session-id"| GW["AgentArts Gateway<br/>defaultgw-xxx"]
-    GW -->|"转发"| Container["FastAPI 容器 :8080"]
+    Browser["Browser<br/>Netlify origin"] -->|"OPTIONS full Runtime path<br/>no Authorization header"| GW["AgentArts Gateway<br/>CUSTOM_JWT"]
+    GW -->|"401 Authentication failed"| Browser
+    GW -.->|"Request does not reach"| CORS["FastAPI CORSMiddleware"]
+    Browser -.->|"Browser blocks POST"| POST["POST /invocations<br/>Authorization: Bearer JWT"]
 ```
 
-选择依据：
+### Path 问题结论
 
-| 因素 | Edge Function | Netlify Redirect | 独立反向代理 | Gateway auth=NONE |
-|------|:---:|:---:|:---:|:---:|
-| **能否注入自定义 header** | ✅ 是 | ❌ 否（只能改 URL） | ✅ 是 | N/A（不需要） |
-| **部署复杂度** | 低（同仓库，同平台） | 极低（一行 toml） | 高（新服务 + TLS + 运维） | 低（改 YAML） |
-| **API Key 安全性** | ✅ 服务端注入，浏览器不可见 | ❌ 无法注入 | ✅ 服务端注入 | ⚠️ Gateway 无认证 |
-| **SSE 流式透传** | ✅ 原生支持 | ✅ 支持 | ✅ 支持 | ✅ 支持 |
-| **成本** | Netlify 免费额度内 | 免费 | 需额外计算资源 | 免费 |
-| **同源（无 CORS）** | ✅ 浏览器调同域 Netlify | ✅ 浏览器调同域 Netlify | ⚠️ 需额外配置 | ❌ 跨域 |
+URL path 差异**不会从协议上阻止 CORS**。Proxy 删除后，不再执行
+`path.replace(...)`，但前端可以把完整 Runtime prefix 放入生产环境变量：
+
+```bash
+VITE_API_BASE_URL=https://<gateway-domain>/runtimes/personal-assistant
+```
+
+现有 Client 使用：
+
+```ts
+fetch(`${baseUrl}/invocations`, ...)
+```
+
+最终请求 URL 将正确变为：
+
+```text
+https://<gateway-domain>/runtimes/personal-assistant/invocations
+```
+
+因此 path rewrite 可以由配置替代，不需要为此保留 Proxy。必须避免仅配置
+Gateway origin，否则浏览器会请求错误的
+`https://<gateway-domain>/invocations` 并得到 `404 No matching policy found`。
+
+### OPTIONS preflight 结论
+
+当前聊天请求包含以下非 simple request 条件：
+
+- `Content-Type: application/json`
+- `Authorization`
+- `x-hw-agentarts-session-id`
+- `X-HW-AgentGateway-User-Id`
+
+浏览器会先发送：
+
+```http
+OPTIONS /runtimes/personal-assistant/invocations
+Origin: https://agentarts-personal-assistant.netlify.app
+Access-Control-Request-Method: POST
+Access-Control-Request-Headers: authorization,content-type,x-hw-agentarts-session-id,x-hw-agentgateway-user-id
+```
+
+Preflight 只声明后续请求希望使用的 headers，不会携带业务请求的
+`Authorization: Bearer <JWT>`。2026-06-18 对已部署 Gateway 的实际验证结果为：
+
+```http
+HTTP/1.1 401 Unauthorized
+
+{"code":401,"data":null,"message":"Authentication failed!"}
+```
+
+这说明请求被 Gateway 的 `CUSTOM_JWT` authorizer 拦截，未到达 FastAPI。
+所以即使 FastAPI 已正确配置 `CORSMiddleware`，也无法为该 preflight 返回
+`Access-Control-Allow-Origin` 等 headers。浏览器随后不会发送真实的
+`POST /invocations`。
 
 ---
 
-## 拒绝的方案
+## 目标拓扑与迁移条件
 
-### 方案 A：Netlify Redirect 规则（`netlify.toml` `[[redirects]]`）
+### 当前可用拓扑
 
-这是最初实现（commit `a1985af`），仅一条 toml 配置：
-
-```toml
-[[redirects]]
-  from = "/invocations"
-  to = "https://defaultgw-xxx...agentarts.com/invocations"
-  status = 200
+```mermaid
+flowchart LR
+    Browser["Browser<br/>fetch('/invocations')"] -->|"Same-Origin POST"| Netlify["Netlify redirect"]
+    Netlify -->|"Rewrite to<br/>/runtimes/personal-assistant/invocations"| GW["AgentArts Gateway"]
+    GW -->|"Validate user JWT"| FastAPI["FastAPI /invocations"]
 ```
 
-**拒绝理由**：Netlify redirect 规则只能改写 URL 和 status code，**不能注入自定义 HTTP header**。Gateway 收到没有 `Authorization` header 的请求直接返回 401。这是 Netlify 平台的能力边界，不是配置问题。
+Netlify redirect 使浏览器看到的是 Same-Origin 请求，因此不会产生 CORS
+preflight。用户 JWT 仍由浏览器发送并由 Gateway 验证，Netlify 不保存或注入
+API Key。
 
-### 方案 B：AgentArts Gateway 关闭认证（`authorizer_type: NONE`）
+### 未来 CORS 直连拓扑
 
-将 `.agentarts_config.yaml` 中 `authorizer_type` 从 `API_KEY` 改为 `NONE`，Gateway 不再验证请求身份。
+```mermaid
+flowchart LR
+    Browser["Browser<br/>Netlify or OBS origin"] -->|"OPTIONS + POST<br/>full Runtime path"| GW["AgentArts Gateway"]
+    GW -->|"OPTIONS allowed without JWT"| CORS["FastAPI CORSMiddleware"]
+    CORS -->|"CORS headers"| Browser
+    GW -->|"Validate JWT for POST, then forward"| FastAPI["FastAPI /invocations"]
+```
 
-**拒绝理由**：这意味着任何知道 Gateway URL 的人都可以直接调 Agent。当前生产 Gateway URL 虽不公开，但缺乏纵深防御——一旦 URL 泄露（git history、日志、浏览器 DevTools），攻击者可直接消耗 LLM API 额度、读取 Memory 数据。AgentArts SDK 当前版本不支持 `NONE`（上游 issue [#17](https://github.com/huaweicloud/agentarts-sdk-python/issues/17)），即使未来支持，关闭认证也违反 [ADR-003](./ADR-003-agentarts-platform.md) 的安全基线。
+只有以下条件全部满足后，才能删除生产 Netlify Proxy：
 
-### 方案 C：独立反向代理（Nginx / 华为云 ELB / APIG）
+1. AgentArts Gateway 明确支持对目标 Runtime path 的 `OPTIONS` bypass，
+   或 Gateway 自身能够返回完整、正确的 CORS preflight response。
+2. Gateway 对 `POST` 等受保护的业务 methods 仍强制执行 `CUSTOM_JWT`
+   验证；FastAPI 不重复验证 JWT，而是信任 Gateway 注入的 verified user
+   identity。放行 `OPTIONS` 不能降低业务接口认证强度。
+3. 生产 `VITE_API_BASE_URL` 包含完整
+   `/runtimes/personal-assistant` prefix。
+4. FastAPI `CORS_ALLOWED_ORIGINS` 只列出明确允许的生产 origin。
+5. 对真实 Gateway 完成 `OPTIONS`、authenticated `POST` 和 SSE streaming
+   的 E2E 验证。
 
-在 AgentArts Gateway 前加一层反向代理，负责注入认证 header。
+满足条件 1 之前，不得仅删除 Netlify redirect；否则生产聊天请求会在
+preflight 阶段全部失败。
 
-**拒绝理由**：
-- 引入新的基础设施组件，需管理 TLS 证书、高可用、监控告警
-- 与 [ADR-003](./ADR-003-agentarts-platform.md) 的"平台优先"原则冲突——本应由 AgentArts Gateway 原生解决的认证问题，不应靠外挂组件修补
-- 对于当前单 Service 单 Client 的规模，ROI 严重不匹配。未来多服务场景可重新评估
+---
 
-### 方案 D：Cloudflare Workers / 其他 CDN Edge 平台
+## 方案对比
 
-在 CDN 边缘注入 header（如 Cloudflare Worker、AWS CloudFront Functions）。
-
-**拒绝理由**：Netlify 已提供 Edge Function 能力，且与前端部署在同一平台（同仓库、同 CI/CD、同域名管理）。引入第二个 CDN 平台增加 DNS 配置、证书管理、费用账单的复杂度。不符合"简单够用"原则。
+| 因素 | Netlify Proxy（当前） | 浏览器 CORS 直连（目标） |
+|------|-----------------------|---------------------------|
+| URL path 转换 | Netlify rewrite | `VITE_API_BASE_URL` 携带 Runtime prefix |
+| CORS preflight | Same-Origin，不触发 | 必然触发 |
+| Gateway `OPTIONS` | 不经过浏览器 preflight | 当前返回 401，阻断方案 |
+| 用户认证 | Browser JWT → Gateway | Browser JWT → Gateway |
+| Server-side API Key | 不需要 | 不需要 |
+| SSE | 当前可透传，需持续验证平台超时 | Gateway 放行 preflight 后可直连 |
+| 生产可行性 | ✅ 当前可用 | ❌ 当前不可用 |
 
 ---
 
 ## 影响
 
-### 代码和配置
+### 保留
 
-| 影响项 | 详情 |
-|--------|------|
-| **新增文件** | `personal-assistant-client/netlify/edge-functions/invocations.ts`（60 行） |
-| **移除配置** | `netlify.toml` 中 `/invocations` 的 redirect 规则（原 6 行） |
-| **环境变量** | Netlify 控制台配 `AGENTARTS_API_KEY`，代码回退 `pa-dev-api-key-2026`（dev key） |
-| **认证方式变更** | commit `91226ba` 从 `X-API-Key` 改为 `Authorization: Bearer`（与 AgentArts Gateway 标准一致） |
-| **Session ID** | Edge Function 用 `crypto.randomUUID()` 生成，通过 `x-hw-agentarts-session-id` 传递——**每个请求新 UUID**，当前后端未使用此 ID（`feature-session-checkpoint` 待实现） |
+- Local development 继续通过 Vite Proxy 使用逻辑路径 `/invocations`。
+- Production 继续通过 Netlify redirect 访问完整 Gateway Runtime path。
+- Gateway 继续使用 `CUSTOM_JWT` 验证用户 JWT。
+- FastAPI 保留显式 origin allowlist，为 Gateway 将来支持 preflight 做准备。
 
-### 请求流
+### 不再适用的原 ADR 内容
 
-```
-浏览器                                      Netlify Edge               AgentArts Gateway
-  │                                             │                           │
-  │ POST /invocations                           │                           │
-  │ {message: "你好", stream: true}              │                           │
-  │────────────────────────────────────────────→│                           │
-  │                                             │ POST /runtimes/.../invocations
-  │                                             │ Authorization: Bearer xxx
-  │                                             │ x-hw-agentarts-session-id: <uuid>
-  │                                             │──────────────────────────→│
-  │                                             │                           │──→ FastAPI
-  │                                             │ SSE stream ←──────────────│
-  │ SSE stream ←────────────────────────────────│                           │
-  │                                             │                           │
+- Netlify Edge Function 注入 `AGENTARTS_API_KEY`
+- 浏览器不持有任何 Gateway credential
+- Edge Function 生成 `x-hw-agentarts-session-id`
+
+当前 session ID 由 Client 生成并持久化，用户 JWT 也由 Client 获取和发送。
+
+### 后续验证命令
+
+```bash
+curl -i -X OPTIONS \
+  "https://<gateway-domain>/runtimes/personal-assistant/invocations" \
+  -H "Origin: https://<frontend-origin>" \
+  -H "Access-Control-Request-Method: POST" \
+  -H "Access-Control-Request-Headers: authorization,content-type,x-hw-agentarts-session-id,x-hw-agentgateway-user-id"
 ```
 
-### 限制
+成功标准：
 
-| 限制 | 说明 | 缓解 |
-|------|------|------|
-| **仅允许 POST** | Edge Function 对非 POST 返回 405。OPTIONS preflight 不单独处理——依赖同源（Netlify 域名）消除 CORS 需求 | 开发环境 Vite proxy 不走 Edge Function，CORS 由 FastAPI 的 `CORSMiddleware` 处理 |
-| **API Key 硬编码 fallback** | 代码中 `pa-dev-api-key-2026` 为 dev key，生产需通过 `Netlify.env.get("AGENTARTS_API_KEY")` 覆盖 | 生产部署前确认 Netlify 环境变量已配置 |
-| **Session ID 每次重新生成** | 同一浏览器 tab 的连续请求有不同 session ID，导致后端无法关联会话上下文 | 待 `feature-session-checkpoint` 实现后，由前端生成并持久化 session ID，通过自定义 header 传递 |
-| **body 全量读取** | `request.text()` 将完整 body 读入内存后再转发。对聊天消息（<10KB）无影响；未来文件上传场景需改为 stream | 当前阶段可接受；文件上传不在 Web Chat scope 内 |
+- HTTP 2xx
+- `Access-Control-Allow-Origin` 精确匹配前端 origin
+- `Access-Control-Allow-Methods` 包含 `POST`
+- `Access-Control-Allow-Headers` 覆盖实际请求 headers
+- 不要求 preflight 携带 JWT
+
+---
+
+## Four-Question Gate
+
+| 问题 | 当前决策 |
+|------|----------|
+| Is it best practice? | Yes。认证与 CORS 分离处理，不通过暴露 API Key 或关闭业务认证绕过 preflight |
+| Is it industry standard? | Yes。开发使用 dev proxy，生产仅在 Gateway 正确支持 CORS 后才采用跨域直连 |
+| Is it conventional? | Yes。使用完整 API base URL 解决部署路径差异，使用标准 preflight 验证跨域能力 |
+| Is it modern? | Yes。Browser JWT + Gateway validation + explicit origin allowlist 符合现代 SPA API 模式 |
 
 ---
 
 ## 参考
 
-- [ADR-003: AgentArts 平台作为基础设施](./ADR-003-agentarts-platform.md) — Gateway 认证模型
-- [ADR-004: FastAPI 替代 AgentArtsRuntimeApp](./ADR-004-fastapi-over-agentarts-runtime-app.md) — 路由自由度需求
-- [前端架构 §6.2 Web Chat 前端部署](../frontend_architecture.md#62-web-chat-前端部署) — OBS + CDN + 自定义域名方案
-- [后端架构 §2.1 AgentArts Gateway 路由约束](../backend_architecture.md#21-agentarts-gateway-路由约束) — ACCURATE_MATCH 限制
-- commit `7cc157f` — 从 redirect 迁移到 Edge Function 的原始 commit
-- [Netlify Edge Functions 文档](https://docs.netlify.com/edge-functions/overview/)
+- [ADR-003: AgentArts 平台作为基础设施](./ADR-003-agentarts-platform.md)
+- [ADR-015: OBS + CDN 路径分发避免网关 CORS OPTIONS 预检拦截](./ADR-015-obs-cdn-path-routing-no-cors.md)
+- [前端架构 §6.2 Web Chat 前端部署](../frontend_architecture.md#62-web-chat-前端部署)
+- [后端架构 §2.1 AgentArts Gateway 路由约束](../backend_architecture.md#21-agentarts-gateway-路由约束)
+- [AgentArts §11.7 Gateway 路由路径](../cloud-service/agentarts.md#117-gateway-路由路径)
