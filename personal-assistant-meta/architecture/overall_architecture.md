@@ -12,10 +12,12 @@
 flowchart TB
     subgraph Frontends["🖥️ 前端（详见 frontend_architecture.md）"]
         direction LR
-        WebChat["Web Chat<br/>浏览器"]
+        WebChat["Web Chat<br/>Cloudflare Pages"]
         Feishu["飞书直连<br/>自定义 Bot"]
         OC["OfficeClaw<br/>桌面客户端"]
     end
+
+    PagesFunction["Cloudflare Pages Function<br/>/api/invocations"]
 
     subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
         APIGW["API Gateway<br/>defaultgw-xxx...<br/>IAM 签名认证<br/>仅转发 /invocations"]
@@ -36,7 +38,8 @@ flowchart TB
         InternalAPI["企业内部 API"]
     end
 
-    WebChat -->|"/invocations"| APIGW
+    WebChat -->|"/api/invocations"| PagesFunction
+    PagesFunction -->|"JWT + SSE<br/>full Runtime path"| APIGW
     Feishu -->|"/invocations"| APIGW
     OC -->|"/invocations"| APIGW
     APIGW -->|"转发"| Routes
@@ -53,12 +56,12 @@ flowchart TB
 
 | 层 | 负责 | 详细文档 |
 |----|------|----------|
-| **前端** | 消息通道、用户交互界面 | `frontend_architecture.md` |
+| **前端** | Cloudflare Pages 静态站点、Pages Function Proxy、消息通道 | `frontend_architecture.md` |
 | **API Gateway** | IAM 签名认证、路由转发（生产仅 `/invocations` 精确路径） | `cloud-service/agentarts.md` §9 |
 | **后端（容器）** | FastAPI 路由 + Agent 处理逻辑 | `backend_architecture.md` |
 | **Session 状态** | 短期会话状态持久化（Checkpoint）+ 长期记忆（Memory） | `session-state-management.md` |
 | **平台服务** | AgentArts Memory / Identity / Sandbox / MCP Gateway | `cloud-service/agentarts.md` |
-| **Netlify Routing** | SPA fallback、redirect rule 作用域与 API Proxy 判定 | [`cloud-service/netlify/routing.md`](cloud-service/netlify/routing.md) |
+| **Cloudflare Pages** | Production hosting、Pages Function Proxy、Wrangler CLI | [`cloud-service/cloudflare/pages.md`](cloud-service/cloudflare/pages.md) |
 
 ### 1.2 技术选型
 
@@ -564,7 +567,10 @@ class PersonalAssistantMemory:
 
 ---
 
-> 完整部署流程（Docker 构建、SWR 推送、OBS 上传、冒烟验证、回滚方案）详见 [agentarts-deploy-runbook.md](devops/agentarts-deploy-runbook.md)。
+> Backend 部署见
+> [agentarts-deploy-runbook.md](devops/agentarts-deploy-runbook.md)；Frontend
+> Cloudflare deployment 见
+> [cloudflare/pages.md](cloud-service/cloudflare/pages.md)。
 
 ## 8. 部署配置
 
@@ -719,6 +725,7 @@ personal-assistant/
 | **Microsoft Entra ID (OIDC) 配置** | `architecture/devops/microsoft-entra-id-setup.md` |
 | **前端架构** | `architecture/frontend_architecture.md` |
 | **后端架构** | `architecture/backend_architecture.md` |
+| **Cloudflare Pages 运维** | `architecture/cloud-service/cloudflare/pages.md` |
 | AgentArts 平台参考 | `architecture/cloud-service/agentarts.md` |
 | AgentCore 对比参考 | `architecture/cloud-service/agentcore.md` |
 | Identity SDK 文档 | `https://support.huaweicloud.com/highcode-agentarts/agentarts_10_044.html` |

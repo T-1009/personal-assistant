@@ -1,6 +1,11 @@
-# Domain — 自定义域名与 OBS 静态网站托管
+# Domain — 自定义域名与 OBS 静态网站托管（Legacy）
 
-> 版本：v1.0 | 状态：Active | 关联文档：[`overall_architecture.md`](../overall_architecture.md)、[`cicd.md`](../devops/cicd.md)
+> 版本：v1.0 | 状态：Legacy | 关联文档：[`ADR-017`](../ADR/ADR-017-cloudflare-pages-proxy.md)
+
+> Production Web Chat 已迁移到
+> `https://agentarts-personal-assistant.pages.dev`。本文记录的 OBS、
+> `chat.resource-governance.cloud` 和旧 GitHub Actions 流程不再用于当前
+> Production deployment，仅作为历史基础设施与未来自定义域名参考。
 
 ---
 
@@ -100,9 +105,11 @@ curl -sI http://chat.resource-governance.cloud/index.html | grep -i content-type
 
 ---
 
-## 4. 前端部署（GitHub Actions）
+## 4. Historical：OBS 前端部署（GitHub Actions）
 
-**文件**：`.github/workflows/deploy-frontend.yml`
+旧 OBS workflow 已删除。当前 workflow 为
+`.github/workflows/deploy-frontend-to-cloudflare.yml`，详见
+[`cloudflare/pages.md`](./cloudflare/pages.md)。
 
 部署流程：
 

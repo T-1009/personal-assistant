@@ -1,5 +1,9 @@
 # Netlify Routing 与 Proxy 判定规则
 
+> 状态：Historical | Production 已迁移到
+> [`Cloudflare Pages`](../cloudflare/pages.md)。本文仅保留 Netlify routing
+> 的通用原理和迁移背景。
+
 ## 核心规律
 
 Netlify redirect rules 不是 Browser 的全局请求拦截器。请求是否经过 Netlify，
@@ -62,7 +66,7 @@ fetch(
 
 ## SPA Fallback 不是 API Proxy
 
-当前 Netlify 配置保留以下 rule：
+历史 Netlify 配置曾保留以下 rule：
 
 ```toml
 [[redirects]]
@@ -123,12 +127,12 @@ sequenceDiagram
 删除该外部 rewrite，并让 Frontend 使用 Gateway 的绝对 URL 后，API 请求不再
 经过 Netlify。
 
-## 当前项目判定
+## 迁移后的项目判定
 
 Production 配置：
 
 ```bash
-VITE_API_BASE_URL=https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant
+VITE_API_BASE_URL=/api
 ```
 
 Client 请求：
@@ -137,8 +141,8 @@ Client 请求：
 fetch(`${baseUrl}/invocations`, ...)
 ```
 
-最终 Request URL 指向 AgentArts Gateway，因此当前 Production API 请求直连
-Gateway。Netlify 只负责提供 SPA 静态文件和处理 SPA fallback。
+最终 Request URL 指向 Cloudflare Pages origin 的 `/api/invocations`，再由
+Pages Function 转发到 AgentArts Gateway。当前 Production 不再访问 Netlify。
 
 ## 如何验证
 
@@ -151,4 +155,3 @@ Gateway。Netlify 只负责提供 SPA 静态文件和处理 SPA fallback。
 
 判断时优先看 Request URL 的 origin，不要仅根据 `netlify.toml` 中是否存在
 `/*` 推断请求路径。
-

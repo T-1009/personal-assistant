@@ -1,8 +1,15 @@
 # AgentArts Deployment Runbook
 
-> 版本：v1.0 | 状态：Active | 提取自 [`issues/chores/chore-1-agentarts-deploy/plan.md`](../../issues/chores/chore-1-agentarts-deploy/plan.md)
+> 版本：v1.0 | 状态：Active | 提取自 [`issues/chores/resolved/chore-1-agentarts-deploy/plan.md`](../../issues/chores/resolved/chore-1-agentarts-deploy/plan.md)
 >
 > 关联文档：[`cicd.md`](./cicd.md)、[`overall_architecture.md`](../overall_architecture.md)、[`agentarts.md`](../cloud-service/agentarts.md)
+>
+> **Scope notice（2026-06-18）**：本 runbook 当前只作为 AgentArts Backend
+> 和历史 OBS deployment 记录。Production Frontend 已迁移到 Cloudflare
+> Pages；Frontend build/deploy、Wrangler CLI 和 smoke test 以
+> [`cloud-service/cloudflare/pages.md`](../cloud-service/cloudflare/pages.md)
+> 为准。文中 OBS、Netlify、跨域 `VITE_API_BASE_URL` 步骤不得用于当前
+> Production deployment。
 
 ---
 
@@ -446,7 +453,7 @@ npx tsc --noEmit
 # 期望：无 TypeScript 错误
 ```
 
-### 9.2 VITE_API_BASE_URL 环境变量配置
+### 9.2 Historical：OBS `VITE_API_BASE_URL` 环境变量配置
 
 前端在 OBS 部署后需要通过完整 URL 访问 AgentArts Runtime，而不是开发模式下的 Vite proxy（相对路径 `/api`）。构建前必须设置 `VITE_API_BASE_URL`。
 
@@ -649,7 +656,7 @@ echo "OBS 静态网站域名: $OBS_DOMAIN"
 
 ---
 
-## 12. Step 11 — 前端上传至 OBS
+## 12. Historical Step 11 — 前端上传至 OBS
 
 **执行角色**：Agent
 

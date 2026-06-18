@@ -62,11 +62,11 @@ sequenceDiagram
 | 维度 | 说明 |
 |------|------|
 | **协议** | SSE (Server-Sent Events) 流式推送 |
-| **认证** | Microsoft Entra ID → JWT Cookie。详见 [ADR-007](../ADR/ADR-007-identity-provider.md) |
+| **认证** | Microsoft Entra ID → JWT Cookie。详见 [ADR-007](ADR/ADR-007-identity-provider.md) |
 | **路由** | `/chat/stream`, `/auth/callback` |
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
-| **技术栈** | Vite + React + TypeScript + Tailwind CSS，assistant-ui AI Chat 组件库（含 `@assistant-ui/react-ai-sdk`）。详见 [ADR-013](../ADR/ADR-013-assistant-ui-chat-library.md) |
+| **技术栈** | Vite + React + TypeScript + Tailwind CSS，assistant-ui AI Chat 组件库（含 `@assistant-ui/react-ai-sdk`）。详见 [ADR-013](ADR/ADR-013-assistant-ui-chat-library.md) |
 | **SSE 事件类型** | `token`（LLM 流式 token）、`done`（流结束）、`error`（错误）、`system_message`（带外系统消息，如 OAuth2 鉴权 URL）。详见 §2.1.4 |
 
 **OAuth 前后端职责分离**：token 交换必须在后端，因为 client_secret 不能暴露在前端浏览器中。
@@ -95,7 +95,8 @@ FastAPI 容器 :8080
   └── /ping                    → 健康检查
 ```
 
-> Web Chat 前端（Vite + React）不再打包进容器，直接走 OBS 独立部署（见 §6.2 Phase 2）。
+> Web Chat 前端（Vite + React）不再打包进容器，部署到 Cloudflare Pages
+>（见 §6.2）。
 
 | 维度 | 说明 |
 |------|------|
@@ -205,7 +206,7 @@ flowchart TB
 - 全出血 tile：`rounded-none`，无阴影，无渐变
 - shadcn Button 新增 `apple-primary` / `apple-secondary` pill 变体（`rounded-full`、`h-auto`、`active:scale-95`，使用 `bg-primary` CSS variable 引用）
 
-**设计系统依据**：[`DESIGN.md`](../../../personal-assistant-client/DESIGN.md)
+**设计系统依据**：[`DESIGN.md`](../../personal-assistant-client/DESIGN.md)
 
 > **注意**：本节 §2.1 描述的 OAuth callback / JWT Cookie 认证模式反映的是早期后端驱动的 auth 流程，与当前 MSAL-based SPA 认证（`@azure/msal-react` redirect + zustand token store）不一致。应在 follow-up issue 中更新 §2.1 以反映当前的 MSAL + zustand 架构。
 
@@ -387,7 +388,7 @@ flowchart LR
 Web Chat 前端部署在 Cloudflare Pages。Client 请求 same-origin
 `/api/invocations`，Pages Function 将请求转发到 AgentArts Gateway 的完整
 Runtime path。详见
-[ADR-017](../ADR/ADR-017-cloudflare-pages-proxy.md)。
+[ADR-017](ADR/ADR-017-cloudflare-pages-proxy.md)。
 
 Production URL：`https://agentarts-personal-assistant.pages.dev`
 
@@ -405,99 +406,33 @@ flowchart LR
 | **认证** | Browser 发送 Microsoft JWT，Gateway 通过 `CUSTOM_JWT` 验证 |
 | **Streaming** | Pages Function 透明透传 Gateway SSE `ReadableStream` |
 
-#### 目标部署：OBS + CDN + 自定义域名
-
-```mermaid
-flowchart TB
-    subgraph UserDevices["用户设备"]
-        Browser["浏览器<br/>Web Chat"]
-        FeishuApp["飞书客户端"]
-    end
-
-    subgraph ExternalPlatforms["外部平台"]
-        FeishuCloud["飞书云服务"]
-    end
-
-    subgraph UserPC["用户 PC（仅 OfficeClaw）"]
-        OC["OfficeClaw"]
-    end
-
-    subgraph HuaweiCloud["华为云 (cn-southwest-2)"]
-        CDN["CDN<br/>chat.personal-assistant.cn"]
-        OBS["OBS 静态托管<br/>Vite build 产物"]
-        subgraph AgentArts["AgentArts 平台"]
-            FastAPI["FastAPI 容器 :8080<br/>─────────────────<br/>/ping<br/>/invocations<br/>/invocations/playground（本地）<br/>/feishu/webhook<br/>/auth/callback"]
-        end
-    end
-
-    Browser -->|"/ → 静态文件"| CDN
-    CDN -->|"回源"| OBS
-    Browser -->|"/invocations → SSE + OAuth"| CDN
-    CDN -->|"回源"| FastAPI
-    FeishuApp --> FeishuCloud
-    FeishuCloud -->|"Webhook 回调"| FastAPI
-    FeishuCloud -->|"WebSocket"| OC
-    OC -->|"AgentArts 调用"| FastAPI
-```
-
 ### 6.2 Web Chat 前端部署
 
-Web Chat 前端独立部署于华为云 OBS，不打包进 FastAPI 容器。同容器的对话 UI 需求由 Chainlit Playground（`/invocations/playground`）覆盖。
+Web Chat 独立部署于 Cloudflare Pages，不打包进 FastAPI container。Vite
+production build 由 Pages 托管，Pages Function 接收 same-origin
+`POST /api/invocations` 并转发到 AgentArts Gateway。
 
-#### 当前阶段：OBS 静态托管
-
-前端 Vite build 产物上传到华为云 OBS bucket，直接通过 OBS 默认域名访问。此阶段存在跨域问题（OBS 域名 ≠ FastAPI 容器域名），适用于功能验证。
-
-```
-Web Chat 部署（OBS）
-  浏览器 → https://obs-bucket.obs.cn-southwest-2.myhuaweicloud.com/
-    ├── index.html, assets/*  → OBS 静态文件
-    └── fetch /invocations    → 跨域请求 FastAPI 容器
-```
-
-| 维度 | 说明 |
-|------|------|
-| **跨域** | 存在，需 FastAPI 配置 CORS |
-| **Cookie** | 跨域不可用，OAuth 需额外处理 |
-| **适用** | 功能验证阶段 |
-
-#### 目标阶段：OBS + CDN + 自定义域名
-
-前端部署到 OBS，通过 CDN 回源并配置自定义域名（如 `chat.personal-assistant.cn`）。CDN 通过路径前缀分流请求，实现前后端同域零跨域：
-
-```
-https://chat.personal-assistant.cn/
-  ├── /invocations → CDN 回源到 FastAPI 容器
-  └── /*       → CDN 回源到 OBS bucket
+```mermaid
+flowchart LR
+    Browser["Browser"] -->|"GET /"| Pages["Cloudflare Pages"]
+    Browser -->|"POST /api/invocations"| Function["Pages Function"]
+    Function -->|"JWT + session header"| Gateway["AgentArts Gateway"]
+    Gateway -->|"SSE"| Function
+    Function -->|"SSE"| Browser
 ```
 
 | 维度 | 说明 |
 |------|------|
-| **跨域** | 无，前后端同 origin（同一域名） |
-| **Cookie** | 天然共享，OAuth 流程零额外配置 |
-| **国内速度** | CDN 全国加速，首屏秒开 |
-| **扩容** | 静态资源 CDN 承载，后端容器只处理 API |
-| **额外工作** | OBS bucket + CDN 配置 + 域名备案 + HTTPS 证书 |
+| **Production URL** | `https://agentarts-personal-assistant.pages.dev` |
+| **API base URL** | `/api` |
+| **CORS** | Browser 与 Proxy same-origin，不产生 preflight |
+| **认证** | Pages Function 透传 JWT，Gateway 执行 `CUSTOM_JWT` validation |
+| **Streaming** | Gateway SSE body 以 `ReadableStream` 透明返回 |
+| **Deployment** | GitHub Actions + Wrangler；手动 CLI 用于 bootstrap/恢复 |
 
-#### 为什么不做跨域方案
-
-OAuth Cookie 跨域（前端 OBS 默认域名 → 后端 AgentArts 域名）需要：
-- FastAPI 配 CORS `Allow-Credentials: true`
-- Cookie 设 `SameSite=None; Secure`
-- 前端 SSE 请求带 `credentials: 'include'`
-
-更关键的是安全网关的限制：
-- **AgentArts Gateway 预检拦截**：华为云 AgentArts Gateway 在安全策略下，会拦截/校验所有进入网关的请求。由于浏览器的 CORS `OPTIONS` 预检请求（Preflight Request）默认不带 Token 或签名，**会导致 `OPTIONS` 预检直接被网关拦截并返回 401/403**，从而阻断真实的跨域 `POST`/`GET` 业务请求。
-
-多一层配置多一个故障点，且在安全网关前难以维系。自定义域名方案**从架构层面彻底消除跨域问题**，而不是用配置修补，符合"简单够用"原则：
-- 通过 CDN 路径分发后，前端页面与 API 接口完全处于**同源（Same-Origin）**下。
-- 浏览器识别为同源请求，**绝对不会发起 `OPTIONS` 预检请求**，完美绕过网关对预检请求的校验拦截，直接发起带有认证信息的真实请求。
-
-#### 为什么不用 GitHub Pages
-
-- `github.io` 域名与 FastAPI 不同域，Cookie 跨域
-- 国内无 CDN 节点，首次加载慢
-- 无法绑 CDN 做路径分流（GitHub Pages 不支持回源到第三方 API）
+Browser CORS 直连 Gateway 不可用，因为 Gateway 会对无 JWT 的 preflight
+`OPTIONS` 返回 401。历史 Netlify 和 OBS + CDN 方案分别记录在 ADR-014 与
+ADR-015，当前 decision 见 ADR-017。
 
 #### 容器内 UI：Chainlit Playground
 

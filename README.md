@@ -171,10 +171,17 @@ Vite dev server 默认监听 `http://localhost:5173`，并将 `/invocations` 代
 |------|----------|------|
 | Backend | AgentArts Runtime | FastAPI ARM64 容器，入口 `/ping` 和 `/invocations` |
 | Identity | AgentArts Identity | 配置 Inbound `CUSTOM_JWT` 与 Outbound Credential Providers |
-| Frontend | OBS 静态网站 / Netlify | React 构建产物，生产请求通过相对 `/invocations` 或 `VITE_API_BASE_URL` 指向后端 |
-| Infrastructure | OpenTofu + HCL | 管理 OBS、DNS 等华为云基础资源 |
+| Frontend | Cloudflare Pages | Vite 静态文件 + Pages Function same-origin `/api/invocations` Proxy |
+| Infrastructure | OpenTofu + HCL | 管理现有 OBS、DNS 等华为云基础资源；Cloudflare deployment 由 Wrangler 管理 |
 
-后端部署配置在 `personal-assistant-service/.agentarts_config.yaml`；基础云资源由 `personal-assistant-infra/` 管理。更细的部署流程见 `personal-assistant-service/README.md` 和 `personal-assistant-infra/README.md`。
+后端部署配置在 `personal-assistant-service/.agentarts_config.yaml`；Cloudflare
+Pages 配置位于 `personal-assistant-client/wrangler.toml`。Production Web
+Chat：`https://agentarts-personal-assistant.pages.dev`。
+
+Frontend merge 到 `main` 后由
+`.github/workflows/deploy-frontend-to-cloudflare.yml` 自动测试并部署。手动
+运维命令见
+`personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md`。
 
 ## 开发工作流
 

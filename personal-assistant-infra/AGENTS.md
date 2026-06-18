@@ -59,7 +59,7 @@ personal-assistant-infra/
 
 | 场景 | 需要的资源 |
 |------|-----------|
-| Web Chat 前端需要静态托管 | OBS Bucket ✅（已实现） |
+| Web Chat 前端需要静态托管 | Cloudflare Pages（当前）；OBS Bucket 仅保留 Legacy/备用 |
 | 用户-渠道 ID 映射需要持久化存储 | RDS（PostgreSQL） |
 | OfficeClaw 需要固定公网入口 | EIP + 带宽配置 |
 | Identity STS Provider 需要授权 | IAM Agency / Role / Policy |
@@ -104,6 +104,9 @@ tofu import huaweicloud_obs_bucket.web_chat personal-assistant-web-chat
 - **变更流程**：修改 `.tf` → `tofu validate`（语法验证）→ `tofu plan`（查看变更）→ PR Review → `tofu apply`
 
 ## 当前管理的资源
+
+> 以下 OBS 与 DNS resources 仍由 OpenTofu 管理，但 Production Web Chat 已
+> 迁移到 Cloudflare Pages。
 
 | Resource | Terraform 类型 | Name | Region | 配置 |
 |----------|---------------|------|--------|------|

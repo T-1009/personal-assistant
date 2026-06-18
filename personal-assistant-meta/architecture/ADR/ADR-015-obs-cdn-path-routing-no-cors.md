@@ -1,6 +1,6 @@
 # ADR-015: OBS + CDN 路径分发避免网关 CORS OPTIONS 预检拦截
 
-> 状态：Accepted | 日期：2026-06-12 | 关联文档：[`ADR-014`](./ADR-014-netlify-edge-function-auth-proxy.md)、[`frontend_architecture.md`](../frontend_architecture.md)
+> 状态：Superseded by [`ADR-017`](./ADR-017-cloudflare-pages-proxy.md) | 日期：2026-06-12
 
 ---
 

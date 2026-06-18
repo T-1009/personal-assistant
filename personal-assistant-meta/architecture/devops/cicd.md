@@ -6,10 +6,15 @@
 
 ## 1. 概述
 
-Personal Assistant 的部署分为三层，每层的配置管理和自动化策略不同：
+Personal Assistant 的部署分为四层，每层的配置管理和自动化策略不同：
 
 ```mermaid
 flowchart TB
+    subgraph Layer0["Layer 0 — Cloudflare Frontend"]
+        Pages["Pages static hosting"]
+        Function["Pages Function API Proxy"]
+    end
+
     subgraph Layer3["Layer 3 — 华为云基础资源（未来）"]
         OBS["OBS / CDN"]
         RDS["RDS"]
@@ -32,13 +37,40 @@ flowchart TB
     Layer1 -->|agentarts_config.yaml| CI1["agentarts launch"]
     Layer2 -->|控制台 / API| CI2["手动 / 未来自动化"]
     Layer3 -->|OpenTofu / RFS| CI3["OpenTofu / RFS"]
+    Layer0 -->|GitHub Actions + Wrangler| CI0["Pages deployment"]
 ```
 
 ---
 
-## 2. Layer 1 — AgentArts 层（当前）
+## 2. Layer 0 — Cloudflare Frontend（当前）
 
-### 2.1 agentarts_config.yaml 就是 IaC
+Production Web Chat 使用 Cloudflare Pages：
+
+```mermaid
+flowchart LR
+    Push["Push main<br/>Client paths"] --> Install["npm ci"]
+    Install --> Test["npm test"]
+    Test --> Build["npm run build"]
+    Build --> Deploy["Wrangler Pages deploy"]
+    Deploy --> Smoke["Production smoke test"]
+```
+
+Workflow：`.github/workflows/deploy-frontend-to-cloudflare.yml`
+
+Required repository secrets：
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+API Token 只授予目标 Account 的 `Cloudflare Pages: Edit`。Production URL
+为 `https://agentarts-personal-assistant.pages.dev`。CLI 运维见
+[`cloud-service/cloudflare/pages.md`](../cloud-service/cloudflare/pages.md)。
+
+---
+
+## 3. Layer 1 — AgentArts 层（当前）
+
+### 3.1 agentarts_config.yaml 就是 IaC
 
 `agentarts_config.yaml` 已经承担了基础设施即代码的角色。它声明式地定义了：
 
@@ -51,7 +83,7 @@ flowchart TB
 
 执行 `agentarts launch` 相当于 `terraform apply` —— 把声明转为实际运行的资源。
 
-### 2.2 当前 CI/CD 方案
+### 3.2 当前 CI/CD 方案
 
 ```mermaid
 flowchart LR
@@ -73,7 +105,7 @@ flowchart LR
 
 > 完整部署操作手册见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)。
 
-### 2.3 注意事项
+### 3.3 注意事项
 
 - AgentArts 部署需要 ARM64 镜像。CI Runner 必须是 ARM64 机器或使用 QEMU 模拟（`docker buildx`）
 - SWR 不支持 OCI 镜像格式。Docker 27+ 需设置 `export BUILDKIT_USE_OCI_MEDIA_TYPES=0`
@@ -81,7 +113,7 @@ flowchart LR
 
 ---
 
-## 3. Layer 2 — MaaS 层（当前）
+## 4. Layer 2 — MaaS 层（当前）
 
 MaaS 的模型部署和 API Key 管理目前通过控制台操作，没有声明式模板。
 
@@ -91,23 +123,25 @@ MaaS 的模型部署和 API Key 管理目前通过控制台操作，没有声明
 
 ---
 
-## 4. Layer 3 — 华为云基础资源
+## 5. Layer 3 — 华为云基础资源
 
-当项目需要 `agentarts_config.yaml` 管不到的华为云基础资源时，由 OpenTofu 管理。当前已管理 OBS 静态托管和 DNS 记录。
+当项目需要 `agentarts_config.yaml` 管不到的华为云基础资源时，由 OpenTofu
+管理。现有 OBS 和 DNS resources 保留为历史/备用基础设施，不再承载当前
+Production Web Chat。
 
-### 4.1 触发时机
+### 5.1 触发时机
 
 以下场景出现任意一个，就应该建立 `infra/` 目录：
 
 | 场景 | 需要的资源 |
 |------|-----------|
-| Web Chat 前端需要静态托管 | ✅ OBS Bucket + CDN 加速域名（已实现，由 `personal-assistant-infra/` OpenTofu + HCL 管理；部署操作见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)） |
+| Web Chat 前端需要静态托管 | Cloudflare Pages（当前）；OBS resources 仅保留备用 |
 | 用户-渠道 ID 映射需要持久化存储 | RDS（PostgreSQL） |
 | OfficeClaw 需要固定公网入口 | EIP + 带宽配置 |
 | Identity STS Provider 需要授权 | IAM Agency / Role / Policy |
 | Web Chat 需要 HTTPS | SSL 证书 + WAF / ELB |
 
-### 4.2 工具选择
+### 5.2 工具选择
 
 #### RFS 和 Terraform 的关系
 
@@ -165,14 +199,14 @@ Terraform CLI（本地）     RFS（华为云控制台）
 
 **核心原因**：CDK-for-Terraform 方向本身已被市场否定——CDKTF 被归档的根本原因是"未能找到产品与市场契合点"（HashiCorp 官方声明）。在当前项目规模（1 个 OBS Bucket）下，CDK 的类型安全和抽象能力没有实际收益，而 HCL 直写更简单直接——1-2 天上手，99% Terraform 教程直接复用。
 
-### 4.3 OpenTofu + AgentArts 的共存
+### 5.3 OpenTofu + AgentArts 的共存
 
 两者互不冲突，管理的是不同层的资源：
 
 ```
 personal-assistant-infra/
 ├── main.tf              # terraform {} + provider "huaweicloud" {}
-├── obs.tf               # OBS 桶（Web Chat 前端托管）
+├── obs.tf               # OBS 桶（Legacy/备用）
 ├── rds.tf               # RDS 实例（用户映射表）
 ├── iam.tf               # IAM 角色/策略
 ├── variables.tf         # 变量声明
@@ -183,7 +217,7 @@ agentarts_config.yaml    # AgentArts 层（容器/认证/可观测）
 
 部署时互不影响：`tofu apply` 管华为云资源，`agentarts launch` 管 Agent 容器。
 
-### 4.4 示例：OpenTofu 配置（当前已实现）
+### 5.4 示例：OpenTofu 配置（当前已实现）
 
 ```hcl
 terraform {
@@ -210,7 +244,7 @@ provider "huaweicloud" {
   region = var.region
 }
 
-# Web Chat 前端静态托管
+# Legacy/备用 OBS static website
 resource "huaweicloud_obs_bucket" "web_chat" {
   bucket     = "personal-assistant-web-chat"
   acl        = "public-read"
@@ -225,10 +259,11 @@ resource "huaweicloud_obs_bucket" "web_chat" {
 
 ---
 
-## 5. 分层决策总结
+## 6. 分层决策总结
 
 | 层 | 当前状态 | IaC 工具 | 变更频率 |
 |------|----------|----------|----------|
+| Layer 0 — Cloudflare Frontend | Pages + Pages Function | GitHub Actions + Wrangler | 每次 Client 变更 |
 | Layer 1 — AgentArts | `agentarts_config.yaml` | `agentarts launch` | 每次代码变更 |
 | Layer 2 — MaaS | 控制台手动 | 无（REST API 可备选） | 极低（模型选型是 ADR 级决策） |
 | Layer 3 — 基础资源 | OpenTofu + HCL（`personal-assistant-infra/`），State 存储在 OBS | `tofu apply` | 首次创建 + 偶尔变更 |

@@ -62,7 +62,8 @@ npm ci
 npm run dev
 ```
 
-开发服务器默认监听 `http://localhost:5173`，`/api/*` 请求通过 Vite proxy 转发到 FastAPI（`http://localhost:8080`）。
+开发服务器默认监听 `http://localhost:5173`，`/invocations` 请求通过 Vite
+proxy 转发到 FastAPI（`http://localhost:8080`）。
 
 确保后端服务已启动：
 
@@ -106,6 +107,7 @@ npm run pages:dev
 
 ```bash
 npx wrangler login
+npx wrangler whoami
 npm run pages:deploy
 ```
 
@@ -124,6 +126,31 @@ Redirect URI。
 ```text
 https://agentarts-personal-assistant.pages.dev
 ```
+
+### Wrangler CLI 常用命令
+
+```bash
+# 查看账号和 Pages projects
+npx wrangler whoami
+npx wrangler pages project list
+
+# 本地运行静态站点与 Pages Functions
+npm run pages:dev
+
+# 手动部署 production
+npm run pages:deploy
+
+# 查看历史 deployments
+npx wrangler pages deployment list \
+  --project-name=agentarts-personal-assistant
+
+# 实时查看 Pages Function logs
+npx wrangler pages deployment tail \
+  --project-name=agentarts-personal-assistant
+```
+
+详细说明见
+[`cloud-service/cloudflare/pages.md`](../personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md)。
 
 ## 测试
 

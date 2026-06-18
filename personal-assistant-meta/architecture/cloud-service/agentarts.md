@@ -837,7 +837,12 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 });
 ```
 
-### 11.6 Netlify 部署：Edge Function vs Proxy Rewrite
+### 11.6 Historical：Netlify Edge Function vs Proxy Rewrite
+
+> 本节保留历史排障信息。Production Frontend 已迁移到 Cloudflare Pages，
+> 当前拓扑与运维命令见
+> [`cloudflare/pages.md`](./cloudflare/pages.md) 和
+> [ADR-017](../ADR/ADR-017-cloudflare-pages-proxy.md)。
 
 | 方案 | 超时 | 注入 header | CORS | 适用场景 |
 |------|:---:|:---:|:---:|---------|
@@ -845,7 +850,7 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 | Proxy Rewrite | ❌ 无 | ❌ | 无（同源） | CUSTOM_JWT 模式（JWT 已在浏览器） |
 | 直连 Gateway | ❌ 无 | N/A | ⚠️ 需 CORS | 调试用 |
 
-CUSTOM_JWT 模式下推荐 Proxy Rewrite：
+历史 Netlify CUSTOM_JWT 方案使用 Proxy Rewrite：
 
 ```toml
 # netlify.toml
@@ -856,7 +861,7 @@ CUSTOM_JWT 模式下推荐 Proxy Rewrite：
   force = true
 ```
 
-Edge Function 的 20 秒超时对 SSE 流式对话是硬限制，CUSTOM_JWT 不需要它注入 API key 时应移除。
+该方案已被 Cloudflare Pages Function 取代。
 
 ### 11.7 Gateway 路由路径
 

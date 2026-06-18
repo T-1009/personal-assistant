@@ -6,7 +6,7 @@
 
 ## 背景
 
-Web Chat 前端当前部署在 Netlify
+本 ADR 编写时 Web Chat 前端部署在 Netlify
 （`agentarts-personal-assistant.netlify.app`），后端运行在 AgentArts
 Gateway（`defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com`）。
 
@@ -39,7 +39,7 @@ path.replace(
 - Gateway 使用 `authorizer_type: CUSTOM_JWT`
 - 浏览器通过 Microsoft 登录取得用户 JWT，并发送
   `Authorization: Bearer <id-token>`
-- Netlify 当前使用 `netlify.toml` redirect，只负责 URL rewrite，不再注入
+- 当时 Netlify 使用 `netlify.toml` redirect，只负责 URL rewrite，不再注入
   API Key
 
 因此需要重新评估：生产环境能否删除 Netlify Proxy，让浏览器通过 CORS

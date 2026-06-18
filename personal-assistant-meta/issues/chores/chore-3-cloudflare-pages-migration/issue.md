@@ -21,4 +21,7 @@ streaming 的替代入口。
 - Pages Function 将 JWT、session header 和 body 透传到 AgentArts Gateway。
 - Gateway response body 以 `ReadableStream` 直接返回，支持 SSE。
 - 删除 Netlify deployment configuration。
-
+- GitHub Actions 在 `main` Client 变更后自动执行 tests、build、Wrangler
+  deployment 和 production smoke test。
+- Wrangler CLI 支持本地 Pages runtime、手动 production deployment、
+  deployment list 和 Function log tail。

@@ -2,6 +2,9 @@
 
 OpenTofu + HCL 管理华为云基础资源。Provider 为 `huaweicloud/huaweicloud`（`~> 1.92`）。State 通过 OBS S3-compatible backend 持久化存储（`pa-terraform-state` bucket）。
 
+> Production Web Chat 已迁移到 Cloudflare Pages。下列 OBS static website
+> 和 DNS resources 仍由 OpenTofu 管理，但当前不承载 production frontend。
+
 ## 管理的资源
 
 | Resource | Type | Name | Region | Config |
@@ -69,7 +72,7 @@ tofu apply
 tofu destroy
 ```
 
-## 部署后验证
+## Legacy OBS 资源验证
 
 ```bash
 # 静态网站主页可访问

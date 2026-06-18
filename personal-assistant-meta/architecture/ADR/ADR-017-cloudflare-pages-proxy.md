@@ -59,6 +59,9 @@ Dashboard 创建并存储于 GitHub Secrets，不放入 repository、OpenTofu st
 或 `wrangler.toml`。当前 `personal-assistant-infra` 只管理 HuaweiCloud
 resources，因此不使用 `cloudflare_account_token` 管理 CI Token lifecycle。
 
+本地预览、手动 deployment、deployment list 和 Function log tail 命令见
+[`cloud-service/cloudflare/pages.md`](../cloud-service/cloudflare/pages.md)。
+
 ## 约束
 
 - Pages Function 必须使用完整 Runtime path：

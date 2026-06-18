@@ -90,17 +90,20 @@ npm install
 npm run dev
 ```
 
-> Vite proxy 在 dev 模式下自动将 `/api` 请求转发到 `localhost:8080`。
+> Vite proxy 在 dev 模式下自动将 `/invocations` 请求转发到
+> `localhost:8080`。
 
 ## Deployment
 
 | 组件 | 部署平台 | 技术栈 | 说明 |
 |------|----------|--------|------|
-| Backend | AgentArts Runtime（cn-southwest-2） | FastAPI, ARM64 容器, port 8080 | 部署 runbook 见 [`chore-1-agentarts-deploy/plan.md`](./personal-assistant-meta/issues/chores/chore-1-agentarts-deploy/plan.md) |
-| Frontend | OBS 静态网站托管（cn-southwest-2） | Vite + React | 构建产物通过 obsutil 上传至 OBS bucket |
+| Backend | AgentArts Runtime（cn-southwest-2） | FastAPI, ARM64 容器, port 8080 | 部署 runbook 见 [`chore-1-agentarts-deploy/plan.md`](./personal-assistant-meta/issues/chores/resolved/chore-1-agentarts-deploy/plan.md) |
+| Frontend | Cloudflare Pages | Vite + React + Pages Functions | 静态前端与 same-origin `/api/invocations` Proxy |
 | Infrastructure | OpenTofu + HCL（`personal-assistant-infra/`） | HCL | 管理 OBS bucket 及华为云基础资源 |
 
-**部署流程**：Docker build ARM64 镜像 → SWR push → agentarts launch 启动后端；`VITE_API_BASE_URL` 构建前端 → obsutil cp 上传至 OBS。
+**部署流程**：Docker build ARM64 镜像 → SWR push → `agentarts launch`
+启动后端；Client merge 到 `main` 后由 GitHub Actions 执行 tests、Vite build
+和 Wrangler Pages deployment。
 
 ---
 
