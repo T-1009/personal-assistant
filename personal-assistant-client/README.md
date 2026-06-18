@@ -109,6 +109,12 @@ npx wrangler login
 npm run pages:deploy
 ```
 
+Production deployment 通常由
+`.github/workflows/deploy-frontend-to-cloudflare.yml` 自动执行：`main` branch
+中的 Client 相关文件变化后，GitHub Actions 会运行 tests、build 和 Wrangler
+deployment。Workflow 使用 repository secrets `CLOUDFLARE_API_TOKEN` 与
+`CLOUDFLARE_ACCOUNT_ID`。
+
 首次部署后，将实际的
 `https://<cloudflare-project>.pages.dev/` 添加到 Microsoft Entra SPA
 Redirect URI。

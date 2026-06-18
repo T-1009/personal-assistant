@@ -39,6 +39,26 @@ VITE_API_BASE_URL=/api
 Netlify deployment configuration 删除，不作为 fallback 或并行 production
 环境保留。
 
+## Deployment Automation
+
+```mermaid
+flowchart LR
+    Push["Push to main<br/>Client paths changed"] --> Test["GitHub Actions<br/>npm ci + npm test"]
+    Test --> Build["Vite production build"]
+    Build --> Deploy["Wrangler Action<br/>Pages deploy"]
+    Deploy --> Smoke["Production smoke test"]
+```
+
+GitHub Actions 使用以下 repository secrets：
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID`
+
+API Token 仅授予目标 Account 的 `Cloudflare Pages: Edit`。Token 由 Cloudflare
+Dashboard 创建并存储于 GitHub Secrets，不放入 repository、OpenTofu state
+或 `wrangler.toml`。当前 `personal-assistant-infra` 只管理 HuaweiCloud
+resources，因此不使用 `cloudflare_account_token` 管理 CI Token lifecycle。
+
 ## 约束
 
 - Pages Function 必须使用完整 Runtime path：

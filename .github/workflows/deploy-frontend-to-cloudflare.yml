@@ -1,0 +1,80 @@
+name: Deploy Frontend to Cloudflare Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "personal-assistant-client/**"
+      - ".github/workflows/deploy-frontend-to-cloudflare.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: cloudflare-pages-production
+  cancel-in-progress: true
+
+jobs:
+  test-build-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: personal-assistant-client/package-lock.json
+
+      - name: Install dependencies
+        working-directory: personal-assistant-client
+        run: npm ci
+
+      - name: Test
+        working-directory: personal-assistant-client
+        run: npm test
+
+      - name: Build
+        working-directory: personal-assistant-client
+        run: npm run build
+
+      - name: Verify build output
+        working-directory: personal-assistant-client
+        run: test -f dist/index.html
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+          workingDirectory: personal-assistant-client
+          wranglerVersion: "4.101.0"
+          command: pages deploy dist --project-name=agentarts-personal-assistant --branch=main
+
+      - name: Smoke test production
+        run: |
+          DOMAIN="https://agentarts-personal-assistant.pages.dev"
+
+          test "$(curl --fail --silent --output /dev/null --write-out '%{http_code}' "$DOMAIN/")" = "200"
+          test "$(curl --fail --silent --output /dev/null --write-out '%{http_code}' "$DOMAIN/chat")" = "200"
+
+          API_STATUS="$(
+            curl --silent --output /dev/null --write-out '%{http_code}' \
+              --max-time 30 \
+              --request POST "$DOMAIN/api/invocations" \
+              --header "Content-Type: application/json" \
+              --header "x-hw-agentarts-session-id: github-actions-smoke-test" \
+              --data '{"message":"deployment smoke test","stream":true}'
+          )"
+          test "$API_STATUS" = "401"
+
+          echo "Cloudflare Pages deployment verified: $DOMAIN"
+
