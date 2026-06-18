@@ -8,8 +8,8 @@ export default defineConfig(({ mode }) => {
   // 加载当前环境的环境变量，包括 .env.local 等
   const env = loadEnv(mode, process.cwd(), '')
   
-  // 判断代理目标环境，默认为 dev
-  const targetEnv = env.PROXY_TARGET || 'dev'
+  // 判断代理目标环境，默认为 local
+  const targetEnv = env.PROXY_TARGET || 'local'
   
   // 生产环境与本地环境的配置区分
   const isProdTarget = targetEnv === 'prod'
