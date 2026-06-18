@@ -195,6 +195,7 @@ const AssistantMessage: FC = () => {
         // [contain-intrinsic-size:auto_24px] fixes issue #4104, don't change without checking for regressions
         className="text-foreground px-2 leading-relaxed wrap-break-word [contain-intrinsic-size:auto_24px] [content-visibility:auto]"
       >
+        <AuthCard messageId={messageId} />
         <MessagePrimitive.GroupedParts
           groupBy={groupPartByType({
             reasoning: ["group-chainOfThought", "group-reasoning"],
@@ -249,7 +250,6 @@ const AssistantMessage: FC = () => {
           }}
         </MessagePrimitive.GroupedParts>
         <MessageError />
-        <AuthCard messageId={messageId} />
       </div>
 
       <div

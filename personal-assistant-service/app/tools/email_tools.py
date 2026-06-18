@@ -22,7 +22,7 @@ async def handle_auth_url(auth_url: str) -> None:
             {
                 "type": "system_message",
                 "system_message": (
-                    "邮件功能需要您的授权。请点击下方链接进行授权："
+                    "邮件功能需要您的授权。请点击该链接进行授权："
                 ),
                 "auth_url": auth_url,
                 "auth_required": True,
