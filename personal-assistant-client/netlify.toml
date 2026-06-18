@@ -12,18 +12,6 @@
   ignore = "git diff --quiet $CACHED_COMMIT_REF $COMMIT_REF ."
 
 [[redirects]]
-  from = "/invocations"
-  to = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/invocations/playground"
-  to = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations/playground"
-  status = 200
-  force = true
-
-[[redirects]]
   from = "/*"
   to = "/index.html"
   status = 200

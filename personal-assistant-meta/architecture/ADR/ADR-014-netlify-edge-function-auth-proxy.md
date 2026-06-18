@@ -15,7 +15,7 @@ Gateway（`defaultgw-xxx.cn-southwest-2.huaweicloud-agentarts.com`）。
 | 环境 | 当前请求方式 | Proxy 职责 |
 |------|--------------|------------|
 | Local development | 浏览器请求 Vite `/invocations` | 转发到本地 FastAPI；当 `PROXY_TARGET=prod` 时补充 Gateway Runtime path |
-| Production | 浏览器请求 Netlify `/invocations` | Netlify redirect 转发到 AgentArts Gateway 的完整 Runtime path |
+| Production | 浏览器直接请求 AgentArts Gateway 的完整 Runtime path | 不使用 Proxy；依赖 CORS |
 
 Gateway 对外暴露的真实路径不是前端使用的逻辑路径：
 
@@ -49,12 +49,23 @@ path.replace(
 
 ## 决策
 
-**Local development 继续使用 Vite Proxy。生产环境暂时保留 Netlify Proxy，
-不切换到浏览器 CORS 直连。**
+**Local development 继续使用 Vite Proxy。Production 删除 Netlify API
+Proxy，Client 使用完整 Runtime URL 通过 CORS 直接调用 AgentArts Gateway。**
 
-删除生产 Proxy 是目标方向，但只有在 AgentArts Gateway 能正确处理
-unauthenticated CORS preflight 后才能实施。当前 Gateway 会在请求到达
-FastAPI `CORSMiddleware` 之前拒绝 `OPTIONS`，因此生产 CORS 直连不可用。
+生产构建配置为：
+
+```bash
+VITE_API_BASE_URL=https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant
+```
+
+FastAPI 已配置 `CORSMiddleware`，AgentArts Runtime 的
+`CORS_ALLOWED_ORIGINS` 已包含 Netlify production origin。Netlify 仅保留 SPA
+fallback，不再转发 `/invocations`。
+
+不过，2026-06-18 的 live validation 仍显示 AgentArts Gateway 会在请求到达
+FastAPI `CORSMiddleware` 之前拒绝 unauthenticated `OPTIONS`。因此配置迁移
+已经完成，但在 Gateway 支持 CORS preflight 前，production browser chat
+仍处于 blocked 状态。
 
 ```mermaid
 flowchart LR
@@ -125,20 +136,17 @@ HTTP/1.1 401 Unauthorized
 
 ## 目标拓扑与迁移条件
 
-### 当前可用拓扑
+### 已配置的 Production 拓扑
 
 ```mermaid
 flowchart LR
-    Browser["Browser<br/>fetch('/invocations')"] -->|"Same-Origin POST"| Netlify["Netlify redirect"]
-    Netlify -->|"Rewrite to<br/>/runtimes/personal-assistant/invocations"| GW["AgentArts Gateway"]
-    GW -->|"Validate user JWT"| FastAPI["FastAPI /invocations"]
+    Browser["Browser<br/>Netlify origin"] -->|"OPTIONS + POST<br/>full Runtime path"| GW["AgentArts Gateway"]
+    GW -->|"OPTIONS currently returns 401"| Browser
+    GW -.->|"Preflight does not reach"| CORS["FastAPI CORSMiddleware"]
+    Browser -.->|"Browser blocks POST"| POST["Authenticated POST"]
 ```
 
-Netlify redirect 使浏览器看到的是 Same-Origin 请求，因此不会产生 CORS
-preflight。用户 JWT 仍由浏览器发送并由 Gateway 验证，Netlify 不保存或注入
-API Key。
-
-### 未来 CORS 直连拓扑
+### Gateway 支持 preflight 后的目标流程
 
 ```mermaid
 flowchart LR
@@ -148,7 +156,7 @@ flowchart LR
     GW -->|"Validate JWT for POST, then forward"| FastAPI["FastAPI /invocations"]
 ```
 
-只有以下条件全部满足后，才能删除生产 Netlify Proxy：
+Production Proxy 已从配置删除。要使该直连方案可用，仍需满足：
 
 1. AgentArts Gateway 明确支持对目标 Runtime path 的 `OPTIONS` bypass，
    或 Gateway 自身能够返回完整、正确的 CORS preflight response。
@@ -156,19 +164,19 @@ flowchart LR
    验证；FastAPI 不重复验证 JWT，而是信任 Gateway 注入的 verified user
    identity。放行 `OPTIONS` 不能降低业务接口认证强度。
 3. 生产 `VITE_API_BASE_URL` 包含完整
-   `/runtimes/personal-assistant` prefix。
-4. FastAPI `CORS_ALLOWED_ORIGINS` 只列出明确允许的生产 origin。
+   `/runtimes/personal-assistant` prefix。此项已完成。
+4. FastAPI `CORS_ALLOWED_ORIGINS` 只列出明确允许的 production origin。
+   此项已完成。
 5. 对真实 Gateway 完成 `OPTIONS`、authenticated `POST` 和 SSE streaming
    的 E2E 验证。
 
-满足条件 1 之前，不得仅删除 Netlify redirect；否则生产聊天请求会在
-preflight 阶段全部失败。
+当前尚未满足条件 1，因此 production 聊天请求会在 preflight 阶段失败。
 
 ---
 
 ## 方案对比
 
-| 因素 | Netlify Proxy（当前） | 浏览器 CORS 直连（目标） |
+| 因素 | Netlify Proxy（已移除） | 浏览器 CORS 直连（当前配置） |
 |------|-----------------------|---------------------------|
 | URL path 转换 | Netlify rewrite | `VITE_API_BASE_URL` 携带 Runtime prefix |
 | CORS preflight | Same-Origin，不触发 | 必然触发 |
@@ -176,7 +184,7 @@ preflight 阶段全部失败。
 | 用户认证 | Browser JWT → Gateway | Browser JWT → Gateway |
 | Server-side API Key | 不需要 | 不需要 |
 | SSE | 当前可透传，需持续验证平台超时 | Gateway 放行 preflight 后可直连 |
-| 生产可行性 | ✅ 当前可用 | ❌ 当前不可用 |
+| 生产可行性 | 不再使用 | 当前被 Gateway `OPTIONS` 401 阻断 |
 
 ---
 
@@ -185,9 +193,14 @@ preflight 阶段全部失败。
 ### 保留
 
 - Local development 继续通过 Vite Proxy 使用逻辑路径 `/invocations`。
-- Production 继续通过 Netlify redirect 访问完整 Gateway Runtime path。
 - Gateway 继续使用 `CUSTOM_JWT` 验证用户 JWT。
-- FastAPI 保留显式 origin allowlist，为 Gateway 将来支持 preflight 做准备。
+- FastAPI 保留显式 production origin allowlist。
+
+### 删除
+
+- Netlify `/invocations` 和 `/invocations/playground` production redirects。
+- Production path rewrite；完整 Runtime prefix 改由 `VITE_API_BASE_URL`
+  提供。
 
 ### 不再适用的原 ADR 内容
 

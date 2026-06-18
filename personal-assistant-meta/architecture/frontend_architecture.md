@@ -382,21 +382,24 @@ flowchart LR
 
 ### 6.1 整体拓扑
 
-#### 当前部署：Netlify + Edge Function 认证代理
+#### 当前配置：Netlify 静态站点 + AgentArts Gateway CORS 直连
 
-当前 Web Chat 前端部署在 Netlify，通过 Edge Function 注入 AgentArts Gateway 认证 header 后转发 API 请求。详见 [ADR-014](../ADR/ADR-014-netlify-edge-function-auth-proxy.md)。
+Web Chat 前端部署在 Netlify。Netlify 只提供 SPA 静态文件，不再 Proxy API
+请求；Client 通过完整 Runtime URL 直接调用 AgentArts Gateway。详见
+[ADR-014](../ADR/ADR-014-netlify-edge-function-auth-proxy.md)。
 
-```
-浏览器 ──→ Netlify (agentarts-personal-assistant.netlify.app)
-              │  / → SPA 静态文件
-              │  /invocations → Edge Function → 注入 Authorization → AgentArts Gateway
+```mermaid
+flowchart LR
+    Browser["Browser"] -->|"Load SPA"| Netlify["Netlify static hosting"]
+    Browser -->|"OPTIONS + authenticated POST"| Gateway["AgentArts Gateway<br/>full Runtime path"]
+    Gateway --> FastAPI["FastAPI /invocations"]
 ```
 
 | 维度 | 说明 |
 |------|------|
-| **同源** | 浏览器只调 Netlify 域名，零跨域 |
-| **认证** | Edge Function 服务端注入 `Authorization: Bearer`，API Key 不出现在浏览器 |
-| **限制** | Netlify 域名不可绑自定义域名（需 ICP 备案），OAuth Cookie 不可用 |
+| **跨域** | Browser 通过 CORS 直接访问 AgentArts Gateway |
+| **认证** | Browser 发送 Microsoft JWT，Gateway 通过 `CUSTOM_JWT` 验证 |
+| **当前限制** | Gateway 对 unauthenticated `OPTIONS` 返回 401，production chat 暂时 blocked |
 
 #### 目标部署：OBS + CDN + 自定义域名
 
