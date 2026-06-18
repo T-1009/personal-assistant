@@ -86,9 +86,9 @@ export function resetSessionId(): void {
  * ChatModelAdapter that connects to the backend SSE API.
  *
  * - In dev mode (VITE_API_BASE_URL not set), requests go through the
- *   Vite dev proxy at `/api` → `localhost:8080`.
- * - In production, VITE_API_BASE_URL is set to the full AgentArts
- *   Runtime URL (e.g. `https://xxx.agentarts.cn-southwest-2.myhuaweicloud.com`).
+ *   Vite dev proxy at `/invocations` -> `localhost:8080`.
+ * - In production, VITE_API_BASE_URL is `/api`; the same-origin Cloudflare
+ *   Pages Function proxies requests to the full AgentArts Runtime URL.
  */
 export const chatAdapter: ChatModelAdapter = {
   async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {

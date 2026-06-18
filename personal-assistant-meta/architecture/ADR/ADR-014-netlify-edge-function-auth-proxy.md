@@ -1,6 +1,6 @@
 # ADR-014: Netlify Proxy 与生产 CORS 直连评估
 
-> 状态：Accepted（2026-06-18 修订） | 原始日期：2025-06-11 | 关联文档：[`ADR-015`](./ADR-015-obs-cdn-path-routing-no-cors.md)
+> 状态：Superseded by [`ADR-017`](./ADR-017-cloudflare-pages-proxy.md) | 原始日期：2025-06-11 | 修订日期：2026-06-18
 
 ---
 
@@ -49,23 +49,14 @@ path.replace(
 
 ## 决策
 
-**Local development 继续使用 Vite Proxy。Production 删除 Netlify API
-Proxy，Client 使用完整 Runtime URL 通过 CORS 直接调用 AgentArts Gateway。**
+本 ADR 的评估结论是：Local development 可继续使用 Vite Proxy，但
+Production Browser 不能通过 CORS 直接调用 AgentArts Gateway。2026-06-18
+的 live validation 显示 Gateway 会在请求到达 FastAPI `CORSMiddleware`
+之前拒绝 unauthenticated `OPTIONS`。
 
-生产构建配置为：
-
-```bash
-VITE_API_BASE_URL=https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant
-```
-
-FastAPI 已配置 `CORSMiddleware`，AgentArts Runtime 的
-`CORS_ALLOWED_ORIGINS` 已包含 Netlify production origin。Netlify 仅保留 SPA
-fallback，不再转发 `/invocations`。
-
-不过，2026-06-18 的 live validation 仍显示 AgentArts Gateway 会在请求到达
-FastAPI `CORSMiddleware` 之前拒绝 unauthenticated `OPTIONS`。因此配置迁移
-已经完成，但在 Gateway 支持 CORS preflight 前，production browser chat
-仍处于 blocked 状态。
+后续 [`ADR-017`](./ADR-017-cloudflare-pages-proxy.md) 选择 Cloudflare Pages
+Function 提供 same-origin `/api/invocations`，取代 Netlify Proxy 和不可用的
+CORS 直连方案。
 
 ```mermaid
 flowchart LR
@@ -136,7 +127,7 @@ HTTP/1.1 401 Unauthorized
 
 ## 目标拓扑与迁移条件
 
-### 已配置的 Production 拓扑
+### 被拒绝的 CORS 直连拓扑
 
 ```mermaid
 flowchart LR
@@ -156,7 +147,7 @@ flowchart LR
     GW -->|"Validate JWT for POST, then forward"| FastAPI["FastAPI /invocations"]
 ```
 
-Production Proxy 已从配置删除。要使该直连方案可用，仍需满足：
+如果未来重新考虑 CORS 直连，仍需满足：
 
 1. AgentArts Gateway 明确支持对目标 Runtime path 的 `OPTIONS` bypass，
    或 Gateway 自身能够返回完整、正确的 CORS preflight response。
@@ -164,19 +155,18 @@ Production Proxy 已从配置删除。要使该直连方案可用，仍需满足
    验证；FastAPI 不重复验证 JWT，而是信任 Gateway 注入的 verified user
    identity。放行 `OPTIONS` 不能降低业务接口认证强度。
 3. 生产 `VITE_API_BASE_URL` 包含完整
-   `/runtimes/personal-assistant` prefix。此项已完成。
+   `/runtimes/personal-assistant` prefix。
 4. FastAPI `CORS_ALLOWED_ORIGINS` 只列出明确允许的 production origin。
-   此项已完成。
 5. 对真实 Gateway 完成 `OPTIONS`、authenticated `POST` 和 SSE streaming
    的 E2E 验证。
 
-当前尚未满足条件 1，因此 production 聊天请求会在 preflight 阶段失败。
+当前尚未满足条件 1，因此该方案不可用于 production。
 
 ---
 
 ## 方案对比
 
-| 因素 | Netlify Proxy（已移除） | 浏览器 CORS 直连（当前配置） |
+| 因素 | Netlify Proxy（已移除） | 浏览器 CORS 直连（已拒绝） |
 |------|-----------------------|---------------------------|
 | URL path 转换 | Netlify rewrite | `VITE_API_BASE_URL` 携带 Runtime prefix |
 | CORS preflight | Same-Origin，不触发 | 必然触发 |

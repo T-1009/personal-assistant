@@ -382,24 +382,28 @@ flowchart LR
 
 ### 6.1 整体拓扑
 
-#### 当前配置：Netlify 静态站点 + AgentArts Gateway CORS 直连
+#### 当前配置：Cloudflare Pages + Same-Origin API Proxy
 
-Web Chat 前端部署在 Netlify。Netlify 只提供 SPA 静态文件，不再 Proxy API
-请求；Client 通过完整 Runtime URL 直接调用 AgentArts Gateway。详见
-[ADR-014](../ADR/ADR-014-netlify-edge-function-auth-proxy.md)。
+Web Chat 前端部署在 Cloudflare Pages。Client 请求 same-origin
+`/api/invocations`，Pages Function 将请求转发到 AgentArts Gateway 的完整
+Runtime path。详见
+[ADR-017](../ADR/ADR-017-cloudflare-pages-proxy.md)。
+
+Production URL：`https://agentarts-personal-assistant.pages.dev`
 
 ```mermaid
 flowchart LR
-    Browser["Browser"] -->|"Load SPA"| Netlify["Netlify static hosting"]
-    Browser -->|"OPTIONS + authenticated POST"| Gateway["AgentArts Gateway<br/>full Runtime path"]
+    Browser["Browser"] -->|"Load SPA"| Pages["Cloudflare Pages"]
+    Browser -->|"POST /api/invocations"| Function["Pages Function"]
+    Function -->|"Authenticated POST"| Gateway["AgentArts Gateway<br/>full Runtime path"]
     Gateway --> FastAPI["FastAPI /invocations"]
 ```
 
 | 维度 | 说明 |
 |------|------|
-| **跨域** | Browser 通过 CORS 直接访问 AgentArts Gateway |
+| **同源** | SPA 与 `/api/invocations` 使用同一 Pages origin，不触发 CORS preflight |
 | **认证** | Browser 发送 Microsoft JWT，Gateway 通过 `CUSTOM_JWT` 验证 |
-| **当前限制** | Gateway 对 unauthenticated `OPTIONS` 返回 401，production chat 暂时 blocked |
+| **Streaming** | Pages Function 透明透传 Gateway SSE `ReadableStream` |
 
 #### 目标部署：OBS + CDN + 自定义域名
 

@@ -31,12 +31,14 @@ personal-assistant-client/
 │   ├── main.tsx                      # React 入口
 │   ├── index.css                     # Tailwind 入口 + 自定义动画
 │   └── vite-env.d.ts                # Vite 类型声明
+├── functions/
+│   └── api/invocations.js           # Cloudflare Pages Function，透传 JWT + SSE
 ├── index.html                     # Vite 入口 HTML
 ├── vite.config.ts                 # Vite 配置（代理 + React 插件 + Tailwind CSS）
+├── wrangler.toml                  # Cloudflare Pages 项目配置
 ├── tsconfig.json                  # TypeScript 配置
 ├── tsconfig.node.json             # Vite 配置文件 TypeScript 配置
 ├── package.json                   # 项目依赖与 scripts
-├── netlify.toml                   # Netlify 部署配置（staging 环境）
 ├── DESIGN.md                      # 前端设计文档
 └── .gitignore
 ```
@@ -83,12 +85,38 @@ LLM API Key 通过 AgentArts Identity 的 `DEEPSEEK_API_KEY` Credential Provider
 npm run build
 ```
 
-产出 `dist/` 目录。生产环境部署至 OBS 静态网站托管（或 Netlify staging），不再由 FastAPI StaticFiles 服务。
+产出 `dist/` 目录。生产环境部署至 Cloudflare Pages，不再由 FastAPI
+StaticFiles 服务。
 
 ### 预览构建产物
 
 ```bash
 npm run preview
+```
+
+### Cloudflare Pages 本地预览
+
+```bash
+npm run pages:dev
+```
+
+该命令先构建 Vite，再通过 Wrangler 启动静态站点与 Pages Functions。
+
+### Cloudflare Pages 部署
+
+```bash
+npx wrangler login
+npm run pages:deploy
+```
+
+首次部署后，将实际的
+`https://<cloudflare-project>.pages.dev/` 添加到 Microsoft Entra SPA
+Redirect URI。
+
+当前 production URL：
+
+```text
+https://agentarts-personal-assistant.pages.dev
 ```
 
 ## 测试
@@ -124,7 +152,7 @@ npm run test:watch
   │  ├─ LoginPlaceholder│                                    │
   │  └─ assistant-ui runtime ─┘── fetch POST + SSE ───────→ /invocations
   │
-  └── 生产模式 ── OBS 静态网站 / Netlify ── serve dist/ ──→ CDN → 同上
+  └── 生产模式 ── Cloudflare Pages ── /api/invocations Function ──→ AgentArts Gateway
 ```
 
 ## SSE 协议
