@@ -86,17 +86,25 @@ jobs:
         env:
           HUAWEICLOUD_SDK_AK: ${{ secrets.HUAWEICLOUD_SDK_AK }}
           HUAWEICLOUD_SDK_SK: ${{ secrets.HUAWEICLOUD_SDK_SK }}
-          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
-          M365_CLIENT_ID: ${{ vars.M365_CLIENT_ID }}
-          M365_CLIENT_SECRET: ${{ secrets.M365_CLIENT_SECRET }}
-          M365_TENANT_ID: ${{ secrets.M365_TENANT_ID }}
-          MODEL_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           LOG_LEVEL: ${{ vars.LOG_LEVEL }}
+          LLM_PROVIDER: ${{ vars.LLM_PROVIDER }}
+          LLM_MODEL: ${{ vars.LLM_MODEL }}
+          LLM_CREDENTIAL_PROVIDER: ${{ vars.LLM_CREDENTIAL_PROVIDER }}
         run: |
           cd personal-assistant-service
-          # Substitute ${VAR} placeholders in .agentarts_config.yaml with secret values
+
+          for name in LOG_LEVEL LLM_PROVIDER LLM_MODEL LLM_CREDENTIAL_PROVIDER; do
+            test -n "$(printenv "$name")" || {
+              echo "::error::$name repository variable is required"
+              exit 1
+            }
+          done
+
+          # Substitute canonical Runtime settings. Secret values remain in
+          # AgentArts Identity and are never injected through GitHub Actions.
           envsubst < .agentarts_config.yaml > .agentarts_config.resolved.yaml
           test -s .agentarts_config.resolved.yaml
+          test -z "$(grep -o '\${[^}]*}' .agentarts_config.resolved.yaml || true)"
           grep -q '^default_agent: personal-assistant$' .agentarts_config.resolved.yaml
           grep -q '^  personal-assistant:$' .agentarts_config.resolved.yaml
           mv .agentarts_config.resolved.yaml .agentarts_config.yaml
