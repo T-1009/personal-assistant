@@ -129,19 +129,13 @@ sequenceDiagram
 
 ## 迁移后的项目判定
 
-Production 配置：
-
-```bash
-VITE_API_BASE_URL=/api
-```
-
-Client 请求：
+Production Client 请求：
 
 ```ts
-fetch(`${baseUrl}/invocations`, ...)
+fetch("/invocations", ...)
 ```
 
-最终 Request URL 指向 Cloudflare Pages origin 的 `/api/invocations`，再由
+最终 Request URL 指向 Cloudflare Pages origin 的 `/invocations`，再由
 Pages Function 转发到 AgentArts Gateway。当前 Production 不再访问 Netlify。
 
 ## 如何验证

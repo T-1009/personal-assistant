@@ -36,7 +36,6 @@ class TestUnifiedConfigurationContract:
             "MODEL_API_KEY",
             "MODEL_NAME",
             "MODEL_URL",
-            "CORS_ALLOWED_ORIGINS",
         ):
             assert removed not in content
 
@@ -54,7 +53,6 @@ class TestUnifiedConfigurationContract:
         monkeypatch.setenv("MODEL_NAME", "legacy-model")
         monkeypatch.setenv("MODEL_URL", "https://legacy.example.com")
         monkeypatch.setenv("MODEL_API_KEY", "legacy-secret")
-        monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://legacy.example.com")
 
         settings = Settings(_env_file=None)
 

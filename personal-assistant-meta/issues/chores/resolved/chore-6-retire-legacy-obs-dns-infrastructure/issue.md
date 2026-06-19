@@ -1,5 +1,5 @@
 ---
-status: backlog
+status: resolved
 ---
 
 # Chore 6: 退役 Legacy OBS / DNS Infrastructure
@@ -102,30 +102,30 @@ flowchart TD
 
 ## 任务拆解
 
-- [ ] 审计 `resource-governance.cloud` DNS Zone 的全部 records，确认不能删除
+- [x] 审计 `resource-governance.cloud` DNS Zone 的全部 records，确认不能删除
   Zone resource。
-- [ ] 检查 `chat.resource-governance.cloud` 当前解析、访问流量、OAuth Redirect
+- [x] 检查 `chat.resource-governance.cloud` 当前解析、访问流量、OAuth Redirect
   URI、CORS allowlist 和外部 bookmark / integration。
-- [ ] 检查 `personal-assistant-web-chat` Bucket 内容、访问日志、versioning 和
+- [x] 检查 `personal-assistant-web-chat` Bucket 内容、访问日志、versioning 和
   retention，备份必要对象。
-- [ ] 获取远程 OpenTofu state 备份，并确认 state 中实际管理的 resources。
-- [ ] 在修改 Terraform resources 前执行 GitNexus impact analysis。
-- [ ] 生成销毁 Legacy CNAME 与 Web Chat Bucket 的 `tofu plan`，人工 review
+- [x] 获取远程 OpenTofu state 备份，并确认 state 中实际管理的 resources。
+- [x] 在修改 Terraform resources 前执行 GitNexus impact analysis。
+- [x] 生成销毁 Legacy CNAME 与 Web Chat Bucket 的 `tofu plan`，人工 review
   后方可 apply。
-- [ ] 从 OpenTofu 管理中安全移除 DNS Zone；不得因删除 Terraform declaration
+- [x] 从 OpenTofu 管理中安全移除 DNS Zone；不得因删除 Terraform declaration
   而销毁仍在使用的 Zone。
-- [ ] 删除 OBS / DNS outputs 和无效 variables。
-- [ ] 清理 Service 中 OBS / Netlify CORS fallback；确认 Cloudflare
+- [x] 删除 OBS / DNS outputs 和无效 variables。
+- [x] 清理 Service 中 OBS / Netlify CORS fallback；确认 Cloudflare
   same-origin path 不依赖 FastAPI CORS。
-- [ ] 更新或删除 Legacy OBS / CDKTF E2E tests。
-- [ ] 更新 Infra、CI/CD 和 architecture 文档。
-- [ ] 决定是否保留 OpenTofu：
-  - [ ] 若保留：将目录说明改为未来 HuaweiCloud resources 的空基线。
+- [x] 更新或删除 Legacy OBS / CDKTF E2E tests。
+- [x] 更新 Infra、CI/CD 和 architecture 文档。
+- [x] 决定是否保留 OpenTofu：
+  - [x] 若保留：将目录说明改为未来 HuaweiCloud resources 的空基线。
   - [ ] 若退役：禁用 Infra workflow，归档 state，再删除
     `pa-terraform-state`。
-- [ ] 运行 Service unit tests、Client tests、相关 E2E tests 和 Cloudflare
+- [x] 运行 Service unit tests、Client tests、相关 E2E tests 和 Cloudflare
   production smoke test。
-- [ ] 在 commit 前运行 `gitnexus_detect_changes()`，确认影响范围符合预期。
+- [x] 在 commit 前运行 `gitnexus_detect_changes()`，确认影响范围符合预期。
 
 ## 安全约束
 
@@ -140,7 +140,7 @@ flowchart TD
 
 ## 验收标准
 
-- Cloudflare Pages 首页、SPA routes 与 `/api/invocations` smoke test 正常。
+- Cloudflare Pages 首页、SPA routes 与 `/invocations` smoke test 正常。
 - AgentArts Gateway authentication 与 SSE streaming 不受影响。
 - `chat.resource-governance.cloud` CNAME 和
   `personal-assistant-web-chat` Bucket 已按批准范围退役。
@@ -157,3 +157,46 @@ flowchart TD
 - `personal-assistant-meta/architecture/devops/cicd.md`
 - `personal-assistant-infra/README.md`
 
+## 实施记录（2026-06-19）
+
+### 审计
+
+- DNS Zone `resource-governance.cloud` 状态为 Active，共 3 条 records：SOA、
+  NS、`chat.resource-governance.cloud` CNAME。结论：保留 Zone，仅删除 CNAME。
+- Legacy CNAME 仍解析到
+  `personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com`。
+- OBS bucket 当前 14 个 objects、508 个 object versions、74 个 delete
+  markers，总 version data 约 55.3 MB；versioning 为 Enabled，未配置 access
+  logging。
+- Cloudflare Pages `/` 与 `/chat` smoke test 均返回 HTTP 200。
+- 远程 state 已备份到本地临时文件，SHA-256：
+  `185714510fa9721346f68f86915e95b19cf15a794a6aa8c9df9a65e13a225530`。
+
+### 决策
+
+保留精简后的 `personal-assistant-infra` 与 `pa-terraform-state`，作为未来
+RDS、IAM、VPC、EIP resources 的空基线。Infra workflow 改为默认只执行
+plan，apply 仅允许通过显式 `workflow_dispatch`。
+
+### 两阶段退役
+
+1. 第一阶段 plan：从 state 解管 DNS Zone（`destroy = false`）、删除 Legacy
+   CNAME、将 versioned OBS bucket 设置为 `force_destroy = true`。
+2. 人工 review 并批准第一阶段 apply 后，删除 OBS resource declaration，
+   生成第二阶段 plan，确认只删除 Legacy bucket 后再单独批准 apply。
+
+### 实施结果
+
+- 第一阶段 apply：0 added、1 changed、1 destroyed、1 forgotten。CNAME 已删除，
+  DNS Zone 仅从 state 解管，OBS bucket 已启用 `force_destroy`。
+- Provider bulk delete 因 OBS 返回 `MalformedXML` 失败。改用 OBS SDK 按
+  `key + versionId` 清理 596 个 versions/delete markers 后，第二阶段 apply
+  成功删除 bucket。
+- 最终 authoritative DNS 无 `chat` CNAME，DNS Zone 仍 Active 且保留 NS/SOA。
+- 最终 OpenTofu state 为空，`tofu plan` 显示 No changes；Legacy bucket
+  metadata 返回 HTTP 404。
+- 验证结果：Service `171 passed, 9 skipped`；Client `135 passed` 且 build
+  成功；相关 E2E `5 passed`；Cloudflare `/` 与 `/chat` 返回 200，未认证
+  `/invocations` Proxy probe 返回 401。
+- Service 全量 Ruff 仍有 15 个既有 lint 问题，位于本 chore 未修改的
+  `app/auth.py`、`app/tools/email_tools.py` 和根目录临时 test scripts。

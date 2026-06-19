@@ -25,7 +25,7 @@ Browser 只访问 Pages origin，因此不会产生 CORS preflight。Pages Funct
 |------|------|
 | `personal-assistant-client/wrangler.toml` | Pages project name、build output 与 compatibility date |
 | `personal-assistant-client/functions/invocations.js` | `/invocations` same-origin Proxy |
-| `personal-assistant-client/.env.production` | 设置 `VITE_API_BASE_URL=/api` |
+| `personal-assistant-client/src/lib/chat/chat-api-client.ts` | 固定请求 same-origin `/invocations` |
 | `.github/workflows/deploy-frontend-to-cloudflare.yml` | `main` branch 自动测试、构建、部署和 smoke test |
 
 Cloudflare project name 为 `agentarts-personal-assistant`，production branch

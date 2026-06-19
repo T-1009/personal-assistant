@@ -11,6 +11,15 @@ on:
       - "personal-assistant-infra/**"
       - ".github/workflows/deploy-infra.yml"
   workflow_dispatch:
+    inputs:
+      action:
+        description: "Run a read-only plan or explicitly apply the reviewed plan"
+        required: true
+        default: plan
+        type: choice
+        options:
+          - plan
+          - apply
 
 # 防止并发执行导致 state 冲突
 concurrency:
@@ -59,9 +68,9 @@ jobs:
 
       - name: tofu plan
         working-directory: personal-assistant-infra
-        run: tofu plan -input=false
+        run: tofu plan -input=false -out=tfplan
 
       - name: tofu apply
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        if: github.event_name == 'workflow_dispatch' && inputs.action == 'apply'
         working-directory: personal-assistant-infra
-        run: tofu apply -auto-approve -input=false
+        run: tofu apply -input=false tfplan

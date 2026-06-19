@@ -105,7 +105,7 @@ personal-assistant/
 ├── personal-assistant-client/   # Web Chat 前端：React、assistant-ui、MSAL、SSE
 ├── personal-assistant-service/  # Agent 后端：FastAPI、deepagents、Identity SDK、工具实现
 ├── personal-assistant-meta/     # Design hub：规格、ADR、issue plan、架构文档
-├── personal-assistant-infra/    # OpenTofu + HCL：OBS、DNS 等华为云基础资源
+├── personal-assistant-infra/    # OpenTofu + HCL：未来华为云基础资源的空基线
 ├── personal-assistant-e2e/      # pytest E2E：Service + Client 联调
 ├── .opencode/                   # OpenCode agent 定义与 workflow 配置
 ├── AGENTS.md                    # 项目协作规范
@@ -171,8 +171,8 @@ Vite dev server 默认监听 `http://localhost:5173`，并将 `/invocations` 代
 |------|----------|------|
 | Backend | AgentArts Runtime | FastAPI ARM64 容器，入口 `/ping` 和 `/invocations` |
 | Identity | AgentArts Identity | 配置 Inbound `CUSTOM_JWT` 与 Outbound Credential Providers |
-| Frontend | Cloudflare Pages | Vite 静态文件 + Pages Function same-origin `/api/invocations` Proxy |
-| Infrastructure | OpenTofu + HCL | 管理现有 OBS、DNS 等华为云基础资源；Cloudflare deployment 由 Wrangler 管理 |
+| Frontend | Cloudflare Pages | Vite 静态文件 + Pages Function same-origin `/invocations` Proxy |
+| Infrastructure | OpenTofu + HCL | 保留未来 RDS、IAM、VPC、EIP 等华为云资源的 IaC 空基线 |
 
 后端部署配置在 `personal-assistant-service/.agentarts_config.yaml`；Cloudflare
 Pages 配置位于 `personal-assistant-client/wrangler.toml`。Production Web

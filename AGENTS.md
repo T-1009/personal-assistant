@@ -20,7 +20,7 @@ personal-assistant/
 ├── personal-assistant-client/   # 前端应用，Web Chat 界面及飞书/OfficeClaw 客户端适配
 ├── personal-assistant-service/  # 后端服务，AgentArts Runtime 上的 AI Agent 服务
 ├── personal-assistant-meta/     # Design hub，所有设计讨论、架构决策和变更规划
-├── personal-assistant-infra/    # 基础设施即代码（IaC），OpenTofu + HCL，管理华为云资源
+├── personal-assistant-infra/    # 基础设施即代码（IaC），OpenTofu + HCL，当前为空基线
 └── personal-assistant-e2e/      # E2E 测试脚本，pytest，覆盖 Service+Client 联调
 ```
 
@@ -38,7 +38,7 @@ personal-assistant/
 
 ### personal-assistant-infra/ — 基础设施即代码
 
-管理华为云基础资源（OBS、RDS、IAM、VPC、EIP、CDN 等）的 IaC 目录，使用 OpenTofu + HCL 编写。`.agentarts_config.yaml` 管 AgentArts 层（容器/认证/可观测），本目录管华为云基础资源层。开始前先阅读 [`personal-assistant-infra/AGENTS.md`](./personal-assistant-infra/AGENTS.md) 了解 IaC 规范、目录结构和常用命令。
+保留未来华为云基础资源（RDS、IAM、VPC、EIP 等）的 IaC 空基线，使用 OpenTofu + HCL 编写。`.agentarts_config.yaml` 管 AgentArts 层（容器/认证/可观测），本目录管华为云基础资源层。开始前先阅读 [`personal-assistant-infra/AGENTS.md`](./personal-assistant-infra/AGENTS.md) 了解 IaC 规范、目录结构和常用命令。
 
 ### personal-assistant-e2e/ — E2E 测试
 
@@ -98,8 +98,8 @@ npm run dev
 | 组件 | 部署平台 | 技术栈 | 说明 |
 |------|----------|--------|------|
 | Backend | AgentArts Runtime（cn-southwest-2） | FastAPI, ARM64 容器, port 8080 | 部署 runbook 见 [`chore-1-agentarts-deploy/plan.md`](./personal-assistant-meta/issues/chores/resolved/chore-1-agentarts-deploy/plan.md) |
-| Frontend | Cloudflare Pages | Vite + React + Pages Functions | 静态前端与 same-origin `/api/invocations` Proxy |
-| Infrastructure | OpenTofu + HCL（`personal-assistant-infra/`） | HCL | 管理 OBS bucket 及华为云基础资源 |
+| Frontend | Cloudflare Pages | Vite + React + Pages Functions | 静态前端与 same-origin `/invocations` Proxy |
+| Infrastructure | OpenTofu + HCL（`personal-assistant-infra/`） | HCL | 保留未来华为云基础资源的 IaC 空基线 |
 
 **部署流程**：Docker build ARM64 镜像 → SWR push → `agentarts launch`
 启动后端；Client merge 到 `main` 后由 GitHub Actions 执行 tests、Vite build

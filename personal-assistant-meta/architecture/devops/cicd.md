@@ -203,10 +203,9 @@ Terraform CLI（本地）     RFS（华为云控制台）
 
 两者互不冲突，管理的是不同层的资源：
 
-```
+```text
 personal-assistant-infra/
 ├── main.tf              # terraform {} + provider "huaweicloud" {}
-├── obs.tf               # OBS 桶（Legacy/备用）
 ├── rds.tf               # RDS 实例（用户映射表）
 ├── iam.tf               # IAM 角色/策略
 ├── variables.tf         # 变量声明
@@ -217,45 +216,24 @@ agentarts_config.yaml    # AgentArts 层（容器/认证/可观测）
 
 部署时互不影响：`tofu apply` 管华为云资源，`agentarts launch` 管 Agent 容器。
 
-### 5.4 示例：OpenTofu 配置（当前已实现）
+Production Web Chat 由 Cloudflare Pages + Wrangler 管理，不属于 OpenTofu
+scope。Legacy OBS static website 和 `chat.resource-governance.cloud` CNAME
+已于 2026-06-19 退役；注册域名对应的 DNS Zone 保留在华为云，但不再由
+OpenTofu state 管理。
 
-```hcl
-terraform {
-  required_providers {
-    huaweicloud = {
-      source  = "huaweicloud/huaweicloud"
-      version = "~> 1.92"
-    }
-  }
+### 5.4 OpenTofu workflow 安全边界
 
-  backend "s3" {
-    bucket                      = "pa-terraform-state"
-    key                         = "prod/terraform.tfstate"
-    region                      = "cn-southwest-2"
-    endpoint                    = "https://obs.cn-southwest-2.myhuaweicloud.com"
-    skip_credentials_validation = true
-    skip_region_validation      = true
-    skip_requesting_account_id  = true
-    skip_metadata_api_check     = true
-  }
-}
-
-provider "huaweicloud" {
-  region = var.region
-}
-
-# Legacy/备用 OBS static website
-resource "huaweicloud_obs_bucket" "web_chat" {
-  bucket     = "personal-assistant-web-chat"
-  acl        = "public-read"
-  versioning = true
-
-  website {
-    index_document = "index.html"
-    error_document = "index.html" # SPA fallback
-  }
-}
+```mermaid
+flowchart LR
+    PR["Pull Request"] --> Plan["tofu plan"]
+    Push["Push main"] --> Plan
+    Manual["workflow_dispatch<br/>action=apply"] --> Apply["tofu apply"]
 ```
+
+`.github/workflows/deploy-infra.yml` 不在 `main` push 后自动 apply。Apply 必须
+由操作者手动 dispatch，并以已 review 的 plan 为依据。`pa-terraform-state`
+继续保留，为未来 RDS、IAM、VPC、EIP 等 HuaweiCloud resources 提供共享
+state。
 
 ---
 
@@ -266,4 +244,4 @@ resource "huaweicloud_obs_bucket" "web_chat" {
 | Layer 0 — Cloudflare Frontend | Pages + Pages Function | GitHub Actions + Wrangler | 每次 Client 变更 |
 | Layer 1 — AgentArts | `agentarts_config.yaml` | `agentarts launch` | 每次代码变更 |
 | Layer 2 — MaaS | 控制台手动 | 无（REST API 可备选） | 极低（模型选型是 ADR 级决策） |
-| Layer 3 — 基础资源 | OpenTofu + HCL（`personal-assistant-infra/`），State 存储在 OBS | `tofu apply` | 首次创建 + 偶尔变更 |
+| Layer 3 — 基础资源 | OpenTofu + HCL 空基线，State 存储在 OBS | `tofu plan` + 手动 dispatch apply | 首次创建 + 偶尔变更 |
