@@ -186,7 +186,7 @@ runtime:
 
 **Gateway Header 注入**：除用户身份 header（`X-HW-AgentGateway-User-Id`）外，AgentArts Gateway 在转发请求时还会注入 `X-HW-AgentGateway-Workload-Access-Token`——Agent 容器以 Workload Identity 认证 Identity Service 的短期凭证。后端提取该 token 存入 `AgentArtsRuntimeContext` 后，Outbound 认证装饰器（如 `@require_access_token`）可直接使用，无需容器自行从 `.agent_identity.json` 走本地认证流程。详见 [backend_architecture.md §2.3](backend_architecture.md#23-agentarts-gateway-header-注入)。
 
-**OAuth2 鉴权 URL 呈现**：当 `@require_access_token` 的 `on_auth_url` 回调触发时，系统通过 shared `asyncio.Queue` 将鉴权 URL 作为带外消息（`system_message` SSE event）直接推送给用户，不依赖 LLM 转述。详见 [backend_architecture.md §5.2.1](backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递) 和 [frontend_architecture.md §2.1.4](frontend_architecture.md#214-sse-事件协议)。
+**OAuth2 鉴权 URL 呈现**：当 `@require_access_token` 的 `on_auth_url` callback 触发时，tool 通过 LangGraph `get_stream_writer()` 将 `auth_required` custom event 写入 SSE stream，Web Chat 使用 provider-scoped Auth Card 直接呈现，不依赖 LLM 转述。授权凭据可用后发送 `auth_complete`，仅更新匹配的 pending Card。详见 [backend_architecture.md §5.2.1](backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递) 和 [frontend_architecture.md §2.1.4](frontend_architecture.md#214-sse-事件协议)。
 
 ### 4.2 Outbound — Agent 代表用户调用外部服务
 

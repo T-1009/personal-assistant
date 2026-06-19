@@ -34,6 +34,13 @@ flowchart LR
 | `chat-event-handler.ts` | 累积 token、分发 system/auth events |
 | `session.ts` | 创建、读取和重置 AgentArts Session ID |
 | `jwt.ts` | JWT payload decode、user ID 和 expiration 提取 |
+| `frontend_architecture.md` | 记录 Chat Adapter 模块边界与当前 SSE/Auth Card 数据流 |
+
+为保持 architecture baseline 一致，同时清理根文档和 Backend 中遗留的
+`asyncio.Queue` / `astream_events` 旧描述，更新：
+
+- `architecture/backend_architecture.md §5.2.1`
+- `architecture/overall_architecture.md §4.1`
 
 ## 非目标
 
@@ -47,6 +54,7 @@ flowchart LR
 - [x] `chatAdapter` 的公共导出与行为保持兼容
 - [x] HTTP、SSE parsing、event handling 可独立阅读和测试
 - [x] Auth Card、普通 system message、token streaming 行为不变
+- [x] Frontend、Backend 与 Overall architecture 反映当前 custom stream 实现
 - [x] `npm run test` 通过
 - [x] `npm run build` 通过
 
