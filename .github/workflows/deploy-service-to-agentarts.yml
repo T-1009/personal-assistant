@@ -19,6 +19,7 @@ jobs:
       - name: Generate SWR login password
         run: |
           SWR_PASSWORD=$(printf "${{ secrets.HUAWEICLOUD_SDK_AK }}" | openssl dgst -binary -sha256 -hmac "${{ secrets.HUAWEICLOUD_SDK_SK }}" | od -An -vtx1 | tr -d ' \n')
+          echo "::add-mask::$SWR_PASSWORD"
           echo "SWR_PASSWORD=$SWR_PASSWORD" >> $GITHUB_ENV
 
       - name: Login to SWR
@@ -94,5 +95,9 @@ jobs:
         run: |
           cd personal-assistant-service
           # Substitute ${VAR} placeholders in .agentarts_config.yaml with secret values
-          envsubst < .agentarts_config.yaml | tee .agentarts_config.yaml
+          envsubst < .agentarts_config.yaml > .agentarts_config.resolved.yaml
+          test -s .agentarts_config.resolved.yaml
+          grep -q '^default_agent: personal-assistant$' .agentarts_config.resolved.yaml
+          grep -q '^  personal-assistant:$' .agentarts_config.resolved.yaml
+          mv .agentarts_config.resolved.yaml .agentarts_config.yaml
           agentarts launch
