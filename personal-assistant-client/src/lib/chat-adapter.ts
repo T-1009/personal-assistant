@@ -105,6 +105,7 @@ export const chatAdapter: ChatModelAdapter = {
 
     let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
     let fullText = "";
+    useAuthCardStore.getState().clearAuth();
 
     try {
       // Get current idToken and refresh if close to expiry
@@ -206,23 +207,40 @@ export const chatAdapter: ChatModelAdapter = {
               };
             }
 
+            const systemMessage =
+              typeof parsed.system_message === "string"
+                ? parsed.system_message
+                : "";
+            const isAuthEvent =
+              parsed.auth_required === true || parsed.auth_complete === true;
+
+            // Auth events have a dedicated card and must not be duplicated in
+            // the assistant message text.
             if (
-              typeof parsed.system_message === "string" &&
-              parsed.system_message.trim()
+              parsed.auth_required &&
+              parsed.auth_url &&
+              parsed.provider &&
+              systemMessage.trim()
             ) {
-              fullText += parsed.system_message;
-              // Show a dedicated auth card instead of an inline markdown link
-              if (parsed.auth_required && parsed.auth_url) {
-                useAuthCardStore.getState().setAuth(
-                  assistantMessageId || "unknown",
-                  parsed.auth_url,
-                  parsed.system_message,
-                );
-              }
-              // Transition the auth card to green on completion
-              if (parsed.auth_complete) {
-                useAuthCardStore.getState().setAuthComplete(true, parsed.system_message);
-              }
+              useAuthCardStore.getState().setAuth(
+                assistantMessageId || "unknown",
+                parsed.provider,
+                parsed.auth_url,
+                systemMessage,
+              );
+            }
+
+            // Completion events are harmless when no matching pending card
+            // exists, which lets the service emit them whenever a token is
+            // available.
+            if (parsed.auth_complete && parsed.provider) {
+              useAuthCardStore
+                .getState()
+                .setAuthComplete(parsed.provider, systemMessage || undefined);
+            }
+
+            if (!isAuthEvent && systemMessage.trim()) {
+              fullText += systemMessage;
               yield {
                 content: [{ type: "text", text: fullText }],
               };

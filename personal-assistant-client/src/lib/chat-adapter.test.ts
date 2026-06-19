@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { chatAdapter, getSessionId, resetSessionId } from "./chat-adapter";
+import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
 import type { ThreadMessage, ThreadUserMessagePart } from "@assistant-ui/core";
@@ -87,6 +88,7 @@ describe("chatAdapter", () => {
   beforeEach(() => {
     // Reset auth store to clean state before each test
     useAuthStore.getState().clearToken();
+    useAuthCardStore.getState().clearAuth();
     mockAcquireIdTokenSilently.mockReset();
   });
 
@@ -223,6 +225,132 @@ describe("chatAdapter", () => {
         type: "complete",
         reason: "stop",
       });
+    });
+
+    it("renders auth_required in the Auth Card without appending it to message text", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({
+              system_message: "请完成授权",
+              auth_required: true,
+              auth_url: "https://auth.example.com",
+              provider: "m365-provider-common",
+            }) +
+            "\n",
+        ),
+        encoder.encode("data: " + JSON.stringify({ done: true }) + "\n"),
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      }) as unknown as typeof fetch;
+
+      const results = await collectResults("查看收件箱");
+      const finalText = results[results.length - 1]?.content?.[0];
+      const authState = useAuthCardStore.getState();
+
+      expect(finalText).toEqual({ type: "text", text: "" });
+      expect(authState).toMatchObject({
+        provider: "m365-provider-common",
+        authUrl: "https://auth.example.com",
+        message: "请完成授权",
+        authComplete: false,
+      });
+    });
+
+    it("marks a matching pending Auth Card complete without appending completion text", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({
+              system_message: "请完成授权",
+              auth_required: true,
+              auth_url: "https://auth.example.com",
+              provider: "m365-provider-common",
+            }) +
+            "\n",
+        ),
+        encoder.encode(
+          "data: " +
+            JSON.stringify({
+              system_message: "授权已完成 ✅",
+              auth_complete: true,
+              provider: "m365-provider-common",
+            }) +
+            "\n",
+        ),
+        encoder.encode("data: " + JSON.stringify({ done: true }) + "\n"),
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      }) as unknown as typeof fetch;
+
+      const results = await collectResults("查看收件箱");
+      const finalText = results[results.length - 1]?.content?.[0];
+
+      expect(finalText).toEqual({ type: "text", text: "" });
+      expect(useAuthCardStore.getState()).toMatchObject({
+        message: "授权已完成 ✅",
+        authComplete: true,
+      });
+    });
+
+    it("ignores auth_complete when no matching pending Auth Card exists", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({
+              system_message: "授权已完成 ✅",
+              auth_complete: true,
+              provider: "m365-provider-common",
+            }) +
+            "\n",
+        ),
+        encoder.encode("data: " + JSON.stringify({ done: true }) + "\n"),
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      }) as unknown as typeof fetch;
+
+      const results = await collectResults("查看收件箱");
+      const finalText = results[results.length - 1]?.content?.[0];
+
+      expect(finalText).toEqual({ type: "text", text: "" });
+      expect(useAuthCardStore.getState()).toMatchObject({
+        provider: null,
+        authUrl: null,
+        message: "",
+        authComplete: false,
+      });
+    });
+
+    it("continues appending non-auth system messages to message text", async () => {
+      const chunks = [
+        encoder.encode(
+          "data: " +
+            JSON.stringify({ system_message: "普通系统消息" }) +
+            "\n",
+        ),
+        encoder.encode("data: " + JSON.stringify({ done: true }) + "\n"),
+      ];
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream(chunks),
+      }) as unknown as typeof fetch;
+
+      const results = await collectResults("test");
+      const texts = results
+        .flatMap((result) => result.content ?? [])
+        .filter(
+          (content): content is { type: "text"; text: string } =>
+            content.type === "text",
+        )
+        .map((content) => content.text);
+
+      expect(texts).toContain("普通系统消息");
     });
   });
 
