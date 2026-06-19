@@ -1,5 +1,6 @@
 import { useMsal, useIsAuthenticated } from "@azure/msal-react";
 import { loginRequest, fetchUserPhoto } from "@/lib/auth";
+import { getPublicConfig } from "@/config";
 import { Button } from "@/components/ui/button";
 import { LogIn, LogOut } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
@@ -44,7 +45,7 @@ export function LoginButton() {
   }, [isAuthenticated]);
 
   // Dev mode: MSAL not configured → skip OAuth
-  if (!import.meta.env.VITE_ENTRA_CLIENT_ID) {
+  if (!getPublicConfig().isEntraEnabled) {
     return (
       <span className="text-xs text-muted-foreground">
         Dev Mode — Proxy auth enabled

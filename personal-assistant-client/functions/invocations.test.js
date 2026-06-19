@@ -4,6 +4,10 @@ import { onRequestPost } from "./invocations.js";
 
 describe("Cloudflare Pages invocations proxy", () => {
   const originalFetch = globalThis.fetch;
+  const env = {
+    AGENTARTS_INVOCATIONS_URL:
+      "https://runtime.example.com/runtimes/personal-assistant/invocations",
+  };
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
@@ -38,11 +42,11 @@ describe("Cloudflare Pages invocations proxy", () => {
       },
     );
 
-    const response = await onRequestPost({ request });
+    const response = await onRequestPost({ request, env });
     const forwardedRequest = mockFetch.mock.calls[0][0];
 
     expect(forwardedRequest.url).toBe(
-      "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations",
+      env.AGENTARTS_INVOCATIONS_URL,
     );
     expect(forwardedRequest.headers.get("Authorization")).toBe(
       "Bearer test-jwt",
@@ -71,11 +75,28 @@ describe("Cloudflare Pages invocations proxy", () => {
       },
     );
 
-    const response = await onRequestPost({ request });
+    const response = await onRequestPost({ request, env });
 
     expect(response.status).toBe(502);
     expect(await response.json()).toEqual({
       message: "AgentArts Gateway is unavailable",
+    });
+  });
+
+  it("fails clearly when the upstream URL is not configured", async () => {
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/invocations",
+      {
+        method: "POST",
+        body: "{}",
+      },
+    );
+
+    const response = await onRequestPost({ request, env: {} });
+
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      message: "Frontend proxy is not configured",
     });
   });
 });

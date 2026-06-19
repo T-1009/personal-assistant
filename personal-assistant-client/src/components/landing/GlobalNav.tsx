@@ -1,11 +1,12 @@
 import { Button } from "@/components/ui/button";
+import { getPublicConfig } from "@/config";
 
 interface GlobalNavProps {
   onLogin?: () => void;
 }
 
 export function GlobalNav({ onLogin }: GlobalNavProps) {
-  const isDev = !import.meta.env.VITE_ENTRA_CLIENT_ID;
+  const isDev = !getPublicConfig().isEntraEnabled;
 
   return (
     <nav className="sticky top-0 z-50 flex h-[44px] w-full items-center justify-between bg-surface-black px-5">

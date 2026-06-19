@@ -2,3 +2,7 @@ name = "agentarts-personal-assistant"
 pages_build_output_dir = "./dist"
 compatibility_date = "2026-06-18"
 
+# Non-secret Pages Function runtime configuration. Sensitive values must use
+# Cloudflare secrets instead of plaintext vars.
+[vars]
+AGENTARTS_INVOCATIONS_URL = "https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations"

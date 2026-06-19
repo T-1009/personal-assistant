@@ -56,7 +56,21 @@ personal-assistant-client/
 npm ci
 ```
 
-### 2. 启动开发服务器
+### 2. 配置前端
+
+`.env.example` 是 Client 配置目录：
+
+- `VITE_*` 是浏览器公开的 build-time 配置。本地放在 `.env.local`，不得包含
+  Secret。
+- Pages Function 的 Runtime 配置通过 `context.env` 读取。非敏感生产值维护在
+  `wrangler.toml [vars]`；敏感值必须使用 Cloudflare Secret。
+- `AGENTARTS_INVOCATIONS_URL` 属于 Pages Function Runtime 配置，不得添加
+  `VITE_` 前缀。
+
+未设置 `VITE_ENTRA_CLIENT_ID` 时，前端进入 Dev Mode。Tenant ID 未设置时使用
+`common`。
+
+### 3. 启动开发服务器
 
 ```bash
 npm run dev
@@ -74,7 +88,7 @@ uv run uvicorn app.main:app --port 8080 --reload
 
 LLM API Key 通过 AgentArts Identity 的 `DEEPSEEK_API_KEY` Credential Provider 注入，不再通过前端或后端环境变量传递。
 
-### 3. 打开浏览器
+### 4. 打开浏览器
 
 访问 `http://localhost:5173` 进入 Web Chat 对话界面。
 
