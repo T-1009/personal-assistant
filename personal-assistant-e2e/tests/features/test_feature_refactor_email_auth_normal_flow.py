@@ -15,9 +15,7 @@ Test scenarios from plan:
   E2E-AUTH-08: Concurrency isolation
 """
 
-import asyncio
 import json
-import os
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -124,9 +122,6 @@ def auth_test_client(auth_fake_handler: FakeAuthHandler):
     FastAPI stack — routing, SSE formatting, header handling — with
     our controlled fake handler.
     """
-    os.environ.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
-    os.environ.setdefault("MODEL_API_KEY", "test-key-for-e2e")
-
     with patch("app.llm_config.init_chat_model", return_value=MagicMock()), \
          patch("app.agent_handler.AgentHandler", return_value=auth_fake_handler):
         from app.main import app
@@ -146,9 +141,6 @@ async def async_auth_client(auth_fake_handler: FakeAuthHandler):
     Uses httpx.AsyncClient with ASGITransport for in-process FastAPI testing.
     Must be async because ASGITransport requires httpx.AsyncClient.
     """
-    os.environ.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
-    os.environ.setdefault("MODEL_API_KEY", "test-key-for-e2e")
-
     import app.main as app_main
     with patch.object(app_main, "AgentHandler", return_value=auth_fake_handler):
         from app.main import app

@@ -211,14 +211,14 @@ class AgentHandler:
             checkpointer=self.checkpointer,  # ✅ 注入 Checkpointer
         )
 
-    def _init_checkpointer(self):
-        """按环境变量选择 Checkpointer 后端。"""
-        if os.environ.get("POSTGRES_DSN"):
+    def _init_checkpointer(self, settings):
+        """通过 typed Settings 选择 Checkpointer 后端。"""
+        if settings.postgres_dsn:
             from langgraph.checkpoint.postgres import PostgresSaver
-            return PostgresSaver.from_conn_string(os.environ["POSTGRES_DSN"])
-        if os.environ.get("SQLITE_DB_PATH"):
-            from langgraph.checkpoint.sqlite import SqliteSaver
-            return SqliteSaver.from_conn_string(os.environ["SQLITE_DB_PATH"])
+            return PostgresSaver.from_conn_string(settings.postgres_dsn)
+        if settings.sqlite_db_path:
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+            return AsyncSqliteSaver.from_conn_string(str(settings.sqlite_db_path))
         return MemorySaver()  # 默认：进程内存
 
     @staticmethod
@@ -484,7 +484,7 @@ result = sandbox.execute("print('hello')")
 |------|------|------|
 | **Web 框架** | FastAPI | 替代 AgentArtsRuntimeApp，统一管理所有路由。详见 [ADR-004](ADR/ADR-004-fastapi-over-agentarts-runtime-app.md) |
 | **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills。详见 [ADR-009](ADR/ADR-009-deepagents.md) |
-| **LLM** | 多 Provider 可配置（MaaS / DeepSeek 官方） | `config.yaml` 声明 provider，`init_chat_model()` 统一调用。默认 MaaS，可按需切换。详见 ADR-005 + ADR-011 |
+| **LLM** | typed Settings + internal Provider catalog | `.env.example` 是唯一用户配置入口；`app/settings.py` 校验 Runtime Settings，`provider_catalog.py` 保存随代码发布的非敏感 metadata，credential 由 AgentArts Identity 提供。详见 ADR-011 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，三种抽取策略 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API → MCP Tool 自动转换 |
@@ -502,13 +502,15 @@ result = sandbox.execute("print('hello')")
 personal-assistant/
 ├── .agentarts_config.yaml          # AgentArts 部署配置
 ├── Dockerfile                       # ARM64 镜像
-├── config.yaml                      # LLM Provider 配置（新增）
+├── .env.example                     # 唯一面向使用者的 Service 配置入口
 ├── pyproject.toml                   # Python 依赖 + ruff 配置
 ├── uv.lock                           # 确定性锁文件
 ├── app/
 │   ├── main.py                      # FastAPI 应用入口 + 路由定义
 │   ├── agent_handler.py             # Agent 处理逻辑（deepagents + Identity SDK）
-│   ├── llm_config.py                # LLM Provider 配置加载（新增）
+│   ├── settings.py                  # typed Runtime Settings（内部实现）
+│   ├── provider_catalog.py          # 内置 Provider metadata（非用户配置）
+│   ├── llm_config.py                # Settings + Identity → LLM model
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
 │   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
 │   └── tools/

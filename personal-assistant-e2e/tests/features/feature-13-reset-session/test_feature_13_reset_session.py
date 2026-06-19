@@ -1,7 +1,7 @@
 """E2E tests for Feature 13 — Reset Session ("新对话") button.
 
 Tests the full application stack:
-- FastAPI service with dummy API key (MAAS_API_KEY=dummy-e2e-test-key)
+- FastAPI service using canonical Settings
 - Vite dev server (subprocess) with proxy to backend
 - Playwright browser automation for UI interactions
 
@@ -53,7 +53,6 @@ def _start_service(
 ) -> subprocess.Popen:
     """Start uvicorn as a subprocess. Returns the Popen handle."""
     merged_env = os.environ.copy()
-    merged_env.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
     if env:
         merged_env.update(env)
 
@@ -168,9 +167,9 @@ def stack():
     """Start both backend service and Vite dev server.
 
     Architecture:
-    - Backend runs on port 8080 with CORS (matches Vite proxy target).
-    - If 8080 is busy, falls back to a random port with CORS_ALLOWED_ORIGINS
-      and VITE_API_BASE_URL set to point directly at the backend.
+    - Backend normally runs on port 8080 behind the Vite same-origin proxy.
+    - Port 8080 is required because the checked-in Vite proxy owns the
+      same-origin topology.
     - Vite dev server runs on port 5173.
 
     Returns (vite_url, service_url).
@@ -183,26 +182,13 @@ def stack():
     # Try to start service on port 8080 first (matches Vite proxy)
     try:
         svc_proc = _start_service(service_port)
-        use_proxy = True
     except (RuntimeError, TimeoutError):
-        # Port 8080 might be in use; fall back to a different port
-        # with CORS enabled for the Vite origin
-        service_port = 18765
-        svc_proc = _start_service(
-            service_port,
-            env={"CORS_ALLOWED_ORIGINS": f"http://localhost:{vite_port}"},
-        )
-        use_proxy = False
+        pytest.skip("Port 8080 is required by the Vite same-origin proxy")
 
     # Start Vite dev server
     vite_env = os.environ.copy()
     vite_env["BROWSER"] = "none"
-    if use_proxy:
-        # Empty VITE_API_BASE_URL → use Vite proxy → localhost:8080
-        vite_env["VITE_API_BASE_URL"] = ""
-    else:
-        # Point directly at the backend (CORS configured)
-        vite_env["VITE_API_BASE_URL"] = f"http://127.0.0.1:{service_port}"
+    vite_env["VITE_API_BASE_URL"] = ""
 
     npm_cmd = "npm.cmd" if _IS_WINDOWS else "npm"
     vite_proc = subprocess.Popen(

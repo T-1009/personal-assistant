@@ -79,7 +79,7 @@ API Token 只授予目标 Account 的 `Cloudflare Pages: Edit`。Production URL
 - 网络模式（PUBLIC / PRIVATE）
 - 认证配置（Inbound JWT / API Key）
 - 可观测性（Tracing / Metrics / Logging）
-- 环境变量（MODEL_API_KEY、MEMORY_SPACE_ID 等）
+- canonical Runtime Settings（`LOG_LEVEL`、`LLM_PROVIDER`、`LLM_MODEL` 等）
 
 执行 `agentarts launch` 相当于 `terraform apply` —— 把声明转为实际运行的资源。
 

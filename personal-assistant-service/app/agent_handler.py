@@ -1,10 +1,10 @@
 import json
-import os
 from collections.abc import AsyncGenerator
 
 from deepagents import create_deep_agent
 
 from app.llm_config import get_model
+from app.settings import Settings, get_settings
 from app.tools import build_tools
 
 _handler_instance: "AgentHandler | None" = None
@@ -106,8 +106,9 @@ github_star_repository(confirm=True, owner=..., repo=...)
 class AgentHandler:
     """Handles agent initialization and invocation."""
 
-    def __init__(self):
-        self.checkpointer = self._init_checkpointer()
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings or get_settings()
+        self.checkpointer = self._init_checkpointer(self.settings)
         self.tools = build_tools()
         self.model = None
         self.agent = None
@@ -125,22 +126,21 @@ class AgentHandler:
         self.agent = agent
         return agent
 
-    def _init_checkpointer(self):
-        """按环境变量选择 Checkpointer 后端。
+    def _init_checkpointer(self, settings: Settings | None = None):
+        """Select the Checkpointer from validated Settings."""
+        current = settings or get_settings()
 
-        优先级: POSTGRES_DSN > SQLITE_DB_PATH > InMemorySaver（默认）
-        """
         # PostgresSaver — 生产环境（留桩，未测试）
-        if os.environ.get("POSTGRES_DSN"):
+        if current.postgres_dsn:
             from langgraph.checkpoint.postgres import PostgresSaver
 
-            return PostgresSaver.from_conn_string(os.environ["POSTGRES_DSN"])
+            return PostgresSaver.from_conn_string(current.postgres_dsn)
 
         # AsyncSqliteSaver — 本地持久化
-        if os.environ.get("SQLITE_DB_PATH"):
+        if current.sqlite_db_path:
             from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-            return AsyncSqliteSaver.from_conn_string(os.environ["SQLITE_DB_PATH"])
+            return AsyncSqliteSaver.from_conn_string(str(current.sqlite_db_path))
 
         # InMemorySaver — 默认（开发/调试/测试）
         from langgraph.checkpoint.memory import InMemorySaver

@@ -7,7 +7,6 @@ Tests the happy path with dev-mode identity injection:
 """
 
 import json
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -54,8 +53,6 @@ def identity_test_client():
     (so get_agent_handler() returns our fake handler). This allows testing
     the full FastAPI stack including auth layer without real LLM calls.
     """
-    os.environ.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
-
     fake_handler = FakeAgentHandler()
 
     with patch("app.llm_config.init_chat_model", return_value=MagicMock()), patch(

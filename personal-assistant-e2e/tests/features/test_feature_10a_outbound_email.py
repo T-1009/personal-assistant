@@ -12,7 +12,6 @@ Scenario 5 — Integration-level / Real Service (2 tests)
 """
 
 import json
-import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -264,8 +263,6 @@ def email_test_client():
     the full FastAPI stack — routing, auth, SSE formatting, header handling —
     without real LLM calls or AgentArts Identity Service.
     """
-    os.environ.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
-
     fake_handler = FakeEmailHandler()
 
     with patch("app.llm_config.init_chat_model", return_value=MagicMock()), \
@@ -1005,92 +1002,6 @@ def test_search_emails_sse_streaming(email_test_client):
 
     # Accumulated text must contain search keywords
     assert len(accumulated) > 0, "No tokens accumulated from SSE stream"
-    assert any(
-        kw in accumulated for kw in ("搜索", "项目进度", "封")
-    ), f"Expected search keywords in stream: {accumulated[:200]}"
-
-
-# ═══════════════════════════════════════════════════════════════════════════
-# Scenario 5: Integration-level Tests (Subprocess-based)
-# ═══════════════════════════════════════════════════════════════════════════
-
-
-@pytest.mark.feature
-@pytest.mark.slow
-def test_real_service_invocations_non_streaming():
-    """E2E-09: Start real uvicorn, POST non-streaming — responds without crash.
-
-    Skips if no LLM API key is set. Verifies the endpoint plumbing works
-    even if email tools fail due to missing OAuth credentials.
-    """
-    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("MAAS_API_KEY")
-    if not api_key:
-        pytest.skip("No LLM API key set — skipping real service test")
-
-    # Lazy import to avoid dependency when skipped
-    from conftest import ServiceProcess  # noqa: E402
-
-    PORT = 18900
-    sp = ServiceProcess(port=PORT)
-    try:
-        sp.start(env={"MAAS_API_KEY": api_key, "DEEPSEEK_API_KEY": api_key})
-        import httpx
-
-        resp = httpx.post(
-            f"http://127.0.0.1:{PORT}/invocations",
-            json={"message": "帮我看看收件箱"},
-            headers={
-                "X-HW-AgentGateway-User-Id": "e2e-test-user",
-                "x-hw-agentarts-session-id": "e2e-real-1",
-            },
-            timeout=60.0,
-        )
-        # Should respond (200 on success, 500 if email tools fail due to
-        # missing M365 credentials — but should not crash the process)
-        assert resp.status_code in (200, 500), (
-            f"Real service responded with {resp.status_code}: {resp.text[:300]}"
-        )
-    finally:
-        sp.stop()
-
-
-@pytest.mark.feature
-@pytest.mark.slow
-def test_real_service_invocations_streaming():
-    """E2E-10: Start real uvicorn, POST streaming — responds with SSE or error.
-
-    Skips if no LLM API key. Verifies SSE content-type on success.
-    """
-    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("MAAS_API_KEY")
-    if not api_key:
-        pytest.skip("No LLM API key set — skipping real service test")
-
-    from conftest import ServiceProcess  # noqa: E402
-
-    PORT = 18901
-    sp = ServiceProcess(port=PORT)
-    try:
-        sp.start(env={"MAAS_API_KEY": api_key, "DEEPSEEK_API_KEY": api_key})
-        import httpx
-
-        resp = httpx.post(
-            f"http://127.0.0.1:{PORT}/invocations",
-            json={"message": "帮我看看收件箱", "stream": True},
-            headers={
-                "Accept": "text/event-stream",
-                "X-HW-AgentGateway-User-Id": "e2e-test-user",
-                "x-hw-agentarts-session-id": "e2e-real-2",
-            },
-            timeout=60.0,
-        )
-        # Streaming endpoint should not cause 5xx
-        assert resp.status_code < 500, (
-            f"SSE streaming should not 5xx, got {resp.status_code}: {resp.text[:300]}"
-        )
-        if resp.status_code == 200:
-            content_type = resp.headers.get("content-type", "")
-            assert "text/event-stream" in content_type, (
-                f"Expected SSE content-type, got: {content_type}"
-            )
-    finally:
-        sp.stop()
+    assert any(kw in accumulated for kw in ("搜索", "项目进度", "封")), (
+        f"Expected search keywords in stream: {accumulated[:200]}"
+    )

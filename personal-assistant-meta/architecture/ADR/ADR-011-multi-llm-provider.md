@@ -1,6 +1,12 @@
 # ADR-011: 多 LLM Provider 可配置架构
 
-> 状态：Accepted | 日期：2026-06-07
+> 状态：Accepted, amended by Refactor 10 | 日期：2026-06-07
+
+> **2026-06-19 Amendment**：根目录 `config.yaml`、API-key environment variable
+> 和 legacy `MODEL_*` fallback 已退出架构。当前决策为：`.env.example` 是唯一用户
+> 配置入口，Pydantic Settings 管 Runtime 参数，typed Python Provider catalog
+> 管随代码发布的 metadata，credential value 只来自 AgentArts Identity。
+> 以下原始决策保留为历史背景，不再作为当前 Implementation 指南。
 
 ---
 

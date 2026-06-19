@@ -22,7 +22,6 @@ Test scenarios from plan:
 
 import json
 import os
-import shutil
 import signal
 import subprocess
 import time
@@ -37,8 +36,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
 CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 DIST_DIR = CLIENT_DIR / "dist"
-CONFIG_YAML = SERVICE_DIR / "config.yaml"
-CONFIG_YAML_BACKUP = SERVICE_DIR / "config.yaml.e2e-backup"
 
 
 # ── Helpers ────────────────────────────────────────────────────────────
@@ -55,15 +52,8 @@ def _get_uv_path() -> str:
 def _start_service(
     port: int, env: dict[str, str] | None = None, timeout: float = 60.0
 ) -> subprocess.Popen:
-    """Start uvicorn as a subprocess. Returns the Popen handle.
-
-    Uses `MAAS_API_KEY=dummy-e2e-test-key` to allow service startup
-    (prevents lifespan crash from missing API key). Real LLM calls
-    will fail (500) but HTTP plumbing is verified.
-    """
+    """Start uvicorn as a subprocess. Returns the Popen handle."""
     merged_env = os.environ.copy()
-    # Default: provide a dummy key to prevent lifespan crash
-    merged_env.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
     if env:
         merged_env.update(env)
 
@@ -139,28 +129,7 @@ async def _post_stream(client: httpx.AsyncClient, message: str) -> httpx.Respons
     )
 
 
-def _backup_config():
-    """Create a backup of config.yaml if it exists."""
-    if CONFIG_YAML.exists() and not CONFIG_YAML_BACKUP.exists():
-        shutil.copy2(str(CONFIG_YAML), str(CONFIG_YAML_BACKUP))
-
-
-def _restore_config():
-    """Restore config.yaml from backup."""
-    if CONFIG_YAML_BACKUP.exists():
-        shutil.copy2(str(CONFIG_YAML_BACKUP), str(CONFIG_YAML))
-        CONFIG_YAML_BACKUP.unlink()
-
-
 # ── Fixtures ───────────────────────────────────────────────────────────
-
-
-@pytest.fixture(autouse=True)
-def manage_config():
-    """Backup and restore config.yaml around each test module."""
-    _backup_config()
-    yield
-    _restore_config()
 
 
 @pytest.fixture
@@ -218,9 +187,6 @@ async def test_app_client(fake_handler):
     Uses patch.object with a real module reference to avoid
     pkgutil.resolve_name errors.
     """
-    os.environ.setdefault("MODEL_API_KEY", "test-key-for-e2e")
-    os.environ.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
-
     # Import app.main first so the module exists for patching,
     # then use patch.object which takes a real module reference.
     import app.main as app_main

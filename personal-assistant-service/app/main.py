@@ -1,18 +1,14 @@
-import asyncio
 import json
 import logging
-import os
 from contextlib import asynccontextmanager
 from json import JSONDecodeError
 from pathlib import Path
 
-from dotenv import load_dotenv
+from app.logging_config import configure as configure_logging
+from app.settings import get_settings
 
-load_dotenv()
-
-from app.logging_config import configure as configure_logging  # noqa: E402
-
-configure_logging()
+settings = get_settings()
+configure_logging(settings)
 
 logger = logging.getLogger("app")
 
@@ -29,7 +25,6 @@ logging.getLogger("uvicorn.access").addFilter(PingFilter())
 
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
-from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
 from fastapi.responses import (  # noqa: E402
     JSONResponse,
     RedirectResponse,
@@ -66,22 +61,6 @@ app = FastAPI(
     title="Personal Assistant",
     version="0.1.0",
     lifespan=lifespan,
-)
-
-_default_origins = [
-    "https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com"
-]
-_env_origins = os.getenv("CORS_ALLOWED_ORIGINS")
-_allowed_origins = (
-    [o.strip() for o in _env_origins.split(",")] if _env_origins else _default_origins
-)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
 )
 
 

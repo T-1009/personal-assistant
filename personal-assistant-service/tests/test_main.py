@@ -315,20 +315,25 @@ async def test_invocations_whitespace_only_passes_through(client, fake_handler):
 
 
 # ---------------------------------------------------------------------------
-# App startup error (missing LLM config)
+# App startup validation
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_missing_llm_config_causes_startup_error():
-    """App lifespan should raise RuntimeError when config.yaml is missing."""
-    with patch("pathlib.Path.exists", return_value=False):
-        from fastapi import FastAPI
+async def test_unknown_llm_provider_causes_startup_error(monkeypatch):
+    """App lifespan fails fast when the canonical Provider is unknown."""
+    from fastapi import FastAPI
 
-        from app.main import lifespan
+    from app.main import lifespan
+    from app.settings import Settings
 
+    invalid_settings = Settings(_env_file=None, llm_provider="unknown")
+    with patch(
+        "app.llm_config.get_settings",
+        return_value=invalid_settings,
+    ):
         test_app = FastAPI()
-        with pytest.raises(RuntimeError, match="config.yaml is required"):
+        with pytest.raises(RuntimeError, match="Unknown LLM_PROVIDER"):
             async with lifespan(test_app):
                 pass
 
@@ -369,8 +374,7 @@ async def test_invocations_stream_returns_sse(client, fake_handler):
     assert response.headers["connection"] == "keep-alive"
     assert fake_handler.stream_calls[0][:3] == ("hello", "user-1", "sess-test")
 
-    # Verify message_queue is passed and is an asyncio.Queue instance
-    import asyncio
+    # Verify the stream call preserves message and identity context.
     call_args = fake_handler.stream_calls[0]
     assert call_args[0] == "hello"
     assert call_args[1] == "user-1"
@@ -589,229 +593,4 @@ class TestAgentHandlerSingletonIntegration:
         )
 
 
-# ---------------------------------------------------------------------------
-# CORS Middleware (chore/agentarts-deploy)
-# ---------------------------------------------------------------------------
-
-ALLOWED_ORIGIN = (
-    "https://personal-assistant-web-chat.obs-website.cn-southwest-2.myhuaweicloud.com"
-)
-
-
-class TestCORSMiddlewareRegistration:
-    """Verify CORSMiddleware is properly registered in the FastAPI app."""
-
-    def test_cors_middleware_in_middleware_stack(self):
-        """CORSMiddleware should be present in app.user_middleware."""
-        from fastapi.middleware.cors import CORSMiddleware
-
-        from app.main import app
-
-        middleware_classes = [mw.cls for mw in app.user_middleware]
-        assert CORSMiddleware in middleware_classes, (
-            f"Expected CORSMiddleware in middleware stack, "
-            f"got: {[c.__name__ for c in middleware_classes]}"
-        )
-
-    def test_cors_middleware_allow_origins(self):
-        """CORSMiddleware should allow the OBS static website origin (at minimum)."""
-        from fastapi.middleware.cors import CORSMiddleware
-
-        from app.main import app
-
-        cors_mws = [mw for mw in app.user_middleware if mw.cls is CORSMiddleware]
-        assert len(cors_mws) == 1, (
-            f"Expected exactly one CORSMiddleware, got {len(cors_mws)}"
-        )
-        origins = cors_mws[0].kwargs["allow_origins"]
-        assert ALLOWED_ORIGIN in origins, (
-            f"Expected {ALLOWED_ORIGIN!r} to be in allow_origins, got {origins!r}"
-        )
-
-    def test_cors_middleware_allow_credentials(self):
-        """CORSMiddleware should be configured with allow_credentials=True."""
-        from fastapi.middleware.cors import CORSMiddleware
-
-        from app.main import app
-
-        cors_mws = [mw for mw in app.user_middleware if mw.cls is CORSMiddleware]
-        assert cors_mws[0].kwargs["allow_credentials"] is True
-
-    def test_cors_middleware_allow_methods_wildcard(self):
-        """CORSMiddleware should allow all HTTP methods."""
-        from fastapi.middleware.cors import CORSMiddleware
-
-        from app.main import app
-
-        cors_mws = [mw for mw in app.user_middleware if mw.cls is CORSMiddleware]
-        assert cors_mws[0].kwargs["allow_methods"] == ["*"]
-
-    def test_cors_middleware_allow_headers_wildcard(self):
-        """CORSMiddleware should allow all request headers."""
-        from fastapi.middleware.cors import CORSMiddleware
-
-        from app.main import app
-
-        cors_mws = [mw for mw in app.user_middleware if mw.cls is CORSMiddleware]
-        assert cors_mws[0].kwargs["allow_headers"] == ["*"]
-
-
-class TestCORSPreflight:
-    """Test CORS preflight (OPTIONS) behavior via ASGI transport."""
-
-    @pytest.mark.asyncio
-    async def test_preflight_options_ping_with_correct_origin(self, client):
-        """OPTIONS /ping with the allowed Origin returns 200 + CORS headers."""
-        response = await client.options(
-            "/ping",
-            headers={
-                "Origin": ALLOWED_ORIGIN,
-                "Access-Control-Request-Method": "GET",
-            },
-        )
-        assert response.status_code == 200
-
-        assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-        assert response.headers.get("access-control-allow-credentials") == "true"
-        assert "GET" in response.headers.get("access-control-allow-methods", "")
-
-    @pytest.mark.asyncio
-    async def test_preflight_options_ping_with_disallowed_origin(self, client):
-        """OPTIONS /ping with a disallowed Origin should NOT include CORS
-        allow-origin header."""
-        response = await client.options(
-            "/ping",
-            headers={
-                "Origin": "https://evil.example.com",
-                "Access-Control-Request-Method": "GET",
-            },
-        )
-        # The response will be 200 (endpoint itself works), but CORS headers
-        # should NOT set the Origin as allowed.
-        acao = response.headers.get("access-control-allow-origin")
-        assert acao != "https://evil.example.com", (
-            f"Disallowed origin should not be echoed: got {acao!r}"
-        )
-
-    @pytest.mark.asyncio
-    async def test_preflight_options_invocations_with_correct_origin(self, client):
-        """OPTIONS /invocations with the allowed Origin returns 200 +
-        CORS headers."""
-        response = await client.options(
-            "/invocations",
-            headers={
-                "Origin": ALLOWED_ORIGIN,
-                "Access-Control-Request-Method": "POST",
-                "Access-Control-Request-Headers": (
-                    "content-type,X-HW-AgentGateway-User-Id"
-                ),
-            },
-        )
-        assert response.status_code == 200
-        assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-        assert response.headers.get("access-control-allow-credentials") == "true"
-
-
-class TestCORSHeadersOnNormalRequests:
-    """Verify CORS headers appear on normal (non-preflight) requests."""
-
-    @pytest.mark.asyncio
-    async def test_get_ping_includes_cors_headers(self, client):
-        """GET /ping with allowed Origin returns Access-Control-Allow-Origin."""
-        response = await client.get(
-            "/ping",
-            headers={"Origin": ALLOWED_ORIGIN},
-        )
-        assert response.status_code == 200
-        assert response.json() == {"status": "ok"}
-        assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-        assert response.headers.get("access-control-allow-credentials") == "true"
-
-    @pytest.mark.asyncio
-    async def test_post_invocations_includes_cors_headers(self, client):
-        """POST /invocations with allowed Origin returns CORS headers."""
-        response = await client.post(
-            "/invocations",
-            json={"message": "Hello, assistant!"},
-            headers={
-                "Origin": ALLOWED_ORIGIN,
-                USER_ID_HEADER: "user-1",
-                SESSION_HEADER: "sess-test",
-            },
-        )
-        assert response.status_code == 200
-        assert response.headers.get("access-control-allow-origin") == ALLOWED_ORIGIN
-        assert response.headers.get("access-control-allow-credentials") == "true"
-
-    @pytest.mark.asyncio
-    async def test_get_ping_without_origin_header_omits_cors(self, client):
-        """GET /ping without any Origin header should NOT set allow-origin."""
-        response = await client.get("/ping")
-        assert response.status_code == 200
-        assert "access-control-allow-origin" not in response.headers, (
-            "Should NOT set CORS headers when no Origin is sent"
-        )
-
-
-class TestCORSEnvVar:
-    """Test CORS_ALLOWED_ORIGINS environment variable behavior (feature-12)."""
-
-    def test_cors_allowed_origins_from_env_var(self, monkeypatch):
-        """When CORS_ALLOWED_ORIGINS is set, use it as comma-separated list."""
-        import importlib
-
-        from app import main as app_main
-
-        monkeypatch.setenv(
-            "CORS_ALLOWED_ORIGINS",
-            "https://a.example.com,https://b.example.com",
-        )
-        importlib.reload(app_main)
-
-        try:
-            from fastapi.middleware.cors import CORSMiddleware
-
-            cors_mws = [
-                mw for mw in app_main.app.user_middleware if mw.cls is CORSMiddleware
-            ]
-            origins = cors_mws[0].kwargs["allow_origins"]
-            assert origins == ["https://a.example.com", "https://b.example.com"]
-        finally:
-            # Cleanup: reload without the env var to restore default state
-            monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
-            importlib.reload(app_main)
-
-    def test_cors_empty_env_var_behavior(self, monkeypatch):
-        """When CORS_ALLOWED_ORIGINS is set to empty string, falls back to defaults.
-
-        An empty string is falsy in Python, so the condition
-        ``if _env_origins`` evaluates to False and _default_origins is used.
-        This is safe — an empty env var means "not configured", same as absent.
-        """
-        import importlib
-
-        from app import main as app_main
-
-        monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "")
-        importlib.reload(app_main)
-
-        try:
-            from fastapi.middleware.cors import CORSMiddleware
-
-            cors_mws = [
-                mw for mw in app_main.app.user_middleware if mw.cls is CORSMiddleware
-            ]
-            origins = cors_mws[0].kwargs["allow_origins"]
-            # Empty string → falsy → falls back to default origins (same as unset)
-            assert ALLOWED_ORIGIN in origins, (
-                f"Empty CORS_ALLOWED_ORIGINS should fall back to defaults "
-                f"(containing {ALLOWED_ORIGIN!r}), got {origins!r}"
-            )
-            # Verify it does NOT accidentally allow all origins
-            assert "*" not in origins, (
-                f"Empty CORS_ALLOWED_ORIGINS must not produce wildcard, got {origins!r}"
-            )
-        finally:
-            monkeypatch.delenv("CORS_ALLOWED_ORIGINS", raising=False)
-            importlib.reload(app_main)
-
+# CORS intentionally absent: Web Chat uses the same-origin proxy topology.

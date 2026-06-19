@@ -1,5 +1,9 @@
 # ADR-005: 华为云 MaaS 作为 LLM 推理平台
 
+> **2026-06-19 修订**：Provider 选择和 Runtime 参数已迁移到 canonical
+> Pydantic Settings；API Key 由 AgentArts Identity 提供。本文中的
+> `config.yaml` / API-key environment variable 描述仅保留为历史背景。
+
 > 状态：Accepted (Amended by [ADR-011](ADR-011-multi-llm-provider.md)) | 日期：2026-06-03 | 修订：2026-06-07
 
 > **2026-06-07 修订**：ADR-011 引入多 LLM Provider 架构。MaaS 仍为默认/生产 provider，DeepSeek 官方作为备选 provider 共存。本 ADR 的"拒绝 DeepSeek 官方 API"改为"拒绝 DeepSeek 官方 API 作为**唯一** provider"。

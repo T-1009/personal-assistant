@@ -12,7 +12,9 @@ personal-assistant-service/
 │   ├── __init__.py          # Python 包标记
 │   ├── main.py              # FastAPI 应用入口 + 路由定义
 │   ├── agent_handler.py     # deepagents Agent 编排 + LLM 模型连接
-│   ├── llm_config.py        # LLM 多模型配置管理
+│   ├── settings.py          # typed Runtime Settings（内部读取实现）
+│   ├── provider_catalog.py  # 内置 LLM Provider metadata（非用户配置）
+│   ├── llm_config.py        # LLM 配置解析 + Identity credential 获取
 │   ├── auth.py              # Gateway 注入身份 header 提取
 │   ├── identity.py          # Outbound Identity provider 配置与辅助函数
 │   ├── logging_config.py    # 日志配置
@@ -38,7 +40,7 @@ personal-assistant-service/
 │   ├── test_tools_init.py   # 工具注册测试
 │   └── test_playground.py   # Chainlit Playground 测试
 ├── scripts/                 # 运维脚本（部署、冒烟测试等）
-├── config.yaml              # LLM Provider 配置（多 provider 声明式管理）
+├── .env.example             # 唯一面向使用者的 Service 配置入口
 ├── openapi.json             # OpenAPI 规范（自动生成）
 ├── pyproject.toml           # 项目元数据 + 依赖 (uv)
 ├── uv.lock                  # 确定性依赖锁定
@@ -61,7 +63,18 @@ personal-assistant-service/
 uv sync
 ```
 
-### 2. 配置 LLM 凭据
+### 2. 配置 Service
+
+所有 Service 配置从 `.env.example` 开始：
+
+```bash
+cp .env.example .env
+```
+
+本地开发填写 `.env`；生产环境在 AgentArts Runtime / CI/CD 注入同名环境变量。
+`app/settings.py` 是内部读取实现，不是需要修改的配置文件。
+
+### 3. 配置 LLM 凭据
 
 DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Identity 中创建 API key credential provider：
 
@@ -70,15 +83,18 @@ DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Ident
 | Provider name | `DEEPSEEK_API_KEY` |
 | Secret value | DeepSeek API key |
 
-`config.yaml` 保存默认模型元数据，`app.llm_config.get_model()` 会通过 AgentArts SDK `@require_api_key(provider_name="DEEPSEEK_API_KEY")` 获取密钥。`MODEL_NAME` / `MODEL_URL` 不是密钥，可作为部署期环境变量覆盖默认模型名和 API 地址。
+`.env` 中的 `LLM_CREDENTIAL_PROVIDER` 只保存 Provider name，不保存 API key。
+`app.llm_config.get_model()` 通过 AgentArts SDK 从 Identity 获取真实 credential。
+模型、Provider 和可选 endpoint override 分别使用 `LLM_MODEL`、`LLM_PROVIDER` 和
+`LLM_BASE_URL`。旧的 `MODEL_*` 环境变量不再支持。
 
-### 3. 启动服务
+### 4. 启动服务
 
 ```bash
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
-### 4. 打开浏览器
+### 5. 打开浏览器
 
 访问 `http://localhost:8080/invocations/playground` 进入 Chainlit 调试界面。API 端点见下方。
 

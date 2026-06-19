@@ -362,13 +362,18 @@ agents:
           enabled: false
 
       environment_variables:
-        - key: MODEL_API_KEY
-          value: "<MaaS API Key>"
-        - key: MODEL_NAME
-          value: "deepseek-v4-pro"
-        - key: MODEL_URL
-          value: "https://api.modelarts-maas.com/openai/v1"
+        - key: LOG_LEVEL
+          value: "${LOG_LEVEL}"
+        - key: LLM_PROVIDER
+          value: "${LLM_PROVIDER}"
+        - key: LLM_MODEL
+          value: "${LLM_MODEL}"
+        - key: LLM_CREDENTIAL_PROVIDER
+          value: "${LLM_CREDENTIAL_PROVIDER}"
 ```
+
+LLM API Key 不通过 Runtime environment variable 注入；Service 使用
+`LLM_CREDENTIAL_PROVIDER` 引用 AgentArts Identity 中的 API Key provider。
 
 ### 6.2 Runtime 特性
 

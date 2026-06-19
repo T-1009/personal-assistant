@@ -2,6 +2,10 @@
 
 > 状态：Accepted | 日期：2026-06-17
 
+> **2026-06-19 修订**：用户配置入口统一为 `.env.example`，Runtime 参数由
+> Pydantic Settings 管理，Provider metadata 位于 typed Python catalog。下文
+> `config.yaml` 和旧 Runtime variable 图示仅保留为历史背景。
+
 ---
 
 ## 背景
@@ -45,7 +49,7 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
                         │ @require_api_key / @require_access_token
                         ▼
 ┌─────────────────────────────────────────────────┐
-│  Layer 2: Code (config.yaml + Python)            │
+│  Layer 2: Code (typed Settings + Python catalog) │
 │  ┌─────────────────────────────────────────────┐ │
 │  │ credential_provider_name: DEEPSEEK_API_KEY   │ │
 │  │ base_url: https://api.deepseek.com           │ │
@@ -59,9 +63,8 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 ┌─────────────────────────────────────────────────┐
 │  Layer 3: CI/CD (GitHub Actions)                 │
 │  ┌─────────────────────────────────────────────┐ │
-│  │ .agentarts_config.yaml 的 env 只有:           │ │
-│  │   MODEL_NAME=deepseek-chat                   │ │
-│  │   MODEL_URL=https://api.deepseek.com          │ │
+│  │ .agentarts_config.yaml 只注入 canonical       │ │
+│  │ Runtime Settings，不包含 credential value     │ │
 │  │   （无 API Key）                              │ │
 │  └─────────────────────────────────────────────┘ │
 │  GitHub 完全不知道 API Key 是什么。                │
@@ -146,11 +149,11 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 
 | Provider Name | 类型 | 用途 | 配置位置 |
 |---------------|------|------|----------|
-| `DEEPSEEK_API_KEY` | API Key | DeepSeek LLM 推理 | `config.yaml` → `llm_config.py` |
+| `DEEPSEEK_API_KEY` | API Key provider name | DeepSeek LLM 推理 | `LLM_CREDENTIAL_PROVIDER` → `llm_config.py` |
 | `m365-provider` | OAuth2 | Microsoft 365 邮件/日历 | AgentArts Identity 平台 |
 | `github-provider` | OAuth2 | GitHub 仓库操作 | AgentArts Identity 平台 |
-| `gitee-provider` | OAuth2 | Gitee 仓库操作 | `config.yaml` identity 段 |
-| `iam-users-readonly` | STS | 华为云 IAM 只读 | `config.yaml` identity 段 |
+| `gitee-provider` | OAuth2 | Gitee 仓库操作 | `GITEE_PROVIDER_NAME` Setting |
+| `iam-users-readonly` | STS | 华为云 IAM 只读 | `IAM_USERS_PROVIDER_NAME` Setting |
 
 ## 参考
 

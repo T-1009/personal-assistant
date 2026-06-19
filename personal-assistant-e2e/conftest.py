@@ -16,8 +16,6 @@ import pytest
 # Project paths
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
-CONFIG_YAML = SERVICE_DIR / "config.yaml"
-CONFIG_YAML_BACKUP = SERVICE_DIR / "config.yaml.e2e-backup"
 
 # Add service directory to sys.path so that `from app.main import app` works
 # when pytest is invoked from the e2e directory or project root.
@@ -43,26 +41,22 @@ def service_venv_python() -> str:
     return sys.executable
 
 
-# ── Config file management ─────────────────────────────────────────────
-# NOTE: Config backup/restore is handled by the test file's manage_config
-# fixture. This conftest fixture is intentionally removed to avoid conflicts.
-
-
 # ── TestClient-based E2E fixtures ─────────────────────────────────────
 
 
 @pytest.fixture
 def clean_env(monkeypatch):
-    """Clear all LLM-related environment variables to ensure clean state."""
-    llm_vars = [
-        "MAAS_API_KEY",
-        "DEEPSEEK_API_KEY",
-        "MODEL_API_KEY",
-        "MODEL_NAME",
-        "MODEL_URL",
-    ]
-    for var in llm_vars:
+    """Clear canonical LLM Settings to ensure a deterministic default state."""
+    for var in (
+        "LLM_PROVIDER",
+        "LLM_MODEL",
+        "LLM_BASE_URL",
+        "LLM_CREDENTIAL_PROVIDER",
+    ):
         monkeypatch.delenv(var, raising=False)
+    from app.settings import get_settings
+
+    get_settings.cache_clear()
     return monkeypatch
 
 
@@ -79,9 +73,16 @@ def e2e_client(clean_env):
 
     # Default: mock init_chat_model to return a dummy model
     # Individual tests can override env vars before creating the client
-    with patch(
-        "app.llm_config.init_chat_model", return_value=MagicMock()
-    ) as mock_init:
+    with (
+        patch(
+            "app.llm_config._get_api_key_from_identity",
+            return_value="e2e-identity-key",
+        ),
+        patch(
+            "app.llm_config.init_chat_model",
+            return_value=MagicMock(),
+        ) as mock_init,
+    ):
         from app.main import app
         from fastapi.testclient import TestClient
 

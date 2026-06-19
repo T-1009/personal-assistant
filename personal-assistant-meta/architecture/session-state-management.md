@@ -130,14 +130,14 @@ class AgentHandler:
             checkpointer=self.checkpointer,  # ✅ 新增
         )
 
-    def _init_checkpointer(self):
-        """按环境变量选择 Checkpointer 后端（异步安全）。"""
-        if os.environ.get("POSTGRES_DSN"):
+    def _init_checkpointer(self, settings):
+        """通过 validated Settings 选择 Checkpointer 后端（异步安全）。"""
+        if settings.postgres_dsn:
             from langgraph.checkpoint.postgres import PostgresSaver
-            return PostgresSaver.from_conn_string(os.environ["POSTGRES_DSN"])
-        if os.environ.get("SQLITE_DB_PATH"):
+            return PostgresSaver.from_conn_string(settings.postgres_dsn)
+        if settings.sqlite_db_path:
             from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-            return AsyncSqliteSaver.from_conn_string(os.environ["SQLITE_DB_PATH"])
+            return AsyncSqliteSaver.from_conn_string(str(settings.sqlite_db_path))
         return InMemorySaver()  # 默认：进程内存（开发调试）
 
 # === 改动 2: handle() 传递 config ===
@@ -276,7 +276,7 @@ flowchart LR
 
 > **异步安全**：服务使用 `ainvoke()` / `astream_events()` 异步调用，必须使用异步 Checkpointer 变体（`AsyncSqliteSaver`、`AsyncPostgresSaver`）。`InMemorySaver` 本身 async-safe。同步版本（`SqliteSaver`）会阻塞 event loop。
 
-环境变量驱动切换：
+通过 `.env.example` 中的 canonical Settings 切换：
 
 ```bash
 # 本地开发（默认，重启丢失）

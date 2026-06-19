@@ -6,7 +6,6 @@ Tests the fail-closed security model:
 - extract_gateway_user_id function direct testing
 """
 
-import os
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -22,9 +21,6 @@ def auth_test_app():
     Mocks both init_chat_model (for lifespan) and AgentHandler (for requests),
     so the auth layer is tested without real LLM calls.
     """
-    # Dummy API key to prevent config loading errors
-    os.environ.setdefault("MAAS_API_KEY", "dummy-e2e-test-key")
-
     with patch("app.llm_config.init_chat_model", return_value=MagicMock()):
         from app.main import app
 

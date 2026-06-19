@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.agent_handler import AgentHandler
+from app.settings import Settings
 
 # ---------------------------------------------------------------------------
 # _build_config — thread_id construction
@@ -65,13 +66,7 @@ class TestBuildConfig:
 
 
 class TestInitCheckpointer:
-    """Tests for AgentHandler._init_checkpointer() env-var-driven selection."""
-
-    @pytest.fixture(autouse=True)
-    def clean_env(self, monkeypatch):
-        """Remove checkpointer-related env vars before each test."""
-        for key in ("POSTGRES_DSN", "SQLITE_DB_PATH"):
-            monkeypatch.delenv(key, raising=False)
+    """Tests for Settings-driven Checkpointer selection."""
 
     def _make_uninitialized_handler(self):
         """Create an AgentHandler instance bypassing __init__.
@@ -80,26 +75,25 @@ class TestInitCheckpointer:
         """
         return AgentHandler.__new__(AgentHandler)
 
-    def test_init_checkpointer_default_memory(self, monkeypatch):
-        """No env vars → returns InMemorySaver instance."""
+    def test_init_checkpointer_default_memory(self):
+        """No backend setting → returns InMemorySaver instance."""
         from langgraph.checkpoint.memory import InMemorySaver
 
-        # Ensure no env vars
-        monkeypatch.delenv("POSTGRES_DSN", raising=False)
-        monkeypatch.delenv("SQLITE_DB_PATH", raising=False)
-
         handler = self._make_uninitialized_handler()
-        result = handler._init_checkpointer()
+        result = handler._init_checkpointer(Settings(_env_file=None))
 
         assert isinstance(result, InMemorySaver), (
             f"Expected InMemorySaver, got {type(result).__name__}"
         )
 
-    def test_init_checkpointer_sqlite_from_env(self, monkeypatch):
-        """SQLITE_DB_PATH set → returns AsyncSqliteSaver instance."""
+    def test_init_checkpointer_sqlite_from_settings(self):
+        """SQLITE_DB_PATH setting → returns AsyncSqliteSaver instance."""
         from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
-        monkeypatch.setenv("SQLITE_DB_PATH", "/tmp/test-checkpoint.sqlite")
+        settings = Settings(
+            _env_file=None,
+            sqlite_db_path="/tmp/test-checkpoint.sqlite",
+        )
 
         # Patch from_conn_string to avoid actual SQLite connection
         with patch.object(AsyncSqliteSaver, "from_conn_string") as mock_from:
@@ -107,18 +101,19 @@ class TestInitCheckpointer:
             mock_from.return_value = mock_checkpointer
 
             handler = self._make_uninitialized_handler()
-            result = handler._init_checkpointer()
+            result = handler._init_checkpointer(settings)
 
             assert result is mock_checkpointer, (
                 f"Expected mocked AsyncSqliteSaver, got {type(result).__name__}"
             )
             mock_from.assert_called_once_with("/tmp/test-checkpoint.sqlite")
 
-    def test_init_checkpointer_postgres_takes_priority(self, monkeypatch):
-        """POSTGRES_DSN takes priority over SQLITE_DB_PATH."""
-
-        monkeypatch.setenv("POSTGRES_DSN", "postgresql://localhost/test")
-        monkeypatch.setenv("SQLITE_DB_PATH", "/tmp/test.sqlite")
+    def test_init_checkpointer_postgres_from_settings(self):
+        """POSTGRES_DSN setting selects PostgresSaver."""
+        settings = Settings(
+            _env_file=None,
+            postgres_dsn="postgresql://localhost/test",
+        )
 
         # PostgresSaver module is not installed — we expect an ImportError
         # that surfaces as ModuleNotFoundError (stub behavior).
@@ -126,7 +121,7 @@ class TestInitCheckpointer:
         handler = self._make_uninitialized_handler()
 
         with pytest.raises(ImportError) as exc_info:
-            handler._init_checkpointer()
+            handler._init_checkpointer(settings)
 
         assert "langgraph.checkpoint.postgres" in str(exc_info.value), (
             f"Expected PostgresSaver import error, got: {exc_info.value}"
@@ -243,9 +238,7 @@ class TestConfigPassing:
 
         events = [
             event
-            async for event in handler.handle_stream(
-                message="Test", session_id="s1"
-            )
+            async for event in handler.handle_stream(message="Test", session_id="s1")
         ]
         assert len(events) >= 2, f"Expected >= 2 events, got {len(events)}: {events}"
 
@@ -303,9 +296,7 @@ class TestContextRetention:
         mock_agent.ainvoke = AsyncMock(return_value={"messages": [mock_message]})
 
         # Session A
-        await handler.handle(
-            message="Hello", user_id="user-1", session_id="session-a"
-        )
+        await handler.handle(message="Hello", user_id="user-1", session_id="session-a")
         # Session B — same user, different session
         await handler.handle(
             message="Hello again", user_id="user-1", session_id="session-b"

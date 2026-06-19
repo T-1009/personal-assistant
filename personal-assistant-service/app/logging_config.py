@@ -8,37 +8,37 @@ is left untouched.
 
 import logging
 import logging.config
-import os
 
-LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+from app.settings import Settings, get_settings
 
 
-def configure() -> None:
+def configure(settings: Settings | None = None) -> None:
     """Apply logging configuration. Idempotent — safe for --reload."""
+    log_level = (settings or get_settings()).log_level
 
-    logging.config.dictConfig({
-        "version": 1,
-        "disable_existing_loggers": False,
-        "formatters": {
-            "default": {
-                "format": (
-                    "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-                ),
-                "datefmt": "%Y-%m-%d %H:%M:%S",
+    logging.config.dictConfig(
+        {
+            "version": 1,
+            "disable_existing_loggers": False,
+            "formatters": {
+                "default": {
+                    "format": ("%(asctime)s [%(levelname)s] %(name)s: %(message)s"),
+                    "datefmt": "%Y-%m-%d %H:%M:%S",
+                },
             },
-        },
-        "handlers": {
-            "console": {
-                "class": "logging.StreamHandler",
-                "stream": "ext://sys.stdout",
-                "formatter": "default",
+            "handlers": {
+                "console": {
+                    "class": "logging.StreamHandler",
+                    "stream": "ext://sys.stdout",
+                    "formatter": "default",
+                },
             },
-        },
-        "loggers": {
-            "app": {
-                "handlers": ["console"],
-                "level": LOG_LEVEL,
-                "propagate": False,
+            "loggers": {
+                "app": {
+                    "handlers": ["console"],
+                    "level": log_level,
+                    "propagate": False,
+                },
             },
-        },
-    })
+        }
+    )

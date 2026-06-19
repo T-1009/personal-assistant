@@ -70,7 +70,7 @@ flowchart TB
 | **Web 框架** | FastAPI | 统一管理所有路由，替代 AgentArtsRuntimeApp。详见 [ADR-004](ADR/ADR-004-fastapi-over-agentarts-runtime-app.md) |
 | **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills。详见 [ADR-009](ADR/ADR-009-deepagents.md) |
 | **Session State** | LangGraph Checkpoint | 短期会话状态持久化，keyed by `thread_id`，支持单 Session 多轮上下文保持和中断恢复。详见 [session-state-management.md](session-state-management.md) |
-| **LLM** | 多 Provider 可配置（MaaS / DeepSeek 官方） | `config.yaml` 声明 provider，`init_chat_model()` 统一调用。默认 MaaS，可按需切换。详见 ADR-005 + ADR-011 |
+| **LLM** | typed Settings + internal Provider catalog | `.env.example` 是唯一配置目录；Pydantic Settings 校验 Runtime 参数，credential 由 AgentArts Identity 提供。详见 ADR-011 |
 | **Runtime** | AgentArts Runtime | 容器化部署，ARM64 架构，cn-southwest-2 区域。详见 [ADR-003](ADR/ADR-003-agentarts-platform.md) |
 | **Memory** | AgentArts Memory SDK | 长期语义/偏好/情景记忆，跨 Session 持久化用户知识。与 Checkpoint 分工：Checkpoint 管短期会话状态，Memory 管长期用户知识。详见 [session-state-management.md](session-state-management.md) §2 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
@@ -387,7 +387,7 @@ AgentHandler 直接调用 deepagents 的 `.invoke()` 或 `.astream()`：
 class AgentHandler:
     def __init__(self):
         from app.llm_config import get_model
-        self.model = get_model()  # 默认使用 config.yaml 中 llm.default 指定的 provider
+        self.model = get_model()  # 使用 canonical Settings + Identity credential
         self.agent = create_deep_agent(
             model=self.model,
             system_prompt="你是 Personal Assistant...",
@@ -406,80 +406,40 @@ class AgentHandler:
 
 > 详细设计见 [ADR-011](ADR/ADR-011-multi-llm-provider.md)。
 
-### 6.1 配置结构
+### 6.1 唯一用户配置入口
 
-LLM Provider 通过项目根目录的 `config.yaml` 管理，支持多个 OpenAI-compatible provider 共存：
+Service 的所有可配置项从 `.env.example` 发现。本地复制为 `.env`，生产环境由
+AgentArts Runtime 或 CI/CD 注入同名环境变量。`app/settings.py` 使用 Pydantic
+Settings 进行类型转换、约束校验和 fail-fast；它是内部代码，不是第二配置入口。
 
-```yaml
-# config.yaml — LLM Provider 配置
-llm:
-  default: maas  # 默认 provider
-  providers:
-    maas:
-      base_url: https://api.modelarts-maas.com/openai/v1
-      api_key_env: MAAS_API_KEY  # 引用环境变量，不留明文密钥
-      model: deepseek-v4-pro
-    deepseek:
-      base_url: https://api.deepseek.com
-      api_key_env: DEEPSEEK_API_KEY
-      model: deepseek-chat
-```
+LLM canonical settings 包括 `LLM_PROVIDER`、`LLM_MODEL`、
+`LLM_CREDENTIAL_PROVIDER`、可选 `LLM_BASE_URL` 和 sampling/timeout 参数。
 
-### 6.2 配置加载模块
+### 6.2 Provider metadata 与 Secret
 
-`app/llm_config.py` 读取 `config.yaml` + 环境变量，暴露统一的 `get_model()` 接口：
+- `app/provider_catalog.py`：随代码 release 的 typed、非敏感 Provider metadata
+- `app/llm_config.py`：组合 Settings 与 catalog，暴露 `get_model()`
+- AgentArts Identity：保存并注入真实 API Key
 
-```python
-# app/llm_config.py
-import os
-import yaml
-from langchain.chat_models import init_chat_model
+`LLM_CREDENTIAL_PROVIDER` 只是 Identity provider name，不是 Secret value。
+Service 不从环境变量读取 LLM API Key。
 
-_config = None
-
-def _load_config():
-    global _config
-    if _config is None:
-        with open("config.yaml") as f:
-            _config = yaml.safe_load(f)
-    return _config
-
-def get_model(provider: str = None) -> BaseChatModel:
-    """获取 LLM model 实例。默认使用 llm.default 指定的 provider。"""
-    cfg = _load_config()
-    provider = provider or cfg["llm"]["default"]
-    p = cfg["llm"]["providers"][provider]
-    api_key = os.environ.get(p["api_key_env"])
-    if not api_key:
-        raise ValueError(
-            f"环境变量 {p['api_key_env']} 未设置，provider={provider} 不可用"
-        )
-    return init_chat_model(
-        model=f"openai:{p['model']}",
-        base_url=p["base_url"],
-        api_key=api_key,
-    )
-```
-
-### 6.3 与环境变量的关系
-
-| 变量 | 用途 | 必填 |
-|------|------|------|
-| `MAAS_API_KEY` | MaaS 平台 API Key | MaaS provider 使用时 |
-| `DEEPSEEK_API_KEY` | DeepSeek 官方 API Key | DeepSeek provider 使用时 |
-
-> `MODEL_URL` / `MODEL_API_KEY` / `MODEL_NAME`（旧版单一 provider 变量）仍被兼容读取，作为 `maas` provider 的 fallback。后续版本移除。
-
-### 6.4 Provider 选择逻辑
+### 6.3 配置加载逻辑
 
 ```mermaid
 flowchart TD
-    Start["AgentHandler 初始化"] --> LoadConfig["读取 config.yaml"]
-    LoadConfig --> GetProvider{"llm.default = ?"}
-    GetProvider -->|"maas"| MaaS["读 MAAS_API_KEY → init_chat_model('openai:deepseek-v4-pro', base_url='...maas...')"]
-    GetProvider -->|"deepseek"| DeepSeek["读 DEEPSEEK_API_KEY → init_chat_model('openai:deepseek-chat', base_url='...deepseek.com')"]
-    GetProvider -->|"未设置"| Error["启动失败，提示配置 llm.default"]
+    Entry[".env.example<br/>唯一配置目录"] --> Local[".env（本地）"]
+    Entry --> Runtime["Runtime env（生产）"]
+    Local --> Settings["Pydantic Settings"]
+    Runtime --> Settings
+    Catalog["typed Provider catalog"] --> Resolve["llm_config.get_model"]
+    Settings --> Resolve
+    Identity["AgentArts Identity API Key"] --> Resolve
+    Resolve --> Model["init_chat_model"]
 ```
+
+环境变量优先于 `.env`，`.env` 优先于字段默认值。Provider 未知、URL 非法或
+Persistence 配置冲突时，Service 在 startup 阶段失败。
 
 ---
 
@@ -638,12 +598,14 @@ agents:
         commands: []
 
       environment_variables:
-        - key: MAAS_API_KEY
-          value: "<MaaS API Key>"
-        - key: DEEPSEEK_API_KEY
-          value: "<DeepSeek 官方 API Key>"
-        - key: MEMORY_SPACE_ID
-          value: "<Memory Space ID>"
+        - key: LOG_LEVEL
+          value: "${LOG_LEVEL}"
+        - key: LLM_PROVIDER
+          value: "${LLM_PROVIDER}"
+        - key: LLM_MODEL
+          value: "${LLM_MODEL}"
+        - key: LLM_CREDENTIAL_PROVIDER
+          value: "${LLM_CREDENTIAL_PROVIDER}"
 
       tags:
         - key: app
@@ -679,13 +641,15 @@ curl -X POST https://<runtime-domain>/invocations \
 personal-assistant/
 ├── .agentarts_config.yaml          # AgentArts 部署配置（位于 personal-assistant-service/）
 ├── Dockerfile                       # ARM64 镜像（位于 personal-assistant-service/）
-├── config.yaml                      # LLM Provider 配置 ✅ 已实现
+├── .env.example                     # 唯一面向使用者的 Service 配置入口
 ├── pyproject.toml                   # Python 依赖 + ruff 配置（位于 personal-assistant-service/）
 ├── uv.lock                           # 确定性锁文件
 ├── app/                              # （位于 personal-assistant-service/）
 │   ├── main.py                      # FastAPI 应用入口 + 路由定义 ✅ 已实现
 │   ├── agent_handler.py             # Agent 处理逻辑（deepagents + ToolNode）✅ 已实现
-│   ├── llm_config.py                # LLM Provider 配置加载 ✅ 已实现
+│   ├── settings.py                  # typed Runtime Settings ✅ 已实现
+│   ├── provider_catalog.py          # 内置 Provider metadata ✅ 已实现
+│   ├── llm_config.py                # Settings + Identity → LLM model ✅ 已实现
 │   ├── auth.py                      # Inbound 认证中间件 ✅ 已实现
 │   ├── playground.py                # Chainlit Playground ✅ 已实现
 │   ├── memory.py                    # Memory 集成 [Planned — Feature 2]
