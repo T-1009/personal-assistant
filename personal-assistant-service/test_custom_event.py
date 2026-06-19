@@ -1,6 +1,8 @@
 import asyncio
+
 from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.runnables import RunnableLambda
+
 
 async def handle_auth_url(auth_url):
     print("handle_auth_url: Dispatching event...")
@@ -20,7 +22,7 @@ async def slow_auth_tool(x):
 
 async def main():
     runnable = RunnableLambda(slow_auth_tool)
-    
+
     async for event in runnable.astream_events("do it", version="v2"):
         kind = event["event"]
         name = event.get("name")

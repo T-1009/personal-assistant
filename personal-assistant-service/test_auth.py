@@ -1,14 +1,13 @@
 import asyncio
-from app.main import app
+
 from app.agent_handler import AgentHandler
-from unittest.mock import patch, MagicMock
-from app.tools import email_tools
+
 
 async def run_test():
     handler = AgentHandler()
     q = asyncio.Queue()
-    
-    # We want to mock out identity_client to immediately call on_auth_url 
+
+    # We want to mock out identity_client to immediately call on_auth_url
     # instead of doing a real request.
     from agentarts.sdk.service.identity.identity_client import IdentityClient
     original_get_token = IdentityClient.get_resource_oauth2_token

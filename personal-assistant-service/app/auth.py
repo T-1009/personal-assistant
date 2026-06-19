@@ -1,11 +1,10 @@
-from fastapi import HTTPException, Request
-
 from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 from agentarts.sdk.runtime.model import (
     ACCESS_TOKEN_HEADER,
     SESSION_HEADER,
     USER_ID_HEADER,
 )
+from fastapi import HTTPException, Request
 
 
 def extract_gateway_user_id(request: Request) -> str:
