@@ -237,47 +237,38 @@ class AgentHandler:
         return result["messages"][-1].content
 
     async def handle_stream(self, message: str, user_id: str,
-                            session_id: str = None,
-                            message_queue: "asyncio.Queue | None" = None):  # ✅ 新增 message_queue
-        """流式版本 — 逐 token yield，并 drain 带外消息 queue。
-
-        message_queue 用于 tool callback（如 handle_auth_url）向 SSE stream
-        注入非 LLM 事件（system_message），实现 OAuth2 鉴权 URL 的实时呈现。
-        详见 §5.2.1。
-        """
-        config = self._build_config(user_id, session_id)  # ✅ 新增
+                            session_id: str = None):
+        """通过 LangGraph messages/custom stream 输出 SSE。"""
+        config = self._build_config(user_id, session_id)
         try:
-            async for event in self.agent.astream_events(
+            async for mode, data in self.agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
-                version="v2",
-                config=config,  # ✅ 传递 config
+                stream_mode=["messages", "custom"],
+                config=config,
             ):
-                # Drain pending out-of-band messages from tool callbacks
-                if message_queue:
-                    while not message_queue.empty():
-                        msg = message_queue.get_nowait()
-                        yield f"data: {json.dumps({'system_message': msg['content'], 'auth_url': msg.get('auth_url'), 'auth_required': True})}\\n\\n"
+                if mode == "custom":
+                    event_name = (
+                        "auth_card"
+                        if isinstance(data, dict)
+                        and (data.get("auth_required") or data.get("auth_complete"))
+                        else None
+                    )
+                    prefix = f"event: {event_name}\\n" if event_name else ""
+                    yield f"{prefix}data: {json.dumps(data, ensure_ascii=False)}\\n\\n"
 
-                kind = event["event"]
-                if kind == "on_chat_model_stream":
-                    chunk = event["data"]["chunk"]
-                    token = chunk.content if hasattr(chunk, "content") else str(chunk)
+                elif mode == "messages":
+                    token_chunk, _metadata = data
+                    if getattr(token_chunk, "type", None) == "tool":
+                        continue
+                    token = getattr(token_chunk, "content", "") or ""
                     if token:
-                        yield f"data: {json.dumps({'token': token, 'done': False})}\\n\\n"
+                        payload = {"token": token, "done": False}
+                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\\n\\n"
 
-            # Drain any remaining messages after agent completes
-            if message_queue:
-                while not message_queue.empty():
-                    msg = message_queue.get_nowait()
-                    yield f"data: {json.dumps({'system_message': msg['content'], 'auth_url': msg.get('auth_url'), 'auth_required': True})}\\n\\n"
-
-            # Signal completion
             yield f"data: {json.dumps({'token': '', 'done': True})}\\n\\n"
 
-        finally:
-            # Clean up module-level queue reference to prevent stale references
-            from app.tools.email_tools import set_message_queue
-            set_message_queue(None)
+        except Exception as error:
+            yield f"data: {json.dumps({'error': str(error), 'done': True})}\\n\\n"
 ```
 
 ---
@@ -375,88 +366,85 @@ async def list_github_issues(owner: str, repo: str, access_token: str = None):
 
 ### 5.2.1 OAuth2 鉴权 URL 呈现（Out-of-Band 消息投递）
 
-当 `@require_access_token` 的 `on_auth_url` 回调被触发时（即用户尚未授权该 OAuth2 provider），需要将鉴权 URL **直接呈现给用户**，而非通过 LLM 转述。但该回调运行在 tool 执行内部、LLM 的 SSE token stream 之外。本系统通过 **shared `asyncio.Queue`** 实现带外消息投递：
+当 `@require_access_token` 的 `on_auth_url` callback 被触发时（即用户尚未授权
+该 OAuth2 provider），需要将授权 URL **直接呈现给用户**，而非通过 LLM
+转述。本系统使用 LangGraph 原生 `get_stream_writer()` 将事件写入 `custom`
+stream，`AgentHandler` 同时消费 `messages` 和 `custom` 两种 stream mode。
 
 ```mermaid
 sequenceDiagram
     participant User as 用户浏览器
     participant SSE as SSE Stream<br/>(handle_stream)
-    participant Agent as deepagents<br/>(astream_events)
+    participant Agent as deepagents<br/>(astream)
     participant Tool as email_tools
     participant CB as handle_auth_url<br/>(on_auth_url callback)
-    participant Q as asyncio.Queue<br/>(message_queue)
+    participant Writer as LangGraph<br/>stream writer
 
     User->>SSE: POST /invocations (stream: true)
-    SSE->>Agent: start astream_events task
+    SSE->>Agent: astream stream_mode=[messages, custom]
 
     Agent->>Tool: invoke tool (via ReAct loop)
     Tool->>CB: @require_access_token → on_auth_url(auth_url)
-    CB->>Q: put({type: "system_message", auth_url: "..."})
-    CB-->>Tool: return (normal control flow, no exception)
-    Tool-->>Agent: return _auth_required_response()
+    CB->>Writer: write(auth_required event)
+    Writer-->>SSE: custom event
+    SSE-->>User: event: auth_card<br/>data: auth_required + auth_url + provider
 
-    Agent-->>SSE: next astream_events event
+    Note over Tool: SDK poller 等待用户完成授权
+    Tool->>Writer: write(auth_complete event)
+    Writer-->>SSE: custom event
+    SSE-->>User: event: auth_card<br/>data: auth_complete + provider
 
-    SSE->>Q: drain pending messages
-    Q-->>SSE: system_message with auth_url
-    SSE-->>User: data: {"system_message": "...", "auth_url": "...", "auth_required": true}
-
-    Agent-->>SSE: on_chat_model_stream (LLM explains next steps)
+    Agent-->>SSE: messages stream (LLM token)
     SSE-->>User: data: {"token": "...", "done": false}
 ```
 
 **实现要点**：
 
-1. **Queue 注入**：`main.py` 在创建 SSE stream 时实例化 `asyncio.Queue`，通过 module-level setter 注入到 `email_tools.py`：
-   ```python
-   # main.py
-   message_queue = asyncio.Queue()
-   return StreamingResponse(
-       agent_handler.handle_stream(..., message_queue=message_queue),
-       media_type="text/event-stream",
-   )
-   ```
+1. **Callback 写入 custom stream**：`handle_auth_url` 从当前 LangGraph execution
+   context 获取 writer：
 
-2. **回调写入**：`handle_auth_url` 使用正常控制流（不抛异常），将鉴权 URL 写入 queue：
    ```python
-   # email_tools.py
    async def handle_auth_url(auth_url: str) -> None:
-       logger.info("User authorization required — auth URL: %s", auth_url)
-       if _message_queue is not None:
-           await _message_queue.put({
-               "type": "system_message",
-               "content": "邮件功能需要您的授权。请点击以下链接进行授权：\n\n{auth_url}\n\n授权完成后，请再次告诉我您需要做什么。",
-               "auth_url": auth_url,
-               "auth_required": True,
-           })
+       writer = get_stream_writer()
+       writer({
+           "type": "system_message",
+           "system_message": "邮件功能需要您的授权。请点击该链接进行授权：",
+           "auth_url": auth_url,
+           "auth_required": True,
+           "provider": "m365-provider-common",
+       })
    ```
 
-3. **SSE generator drain**：`handle_stream` 在每次 `astream_events` 迭代后 drain queue，yield 新的 SSE event type：
+2. **完成事件**：tool 获得 access token 后发送 provider-scoped
+   `auth_complete`。该事件表示 provider credential 当前可用；Client 仅在存在
+   相同 provider 的 pending Auth Card 时更新 UI：
+
    ```python
-   # agent_handler.py — handle_stream 扩展
-   async def handle_stream(self, message, user_id, session_id=None, message_queue=None):
-       # ... set module-level queue for callbacks ...
-       try:
-           async for event in self.agent.astream_events(...):
-               # Drain pending out-of-band messages from the queue
-               if message_queue:
-                   while not message_queue.empty():
-                       msg = message_queue.get_nowait()
-                       yield f"data: {json.dumps({'system_message': msg['content'], 'auth_url': msg.get('auth_url'), 'auth_required': True})}\n\n"
+   def _push_auth_complete(provider: str) -> None:
+       writer = get_stream_writer()
+       writer({
+           "type": "system_message",
+           "system_message": "授权已完成 ✅",
+           "auth_complete": True,
+           "provider": provider,
+       })
+   ```
 
-               kind = event["event"]
-               if kind == "on_chat_model_stream":
-                   # ... existing token streaming logic ...
+3. **Stream routing**：`handle_stream` 将 auth custom event 输出为 named
+   `auth_card` SSE；`messages` mode 只输出 LLM token，并过滤 ToolMessage：
 
-           # Drain any remaining messages after agent is done
-           if message_queue:
-               while not message_queue.empty():
-                   msg = message_queue.get_nowait()
-                   yield f"data: {json.dumps({'system_message': msg['content'], ...})}\n\n"
-
-           yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
-       finally:
-           set_message_queue(None)  # clean up module-level reference
+   ```python
+   async for mode, data in agent.astream(
+       input,
+       stream_mode=["messages", "custom"],
+       config=config,
+   ):
+       if mode == "custom":
+           yield f"event: auth_card\ndata: {json.dumps(data)}\n\n"
+       elif mode == "messages":
+           token_chunk, _metadata = data
+           if token_chunk.type != "tool":
+               yield token_sse(token_chunk.content)
    ```
 
 4. **Tool function guard**：各 tool function body 顶部添加正常控制流 guard，替代异常跳转：
@@ -472,11 +460,12 @@ sequenceDiagram
    ```
 
 **关键设计决策**：
-- Queue drain 采用 **polling 模式**（`queue.empty()` + `get_nowait()`）而非并发 `asyncio.wait`，因为 `handle_auth_url` 回调在 tool 执行期间调用，此时 `astream_events` 迭代器正在等待 tool 返回；tool 返回后下一次 `astream_events` 迭代必然触发 drain。无需额外并发原语。
+- 使用 LangGraph 原生 custom stream，不维护 module-level queue 或并发 drain
+  lifecycle。
 - 不使用 `@_handle_provider_error` 装饰器——正常的 Identity Service 错误（如 provider 未配置、500 内部错误）改为在各 tool function 顶部统一 guard 处理，不再需要包装层。
-- `AuthUrlRequired` 异常类被删除——鉴权 URL 通过 queue 直接推送给用户，不再作为异常抛出。
+- `AuthUrlRequired` 异常类被删除——鉴权 URL 通过 custom stream 直接推送给用户，不再作为异常抛出。
 
-<!-- updated by issue: refactor-email-auth-normal-control-flow -->
+<!-- updated by issues: refactor-email-auth-normal-control-flow, bug-16-auth-card-system-message-duplicated-in-chat -->
 
 ### 5.3 Sandbox（代码执行隔离）
 

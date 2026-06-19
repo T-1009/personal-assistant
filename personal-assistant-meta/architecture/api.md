@@ -11,11 +11,11 @@ FastAPI 容器之间的 API path 及映射关系。当前生产对话 API 最终
 ```mermaid
 flowchart LR
     subgraph Browser["Browser / Web Chat"]
-        Client["chat-adapter.ts<br/>POST /api/invocations"]
+        Client["chat-adapter.ts<br/>POST /invocations"]
     end
 
     subgraph Cloudflare["Cloudflare Pages"]
-        Function["Pages Function<br/>functions/api/invocations.js<br/>POST /api/invocations"]
+        Function["Pages Function<br/>functions/invocations.js<br/>POST /invocations"]
     end
 
     subgraph AgentArts["AgentArts"]
@@ -35,15 +35,15 @@ flowchart LR
 
 | 层 | Client 可见 URL/path | 上游目标 | 说明 |
 |----|----------------------|----------|------|
-| Web Chat | `POST /api/invocations` | Cloudflare Pages Function | `VITE_API_BASE_URL=/api`，`chat-adapter.ts` 再追加 `/invocations` |
-| Cloudflare Pages Function | `POST /api/invocations` | `https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations` | Function 文件路径 `functions/api/invocations.js` 自动映射为 URL path |
+| Web Chat | `POST /invocations` | Cloudflare Pages Function | Client 使用固定的 same-origin path |
+| Cloudflare Pages Function | `POST /invocations` | `https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/runtimes/personal-assistant/invocations` | Function 文件路径 `functions/invocations.js` 自动映射为 URL path |
 | AgentArts Gateway | `POST /runtimes/personal-assistant/invocations` | Runtime 容器 `:8080/invocations` | Gateway 使用完整 Runtime path 对外提供 ExecuteRuntime API |
 | FastAPI | `POST /invocations` | `AgentHandler` | `stream: true` 返回 SSE；否则返回 JSON |
 
 因此，以下三个 path 指向同一个对话能力，但分别属于不同网络边界：
 
 ```text
-Browser:           /api/invocations
+Browser:           /invocations
 AgentArts Gateway: /runtimes/personal-assistant/invocations
 FastAPI container: /invocations
 ```
@@ -52,18 +52,7 @@ FastAPI container: /invocations
 
 ### 2.1 URL 构造
 
-Production build 从 `personal-assistant-client/.env.production` 读取：
-
-```bash
-VITE_API_BASE_URL=/api
-```
-
-`chat-adapter.ts` 使用以下规则构造 URL：
-
-```text
-${VITE_API_BASE_URL}/invocations
-→ /api/invocations
-```
+`chat-api-client.ts` 固定使用 same-origin `POST /invocations`。
 
 Browser 与 Pages Function 使用相同 origin，因此该请求不会因为访问
 AgentArts Gateway 的跨域地址而产生 CORS preflight。
@@ -73,13 +62,13 @@ AgentArts Gateway 的跨域地址而产生 CORS preflight。
 Cloudflare Pages 按文件系统约定将：
 
 ```text
-functions/api/invocations.js
+functions/invocations.js
 ```
 
 映射为：
 
 ```text
-POST /api/invocations
+POST /invocations
 ```
 
 Function 不处理 Agent 业务，也不验证 JWT。它执行以下 Proxy 行为：
@@ -187,7 +176,7 @@ GET  http://localhost:8080/invocations/playground
 
 ### 4.2 Vite + 本地 FastAPI
 
-本地 `npm run dev` 时，`VITE_API_BASE_URL` 必须未设置或为空。Web Chat 请求：
+本地 `npm run dev` 时，Web Chat 请求：
 
 ```text
 http://localhost:5173/invocations
@@ -213,63 +202,28 @@ flowchart LR
     Vite -->|"same path + dev-user header"| FastAPI["FastAPI<br/>POST :8080/invocations"]
 ```
 
-> `personal-assistant-client/.env.example` 当前示例值为
-> `VITE_API_BASE_URL=/api`，该值适用于 Cloudflare Pages production 或
-> `wrangler pages dev`，不适用于只运行 `vite` 的本地 Proxy；仅运行
-> `npm run dev` 时应覆盖为空。
-
-### 4.3 Vite + Production Gateway
-
-设置 `PROXY_TARGET=prod` 且 `VITE_API_BASE_URL` 为空时，Browser 仍请求：
-
-```text
-/invocations
-```
-
-Vite Proxy 将其重写为：
-
-```text
-/runtimes/personal-assistant/invocations
-```
-
-并转发到 production Gateway origin。该模式用于本地前端联调 production
-Runtime，不经过 Cloudflare Pages Function。
-
-Vite 也配置了 `/invocations/playground` 的 production rewrite。由于
-production Gateway 使用 `PREFIX_MATCH`，该子路径可重写为：
-
-```text
-/runtimes/personal-assistant/invocations/playground
-```
-
-并转发到 production Runtime。Cloudflare Pages Function 当前没有对应
-`/api/invocations/playground` Function，因此 Cloudflare Pages origin 不暴露
-Playground。
-
 ## 5. Path 可达性矩阵
 
 | 场景 | Browser 请求 path | 中间映射 | 最终 FastAPI path | 当前可用 |
 |------|-------------------|----------|-------------------|----------|
-| Cloudflare production | `/api/invocations` | Pages Function → Gateway full Runtime path | `/invocations` | 是 |
-| Wrangler Pages local preview | `/api/invocations` | Local Pages Function → production Gateway | `/invocations` | 是，需要有效 JWT |
+| Cloudflare production | `/invocations` | Pages Function → Gateway full Runtime path | `/invocations` | 是 |
+| Wrangler Pages local preview | `/invocations` | Local Pages Function → production Gateway | `/invocations` | 是，需要有效 JWT |
 | Vite + local Backend | `/invocations` | Vite Proxy → `localhost:8080` | `/invocations` | 是 |
-| Vite + production Gateway | `/invocations` | Vite rewrite → full Runtime path | `/invocations` | 是，需要有效 JWT |
 | Backend direct local | `/invocations` | 无 | `/invocations` | 是 |
 | Backend Playground local | `/invocations/playground` | 无 | `/invocations/playground` | 是 |
 | Gateway direct invocation | `/runtimes/personal-assistant/invocations` | Gateway | `/invocations` | 是，需要有效 JWT |
 | Gateway direct `/invocations` | `/invocations` | 无匹配 policy | — | 否 |
 | Gateway direct Playground | `/runtimes/personal-assistant/invocations/playground` | Gateway `PREFIX_MATCH` | `/invocations/playground` | 是，需要有效 JWT |
-| Cloudflare Pages Playground | `/api/invocations/playground` | 无对应 Pages Function | — | 否 |
+| Cloudflare Pages Playground | `/invocations/playground` | 无对应 Pages Function | — | 否 |
 | Public `/ping` through Gateway | `/runtimes/personal-assistant/ping` | 无匹配 policy | — | 否 |
 
 ## 6. Source of truth 与已知不一致
 
 当前 path 映射以以下实现文件为准：
 
-- Frontend URL 构造：`personal-assistant-client/src/lib/chat-adapter.ts`
+- Frontend URL 构造：`personal-assistant-client/src/lib/chat/chat-api-client.ts`
 - Vite Proxy：`personal-assistant-client/vite.config.ts`
-- Cloudflare Pages Function：`personal-assistant-client/functions/api/invocations.js`
-- Production build 环境变量：`personal-assistant-client/.env.production`
+- Cloudflare Pages Function：`personal-assistant-client/functions/invocations.js`
 - FastAPI routes：`personal-assistant-service/app/main.py`
 
 `personal-assistant-service/openapi.json` 是由当前 FastAPI app 自动生成的

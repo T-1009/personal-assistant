@@ -34,53 +34,53 @@ flowchart LR
 
 ### 2.1 Web Chat
 
-**接入方式**：浏览器直连 FastAPI `/chat/stream`（SSE）和 `/auth/callback`（OAuth）
+**接入方式**：React SPA 通过 same-origin `POST /invocations` 调用
+Cloudflare Pages Function，由 Function 转发至 AgentArts Gateway 的
+`POST /invocations`。请求 body 使用 `stream: true`，响应为 SSE。
 
 ```mermaid
 sequenceDiagram
     actor User as 用户
     participant Browser as 浏览器
-    participant FastAPI as FastAPI :8080
-    participant Microsoft as Microsoft Entra ID
+    participant Entra as Microsoft Entra ID
+    participant Proxy as Cloudflare Pages Function
+    participant Gateway as AgentArts Gateway
+    participant FastAPI as FastAPI
 
-    Note over User,Microsoft: === 登录 ===
-    User->>Browser: 打开 /chat
-    Browser->>FastAPI: GET /chat
-    FastAPI-->>Browser: 重定向 Microsoft Entra ID
-    Browser->>Microsoft: 授权
-    Microsoft-->>Browser: code → /auth/callback
-    Browser->>FastAPI: GET /auth/callback?code=xxx
-    FastAPI-->>Browser: Set-Cookie + Chat UI
+    Note over User,Entra: === 登录 ===
+    User->>Browser: 打开 Web Chat
+    Browser->>Entra: MSAL redirect login
+    Entra-->>Browser: redirect response
+    Browser->>Browser: MSAL 获取并缓存 ID Token
 
-    Note over User,Microsoft: === 对话 ===
+    Note over User,FastAPI: === 对话 ===
     User->>Browser: 输入消息
-    Browser->>FastAPI: GET /chat/stream?q=...
-    FastAPI-->>Browser: SSE: data: token...\n\n
+    Browser->>Proxy: POST /invocations<br/>Authorization + Session ID
+    Proxy->>Gateway: POST Runtime /invocations
+    Gateway->>FastAPI: JWT 验证后转发
+    FastAPI-->>Gateway: SSE events
+    Gateway-->>Proxy: SSE ReadableStream
+    Proxy-->>Browser: 透明流式透传
     Browser-->>User: 逐字渲染
 ```
 
 | 维度 | 说明 |
 |------|------|
-| **协议** | SSE (Server-Sent Events) 流式推送 |
-| **认证** | Microsoft Entra ID → JWT Cookie。详见 [ADR-007](ADR/ADR-007-identity-provider.md) |
-| **路由** | `/chat/stream`, `/auth/callback` |
+| **协议** | `POST /invocations` + `{"stream": true}`，响应为 SSE |
+| **认证** | MSAL SPA 登录 Microsoft Entra ID；ID Token 存于 Zustand，并通过 `Authorization: Bearer` 发送。详见 [ADR-007](ADR/ADR-007-identity-provider.md) |
+| **路由** | Browser 与 Runtime 均为 `/invocations` |
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
-| **技术栈** | Vite + React + TypeScript + Tailwind CSS，assistant-ui AI Chat 组件库（含 `@assistant-ui/react-ai-sdk`）。详见 [ADR-013](ADR/ADR-013-assistant-ui-chat-library.md) |
-| **SSE 事件类型** | `token`（LLM 流式 token）、`done`（流结束）、`error`（错误）、`system_message`（带外系统消息，如 OAuth2 鉴权 URL）。详见 §2.1.4 |
+| **技术栈** | Vite + React 19 + TypeScript + Tailwind CSS + assistant-ui + Zustand。详见 [ADR-013](ADR/ADR-013-assistant-ui-chat-library.md) |
+| **SSE 事件类型** | `token`、`done`、`error`、`system_message`、`auth_required`、`auth_complete`。详见 §2.1.4 |
 
-**OAuth 前后端职责分离**：token 交换必须在后端，因为 client_secret 不能暴露在前端浏览器中。
+**Inbound Auth 与 Outbound Auth 分离**：
 
-```
-前端（浏览器）                    后端（FastAPI）
-─────────────────                ─────────────────
-● 发起登录跳转                    ● 接收 code
-  (只需 client_id)               ● code + client_secret → access_token
-● 携带 Cookie 发请求              ● token → 用户信息 (Graph /me)
-● 无感知 token 细节               ● 设 Cookie，302 跳回 /chat
-```
-
-`/auth/callback` 路由实现约 30 行代码，不额外引入 BFF 或独立认证服务。
+- Inbound Auth（用户登录 Web Chat）由 Browser 内的 MSAL SPA 完成，不使用后端
+  `/auth/callback` 或 JWT Cookie。
+- Outbound Auth（Agent 调用 Microsoft 365）由 AgentArts Identity SDK 管理。
+  Web Chat 只负责展示 SDK 产生的 Auth Card，不接触 Microsoft Graph access
+  token。
 
 #### 2.1.1 Chainlit Playground（调试工具）
 
@@ -104,10 +104,10 @@ FastAPI 容器 :8080
 | **语言** | Python，与后端同一进程，零构建 |
 | **LangChain 集成** | 原生 `@cl.on_chat_start` + LangChain callback，直接观察 Agent 推理步骤 |
 | **流式** | 内置 `cl.Message.stream_token()` |
-| **路径** | `/invocations/playground` — 避免与 `/chat`（未来 OAuth 登录后的用户入口）冲突 |
+| **路径** | `/invocations/playground` — 与生产 Web Chat SPA 分离 |
 | **生命周期** | 与项目长期共存。开发阶段快速验证 Agent 链路，生产环境保留给运维调试 |
 
-Chainlit 与 Web Chat 共享同一 FastAPI 进程内的 `agent_handler`，只是接入的 UI 层不同：Web Chat 走 SSE + assistant-ui（React，独立部署于 OBS），Playground 走 Chainlit 的 WebSocket 协议（Python 原生，同容器）。
+Chainlit 与 Web Chat 共享同一 FastAPI 进程内的 `agent_handler`，只是接入的 UI 层不同：Web Chat 走 SSE + assistant-ui（React，独立部署于 Cloudflare Pages），Playground 走 Chainlit 的 WebSocket 协议（Python 原生，同容器）。
 
 #### 2.1.2 本地开发与网关模拟（Vite Proxy）
 
@@ -208,65 +208,84 @@ flowchart TB
 
 **设计系统依据**：[`DESIGN.md`](../../personal-assistant-client/DESIGN.md)
 
-> **注意**：本节 §2.1 描述的 OAuth callback / JWT Cookie 认证模式反映的是早期后端驱动的 auth 流程，与当前 MSAL-based SPA 认证（`@azure/msal-react` redirect + zustand token store）不一致。应在 follow-up issue 中更新 §2.1 以反映当前的 MSAL + zustand 架构。
-
 #### 2.1.4 SSE 事件协议
 
-Web Chat 与后端通过 SSE (Server-Sent Events) 进行流式通信。后端 `handle_stream` 在 `astream_events` 迭代过程中 yield 以下事件类型：
+Web Chat 通过 `POST /invocations` 发起请求，Pages Function 将
+AgentArts Gateway 返回的 SSE `ReadableStream` 透明传回 Browser。Service 的
+`handle_stream` 使用 LangGraph `stream_mode=["messages", "custom"]` 产生以下
+事件：
 
 | 事件字段 | 类型 | 说明 | 示例 |
 |----------|------|------|------|
 | `token` | `string` | LLM 流式输出的单个 token | `{"token": "你好", "done": false}` |
 | `done` | `boolean` | 流结束标记。`done: true` 表示 agent 推理完成 | `{"token": "", "done": true}` |
 | `error` | `string` | 流式过程中发生的异常（exception handler yield） | `{"error": "...", "done": true}` |
-| `system_message` | `string` | **带外系统消息**（Tool callback 通过 shared queue 注入，非 LLM 输出） | 见下方 |
-| `auth_url` | `string` | OAuth2 鉴权 URL（与 `system_message` 同时出现） | `{"system_message": "...", "auth_url": "https://...", "auth_required": true}` |
-| `auth_required` | `boolean` | 标记该 system_message 为 OAuth2 鉴权请求 | `true` |
+| `system_message` | `string` | 非 LLM 的带外系统消息；auth 事件中作为 Auth Card 文案 | `"邮件功能需要您的授权..."` |
+| `auth_url` | `string` | Outbound OAuth2 授权 URL | `"https://..."` |
+| `auth_required` | `boolean` | 标记需要显示 pending Auth Card | `true` |
+| `auth_complete` | `boolean` | 标记 provider 的凭据当前可用；仅更新匹配的 pending Auth Card | `true` |
+| `provider` | `string` | Auth Card 与完成事件的关联键 | `"m365-provider-common"` |
 
-**`system_message` 事件的产生机制**：
+**Outbound OAuth 事件流**：
 
-当 `@require_access_token` 装饰器的 `on_auth_url` 回调被触发时（用户尚未授权 OAuth2 provider），`handle_auth_url` 回调通过 shared `asyncio.Queue` 将鉴权 URL 写入 queue。`handle_stream` 在 `astream_events` 迭代间隙 drain queue 并 yield `system_message` 事件，使前端可以**不经过 LLM 转述**直接向用户呈现鉴权链接。
+当 `@require_access_token` 的 `on_auth_url` callback 触发时，
+`handle_auth_url` 使用 LangGraph `get_stream_writer()` 写入
+`auth_required` custom event。SDK 内部 poller 等待用户完成授权；tool 获取
+access token 后发送 `auth_complete` custom event。
 
 ```mermaid
 sequenceDiagram
-    participant Backend as handle_stream
-    participant Q as asyncio.Queue
-    participant Frontend as chat-adapter.ts
+    participant Tool as Email Tool / SDK
+    participant Stream as LangGraph custom stream
+    participant Adapter as Chat Adapter
+    participant Store as Auth Card Store
 
-    Note over Backend,Q: Tool callback 写入 system_message 到 queue
-    Q->>Backend: drain queue → get system_message
+    Tool->>Stream: auth_required + auth_url + provider
+    Stream->>Adapter: named auth_card SSE
+    Adapter->>Store: setAuth(messageId, provider, URL, message)
+    Note over Store: pending Auth Card 显示
 
-    Backend->>Frontend: data: {"system_message": "邮件功能需要您的授权...", "auth_url": "https://...", "auth_required": true}
-
-    Note over Frontend: 识别 auth_required → 在聊天界面渲染授权卡片/链接
+    Tool->>Stream: auth_complete + provider
+    Stream->>Adapter: named auth_card SSE
+    Adapter->>Store: setAuthComplete(provider)
+    Note over Store: provider 匹配时 Card 转为绿色
 ```
 
-**前端处理**（`chat-adapter.ts`）：
+Auth 事件拥有专用 UI channel，因此其 `system_message` **不得**追加到普通
+assistant message text。普通非 auth `system_message` 仍追加到聊天正文。Service
+可以在每次取得 access token 后发送 `auth_complete`；若 Client 没有相同
+`provider` 的 pending Card，Store 会幂等忽略该事件。
 
-```typescript
-// SSEEvent type 扩展
-export interface SSEEvent {
-  token?: string;
-  done?: boolean;
-  error?: string;
-  system_message?: string;    // 新增
-  auth_url?: string;           // 新增
-  auth_required?: boolean;     // 新增
-}
+#### 2.1.5 Chat Adapter 模块边界
 
-// chat-adapter.ts 处理逻辑
-if (parsed.system_message) {
-  // 将 system_message 作为 assistant 消息渲染到聊天流中
-  // 若 parsed.auth_required 为 true，可渲染为特殊的授权卡片组件
-  yield {
-    content: [{ type: "text", text: parsed.system_message }],
-  };
-}
+`assistant-ui` 通过 `RuntimeProvider` 注册 `chatAdapter`。Adapter 只负责流程
+编排，HTTP、协议解析和业务事件分发按职责拆分：
+
+```mermaid
+flowchart LR
+    Runtime["assistant-ui Runtime"] --> Adapter["chat-adapter.ts<br/>流程编排"]
+    Adapter --> API["chat/chat-api-client.ts<br/>HTTP + token refresh"]
+    API --> JWT["chat/jwt.ts<br/>JWT claims"]
+    API --> Session["chat/session.ts<br/>Session ID"]
+    Adapter --> Parser["chat/sse-parser.ts<br/>ReadableStream → SSEEvent"]
+    Parser --> Handler["chat/chat-event-handler.ts<br/>事件归约与分发"]
+    Handler --> Result["ChatModelRunResult"]
+    Handler --> AuthStore["Auth Card Store"]
 ```
 
-> **设计决策**：`system_message` 通过 SSE 的 `data:` 行内嵌 JSON 传递，复用现有 SSE 协议框架，不需要新增 WebSocket 或 EventSource channel。详见 [backend_architecture.md §5.2.1](../architecture/backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递)。
+| 模块 | 稳定职责 |
+|------|----------|
+| `chat-adapter.ts` | 提取最后一条用户消息，编排 invoke/parse/handle，向 assistant-ui yield |
+| `chat-api-client.ts` | 构造请求 header/body、proactive refresh、401/403 retry、HTTP error |
+| `sse-parser.ts` | 处理 stream chunk、CRLF normalization、`data:` line 和 JSON decode |
+| `chat-event-handler.ts` | 累积 token，区分普通 system message 与 auth event，更新 Auth Card Store |
+| `session.ts` | `localStorage` Session ID persistence 与 reset |
+| `jwt.ts` | base64url JWT payload decode、`sub/oid` 和 `exp` 提取 |
 
-<!-- updated by issue: refactor-email-auth-normal-control-flow -->
+该分层保持 `chatAdapter` 的公共 API 不变，不引入额外 networking library 或
+event bus。
+
+<!-- updated by issues: refactor-email-auth-normal-control-flow, bug-16-auth-card-system-message-duplicated-in-chat, refactor-9-modularize-chat-adapter -->
 
 ### 2.2 飞书直连
 
@@ -386,7 +405,7 @@ flowchart LR
 #### 当前配置：Cloudflare Pages + Same-Origin API Proxy
 
 Web Chat 前端部署在 Cloudflare Pages。Client 请求 same-origin
-`/api/invocations`，Pages Function 将请求转发到 AgentArts Gateway 的完整
+`/invocations`，Pages Function 将请求转发到 AgentArts Gateway 的完整
 Runtime path。详见
 [ADR-017](ADR/ADR-017-cloudflare-pages-proxy.md)。
 
@@ -395,14 +414,14 @@ Production URL：`https://agentarts-personal-assistant.pages.dev`
 ```mermaid
 flowchart LR
     Browser["Browser"] -->|"Load SPA"| Pages["Cloudflare Pages"]
-    Browser -->|"POST /api/invocations"| Function["Pages Function"]
+    Browser -->|"POST /invocations"| Function["Pages Function"]
     Function -->|"Authenticated POST"| Gateway["AgentArts Gateway<br/>full Runtime path"]
     Gateway --> FastAPI["FastAPI /invocations"]
 ```
 
 | 维度 | 说明 |
 |------|------|
-| **同源** | SPA 与 `/api/invocations` 使用同一 Pages origin，不触发 CORS preflight |
+| **同源** | SPA 与 `/invocations` 使用同一 Pages origin，不触发 CORS preflight |
 | **认证** | Browser 发送 Microsoft JWT，Gateway 通过 `CUSTOM_JWT` 验证 |
 | **Streaming** | Pages Function 透明透传 Gateway SSE `ReadableStream` |
 
@@ -410,12 +429,12 @@ flowchart LR
 
 Web Chat 独立部署于 Cloudflare Pages，不打包进 FastAPI container。Vite
 production build 由 Pages 托管，Pages Function 接收 same-origin
-`POST /api/invocations` 并转发到 AgentArts Gateway。
+`POST /invocations` 并转发到 AgentArts Gateway。
 
 ```mermaid
 flowchart LR
     Browser["Browser"] -->|"GET /"| Pages["Cloudflare Pages"]
-    Browser -->|"POST /api/invocations"| Function["Pages Function"]
+    Browser -->|"POST /invocations"| Function["Pages Function"]
     Function -->|"JWT + session header"| Gateway["AgentArts Gateway"]
     Gateway -->|"SSE"| Function
     Function -->|"SSE"| Browser
@@ -469,6 +488,6 @@ sequenceDiagram
 | LLM API 连通性 | ❌ | ✅ |
 | SSE 流式中间件正常 | ❌ | ✅ |
 | Memory / Identity SDK 可用 | ❌ | ✅ |
-| OAuth Cookie / JWT 验证链路 | ❌ | ✅（带 token） |
+| Microsoft JWT / Gateway 验证链路 | ❌ | ✅（带 token） |
 
 **实现建议**：在 AgentArts 或 K8s 的 readiness probe 中配置直连容器的聊天式检查（绕过 CDN），间隔可设长一些（如 5 分钟），因为 LLM 调用有成本。`/ping` 仍用于高频 liveness check（30 秒）。

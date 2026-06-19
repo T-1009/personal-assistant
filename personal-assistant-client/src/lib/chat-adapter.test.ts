@@ -116,20 +116,6 @@ describe("chatAdapter", () => {
       );
     });
 
-    it("builds URL with empty baseUrl when VITE_API_BASE_URL is unset", async () => {
-      const mockFetch = vi.fn().mockResolvedValue({
-        ok: true,
-        body: createMockStream([]),
-      });
-      globalThis.fetch = mockFetch as unknown as typeof fetch;
-
-      await collectResults("test");
-
-      expect(mockFetch).toHaveBeenCalledTimes(1);
-      const url = mockFetch.mock.calls[0][0] as string;
-      expect(url).toBe("/invocations");
-    });
-
     it("sends streaming headers and excludes Authorization when idToken is null", async () => {
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,

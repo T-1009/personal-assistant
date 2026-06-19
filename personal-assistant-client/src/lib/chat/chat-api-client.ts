@@ -3,8 +3,6 @@ import { useAuthStore } from "@/stores/auth-store";
 import { extractUserIdFromToken, isTokenExpiringSoon } from "./jwt";
 import { getSessionId } from "./session";
 
-const baseUrl = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
-
 function applyTokenHeaders(
   headers: Record<string, string>,
   idToken: string,
@@ -33,7 +31,7 @@ function sendChatRequest(
   abortSignal: AbortSignal,
   headers: Record<string, string>,
 ): Promise<Response> {
-  return fetch(`${baseUrl}/invocations`, {
+  return fetch("/invocations", {
     method: "POST",
     headers,
     body: JSON.stringify({ message: query, stream: true }),

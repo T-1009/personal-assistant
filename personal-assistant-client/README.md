@@ -32,7 +32,7 @@ personal-assistant-client/
 │   ├── index.css                     # Tailwind 入口 + 自定义动画
 │   └── vite-env.d.ts                # Vite 类型声明
 ├── functions/
-│   └── api/invocations.js           # Cloudflare Pages Function，透传 JWT + SSE
+│   └── invocations.js               # Cloudflare Pages Function，透传 JWT + SSE
 ├── index.html                     # Vite 入口 HTML
 ├── vite.config.ts                 # Vite 配置（代理 + React 插件 + Tailwind CSS）
 ├── wrangler.toml                  # Cloudflare Pages 项目配置
@@ -62,8 +62,8 @@ npm ci
 npm run dev
 ```
 
-开发服务器默认监听 `http://localhost:5173`，`/invocations` 请求通过 Vite
-proxy 转发到 FastAPI（`http://localhost:8080`）。
+开发服务器默认监听 `http://localhost:5173`，`/invocations` 请求通过
+Vite proxy 转发到 FastAPI（`http://localhost:8080`）。
 
 确保后端服务已启动：
 
@@ -185,7 +185,7 @@ npm run test:watch
   │  ├─ LoginPlaceholder│                                    │
   │  └─ assistant-ui runtime ─┘── fetch POST + SSE ───────→ /invocations
   │
-  └── 生产模式 ── Cloudflare Pages ── /api/invocations Function ──→ AgentArts Gateway
+  └── 生产模式 ── Cloudflare Pages ── /invocations Function ──→ AgentArts Gateway
 ```
 
 ## SSE 协议
