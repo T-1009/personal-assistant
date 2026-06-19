@@ -34,7 +34,7 @@ flowchart LR
 
 ### 2.1 Web Chat
 
-**接入方式**：React SPA 通过 same-origin `POST /api/invocations` 调用
+**接入方式**：React SPA 通过 same-origin `POST /invocations` 调用
 Cloudflare Pages Function，由 Function 转发至 AgentArts Gateway 的
 `POST /invocations`。请求 body 使用 `stream: true`，响应为 SSE。
 
@@ -55,7 +55,7 @@ sequenceDiagram
 
     Note over User,FastAPI: === 对话 ===
     User->>Browser: 输入消息
-    Browser->>Proxy: POST /api/invocations<br/>Authorization + Session ID
+    Browser->>Proxy: POST /invocations<br/>Authorization + Session ID
     Proxy->>Gateway: POST Runtime /invocations
     Gateway->>FastAPI: JWT 验证后转发
     FastAPI-->>Gateway: SSE events
@@ -68,7 +68,7 @@ sequenceDiagram
 |------|------|
 | **协议** | `POST /invocations` + `{"stream": true}`，响应为 SSE |
 | **认证** | MSAL SPA 登录 Microsoft Entra ID；ID Token 存于 Zustand，并通过 `Authorization: Bearer` 发送。详见 [ADR-007](ADR/ADR-007-identity-provider.md) |
-| **路由** | Browser：`/api/invocations`；Runtime：`/invocations` |
+| **路由** | Browser 与 Runtime 均为 `/invocations` |
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
 | **技术栈** | Vite + React 19 + TypeScript + Tailwind CSS + assistant-ui + Zustand。详见 [ADR-013](ADR/ADR-013-assistant-ui-chat-library.md) |
@@ -210,7 +210,7 @@ flowchart TB
 
 #### 2.1.4 SSE 事件协议
 
-Web Chat 通过 `POST /api/invocations` 发起请求，Pages Function 将
+Web Chat 通过 `POST /invocations` 发起请求，Pages Function 将
 AgentArts Gateway 返回的 SSE `ReadableStream` 透明传回 Browser。Service 的
 `handle_stream` 使用 LangGraph `stream_mode=["messages", "custom"]` 产生以下
 事件：
@@ -405,7 +405,7 @@ flowchart LR
 #### 当前配置：Cloudflare Pages + Same-Origin API Proxy
 
 Web Chat 前端部署在 Cloudflare Pages。Client 请求 same-origin
-`/api/invocations`，Pages Function 将请求转发到 AgentArts Gateway 的完整
+`/invocations`，Pages Function 将请求转发到 AgentArts Gateway 的完整
 Runtime path。详见
 [ADR-017](ADR/ADR-017-cloudflare-pages-proxy.md)。
 
@@ -414,14 +414,14 @@ Production URL：`https://agentarts-personal-assistant.pages.dev`
 ```mermaid
 flowchart LR
     Browser["Browser"] -->|"Load SPA"| Pages["Cloudflare Pages"]
-    Browser -->|"POST /api/invocations"| Function["Pages Function"]
+    Browser -->|"POST /invocations"| Function["Pages Function"]
     Function -->|"Authenticated POST"| Gateway["AgentArts Gateway<br/>full Runtime path"]
     Gateway --> FastAPI["FastAPI /invocations"]
 ```
 
 | 维度 | 说明 |
 |------|------|
-| **同源** | SPA 与 `/api/invocations` 使用同一 Pages origin，不触发 CORS preflight |
+| **同源** | SPA 与 `/invocations` 使用同一 Pages origin，不触发 CORS preflight |
 | **认证** | Browser 发送 Microsoft JWT，Gateway 通过 `CUSTOM_JWT` 验证 |
 | **Streaming** | Pages Function 透明透传 Gateway SSE `ReadableStream` |
 
@@ -429,12 +429,12 @@ flowchart LR
 
 Web Chat 独立部署于 Cloudflare Pages，不打包进 FastAPI container。Vite
 production build 由 Pages 托管，Pages Function 接收 same-origin
-`POST /api/invocations` 并转发到 AgentArts Gateway。
+`POST /invocations` 并转发到 AgentArts Gateway。
 
 ```mermaid
 flowchart LR
     Browser["Browser"] -->|"GET /"| Pages["Cloudflare Pages"]
-    Browser -->|"POST /api/invocations"| Function["Pages Function"]
+    Browser -->|"POST /invocations"| Function["Pages Function"]
     Function -->|"JWT + session header"| Gateway["AgentArts Gateway"]
     Gateway -->|"SSE"| Function
     Function -->|"SSE"| Browser

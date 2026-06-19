@@ -17,7 +17,7 @@ flowchart TB
         OC["OfficeClaw<br/>桌面客户端"]
     end
 
-    PagesFunction["Cloudflare Pages Function<br/>/api/invocations"]
+    PagesFunction["Cloudflare Pages Function<br/>/invocations"]
 
     subgraph AgentArts["AgentArts 平台 (cn-southwest-2)"]
         APIGW["API Gateway<br/>defaultgw-xxx...<br/>JWT 认证<br/>PREFIX_MATCH: /invocations/*"]
@@ -38,7 +38,7 @@ flowchart TB
         InternalAPI["企业内部 API"]
     end
 
-    WebChat -->|"/api/invocations"| PagesFunction
+    WebChat -->|"/invocations"| PagesFunction
     PagesFunction -->|"JWT + SSE<br/>full Runtime path"| APIGW
     Feishu -->|"/invocations"| APIGW
     OC -->|"/invocations"| APIGW

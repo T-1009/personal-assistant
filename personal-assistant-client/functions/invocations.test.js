@@ -25,7 +25,7 @@ describe("Cloudflare Pages invocations proxy", () => {
     globalThis.fetch = mockFetch;
 
     const request = new Request(
-      "https://agentarts-personal-assistant.pages.dev/api/invocations",
+      "https://agentarts-personal-assistant.pages.dev/invocations",
       {
         method: "POST",
         headers: {
@@ -64,7 +64,7 @@ describe("Cloudflare Pages invocations proxy", () => {
     globalThis.fetch = vi.fn().mockRejectedValue(new Error("network error"));
 
     const request = new Request(
-      "https://agentarts-personal-assistant.pages.dev/api/invocations",
+      "https://agentarts-personal-assistant.pages.dev/invocations",
       {
         method: "POST",
         body: "{}",

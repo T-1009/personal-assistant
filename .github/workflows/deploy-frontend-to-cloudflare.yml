@@ -69,7 +69,7 @@ jobs:
           API_STATUS="$(
             curl --silent --output /dev/null --write-out '%{http_code}' \
               --max-time 30 \
-              --request POST "$DOMAIN/api/invocations" \
+              --request POST "$DOMAIN/invocations" \
               --header "Content-Type: application/json" \
               --header "x-hw-agentarts-session-id: github-actions-smoke-test" \
               --data '{"message":"deployment smoke test","stream":true}'
@@ -77,4 +77,3 @@ jobs:
           test "$API_STATUS" = "401"
 
           echo "Cloudflare Pages deployment verified: $DOMAIN"
-

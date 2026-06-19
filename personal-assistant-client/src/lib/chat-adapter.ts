@@ -12,10 +12,9 @@ export { getSessionId, resetSessionId } from "@/lib/chat/session";
 /**
  * ChatModelAdapter that connects to the backend SSE API.
  *
- * - In dev mode (VITE_API_BASE_URL not set), requests go through the
- *   Vite dev proxy at `/invocations` -> `localhost:8080`.
- * - In production, VITE_API_BASE_URL is `/api`; the same-origin Cloudflare
- *   Pages Function proxies requests to the full AgentArts Runtime URL.
+ * Requests use `/invocations` in every environment. The Vite dev proxy
+ * forwards them to the local service, while the production Cloudflare Pages
+ * Function forwards them to AgentArts Runtime.
  */
 export const chatAdapter: ChatModelAdapter = {
   async *run(options: ChatModelRunOptions): AsyncGenerator<ChatModelRunResult, void> {
