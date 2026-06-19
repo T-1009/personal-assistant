@@ -27,7 +27,7 @@ from conftest import ServiceProcess
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario1_HealthCheck:
+class TestScenario1HealthCheck:
     """Verify /ping health check endpoint still works after refactor."""
 
     PORT = 18800
@@ -59,7 +59,7 @@ class TestScenario1_HealthCheck:
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario2_SyncInvocation:
+class TestScenario2SyncInvocation:
     """Verify POST /invocations endpoint still works after refactor."""
 
     PORT = 18801
@@ -126,7 +126,7 @@ class TestScenario2_SyncInvocation:
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario3_SSEStreamingNewPath:
+class TestScenario3SSEStreamingNewPath:
     """Verify SSE streaming chat works on POST /invocations."""
 
     PORT = 18802
@@ -207,7 +207,7 @@ class TestScenario3_SSEStreamingNewPath:
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario4_OldRouteReturns404:
+class TestScenario4OldRouteReturns404:
     """Verify the old /api/chat/stream route returns 404 after refactor."""
 
     PORT = 18803
@@ -284,7 +284,7 @@ class TestScenario4_OldRouteReturns404:
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario5_PlaygroundRedirectNewPath:
+class TestScenario5PlaygroundRedirectNewPath:
     """Verify /invocations/playground redirect works after refactor."""
 
     PORT = 18804

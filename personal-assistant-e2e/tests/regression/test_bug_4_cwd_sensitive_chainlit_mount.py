@@ -33,7 +33,7 @@ def ensure_service_on_path():
 
 
 @pytest.mark.regression
-class TestBug4_CWDSensitiveChainlitMount:
+class TestBug4CWDSensitiveChainlitMount:
     """Verify app.main can be imported regardless of CWD."""
 
     def test_import_app_main_from_project_root(self):

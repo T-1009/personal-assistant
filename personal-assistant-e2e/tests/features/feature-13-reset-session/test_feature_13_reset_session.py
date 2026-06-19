@@ -240,7 +240,7 @@ def stack():
 
 
 @pytest.mark.usefixtures("stack")
-class TestScenario1_FullReset:
+class TestScenario1FullReset:
     """E2E-RS-01: Full reset → welcome screen."""
 
     def test_full_reset_shows_welcome_screen(self, stack):
@@ -328,7 +328,7 @@ class TestScenario1_FullReset:
 
 
 @pytest.mark.usefixtures("stack")
-class TestScenario2_LocalStorageKeyDeletion:
+class TestScenario2LocalStorageKeyDeletion:
     """E2E-RS-02: localStorage key deletion after reset."""
 
     def test_localstorage_key_removed_after_reset(self, stack):
@@ -391,7 +391,7 @@ class TestScenario2_LocalStorageKeyDeletion:
 
 
 @pytest.mark.usefixtures("stack")
-class TestScenario3_NewUUIDAfterReset:
+class TestScenario3NewUUIDAfterReset:
     """E2E-RS-03: New UUID header after reset + new message."""
 
     def test_new_uuid_after_reset_and_message(self, stack):
@@ -470,7 +470,7 @@ class TestScenario3_NewUUIDAfterReset:
 
 
 @pytest.mark.usefixtures("stack")
-class TestScenario4_ComposerCleared:
+class TestScenario4ComposerCleared:
     """E2E-RS-04: Composer/input cleared after reset."""
 
     def test_composer_cleared_after_reset(self, stack):
@@ -522,7 +522,7 @@ class TestScenario4_ComposerCleared:
 
 
 @pytest.mark.usefixtures("stack")
-class TestScenario5_ButtonDisabledDuringStreaming:
+class TestScenario5ButtonDisabledDuringStreaming:
     """E2E-RS-05: Button disabled during streaming.
 
     Strategy: intercept /invocations and block the response for several
@@ -594,7 +594,7 @@ class TestScenario5_ButtonDisabledDuringStreaming:
 
 
 @pytest.mark.usefixtures("stack")
-class TestScenario6_PrivacyMode:
+class TestScenario6PrivacyMode:
     """E2E-RS-06: Privacy mode (localStorage unavailable)."""
 
     def test_privacy_mode_no_crash(self, stack):

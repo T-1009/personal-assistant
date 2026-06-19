@@ -205,7 +205,7 @@ async def test_app_client(fake_handler):
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario1_DevModeStartup:
+class TestScenario1DevModeStartup:
     """Verify Vite dev server can start and serve assistant-ui interface."""
 
     PORT = 5173
@@ -277,7 +277,7 @@ class TestScenario1_DevModeStartup:
 
 
 @pytest.mark.feature
-class TestScenario2_SSEStreamingChat:
+class TestScenario2SSEStreamingChat:
     """Verify SSE streaming chat format, content, and multi-event behavior."""
 
     @pytest.mark.asyncio
@@ -368,7 +368,7 @@ class TestScenario2_SSEStreamingChat:
 
 
 @pytest.mark.feature
-class TestScenario4_MultiTurnConversation:
+class TestScenario4MultiTurnConversation:
     """Verify multiple streaming messages in sequence work correctly."""
 
     @pytest.mark.asyncio
@@ -408,7 +408,7 @@ class TestScenario4_MultiTurnConversation:
 
 
 @pytest.mark.feature
-class TestScenario5_ErrorHandling:
+class TestScenario5ErrorHandling:
     """Verify proper error handling for invalid inputs."""
 
     @pytest.mark.asyncio
@@ -492,7 +492,7 @@ class TestScenario5_ErrorHandling:
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario6_ProductionBuild:
+class TestScenario6ProductionBuild:
     """Verify npm run build generates dist/ with index.html and bundled assets."""
 
     @pytest.fixture(autouse=True)
@@ -593,7 +593,7 @@ class TestScenario6_ProductionBuild:
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario7_ChainlitCoexistence:
+class TestScenario7ChainlitCoexistence:
     """Verify /playground endpoint availability alongside the web chat frontend."""
 
     PORT = 18712
@@ -657,7 +657,7 @@ class TestScenario7_ChainlitCoexistence:
 
 @pytest.mark.feature
 @pytest.mark.slow
-class TestScenario8_StaticFilesMount:
+class TestScenario8StaticFilesMount:
     """Verify API routes work correctly (StaticFiles mount was removed in refactor-2).
 
     NOTE (refactor-2): The StaticFiles mount is removed. The remaining

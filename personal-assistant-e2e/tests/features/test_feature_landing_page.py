@@ -750,7 +750,7 @@ class TestLandingFooter:
 
     def test_footer_contains_copyright(self, page: Page):
         """Footer contains copyright notice with current year."""
-        year = str(__import__("datetime").datetime.now().year)
+        str(__import__("datetime").datetime.now().year)
         copyright_text = page.locator("footer").inner_text()
         assert "Copyright" in copyright_text or "All rights reserved" in copyright_text, (
             f"Expected copyright notice in footer, got: {copyright_text[:200]}"

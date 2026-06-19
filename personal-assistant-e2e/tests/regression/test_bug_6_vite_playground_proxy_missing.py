@@ -73,7 +73,7 @@ class ClientDevProcess:
 
 @pytest.mark.regression
 @pytest.mark.slow
-class TestBug6_VitePlaygroundProxyMissing:
+class TestBug6VitePlaygroundProxyMissing:
     """Verify /playground is proxied from Vite dev server to Chainlit backend.
 
     BUG-6: When the Vite dev server does NOT proxy /playground to the backend,

@@ -15,6 +15,7 @@ Test scenarios from plan:
   E2E-AUTH-08: Concurrency isolation
 """
 
+import contextlib
 import json
 from unittest.mock import MagicMock, patch
 
@@ -37,10 +38,8 @@ def _parse_sse_events(text: str) -> list[dict]:
     for line in text.split("\n"):
         line = line.strip()
         if line.startswith("data: "):
-            try:
+            with contextlib.suppress(json.JSONDecodeError):
                 events.append(json.loads(line[6:]))
-            except json.JSONDecodeError:
-                pass
     return events
 
 
@@ -356,7 +355,7 @@ def test_auth_stream_ends_with_done_true(auth_test_client):
     token_events = [e for e in events if "token" in e and not e.get("done")]
     system_events = [e for e in events if "system_message" in e]
     assert len(token_events) >= 1, f"Expected at least 1 token event, got events: {events}"
-    assert len(system_events) >= 1, f"Expected at least 1 system_message event"
+    assert len(system_events) >= 1, "Expected at least 1 system_message event"
 
 
 # ═════════════════════════════════════════════════════════════════════════════
