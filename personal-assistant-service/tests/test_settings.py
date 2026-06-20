@@ -21,6 +21,7 @@ def test_defaults():
     assert settings.log_level == "INFO"
     assert settings.llm_provider == "deepseek"
     assert settings.llm_model == "deepseek-v4-pro"
+    assert settings.llm_agent_bundle_ttl_seconds == 300.0
     assert settings.postgres_dsn is None
     assert settings.sqlite_db_path is None
 
@@ -68,6 +69,20 @@ def test_persistence_backends_are_mutually_exclusive():
 def test_invalid_log_level_fails_fast():
     with pytest.raises(ValidationError, match="log_level"):
         Settings(_env_file=None, log_level="TRACE")
+
+
+def test_agent_bundle_ttl_can_be_overridden(monkeypatch):
+    monkeypatch.setenv("LLM_AGENT_BUNDLE_TTL_SECONDS", "120")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_agent_bundle_ttl_seconds == 120.0
+
+
+@pytest.mark.parametrize("ttl", [0, -1])
+def test_agent_bundle_ttl_must_be_positive(ttl):
+    with pytest.raises(ValidationError, match="llm_agent_bundle_ttl_seconds"):
+        Settings(_env_file=None, llm_agent_bundle_ttl_seconds=ttl)
 
 
 def test_empty_optional_values_are_unset():

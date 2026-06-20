@@ -81,16 +81,36 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 
 ### 运行时流程（以 LLM API Key 为例）
 
+```mermaid
+flowchart TD
+    Request["用户请求<br/>Workload Access Token 已进入 Runtime Context"]
+    Handler["Process-scoped AgentHandler"]
+    Valid{"Agent Bundle<br/>仍在 TTL 内？"}
+    Agent["复用 compiled Agent"]
+    Lock["asyncio.Lock<br/>single-flight refresh"]
+    Identity["AgentArts Identity Service"]
+    Model["init_chat_model<br/>API Key 仅进入 Model object"]
+    Build["create_deep_agent"]
+    CP["独立的共享 Checkpointer"]
+
+    Request --> Handler
+    Handler --> Valid
+    Valid -->|"Yes"| Agent
+    Valid -->|"No"| Lock
+    Lock --> Identity
+    Identity --> Model
+    Model --> Build
+    CP --> Build
+    Build -->|"atomic Bundle swap"| Agent
+    Agent --> CP
 ```
-用户请求
-  → agent_handler.py
-    → llm_config.get_model()
-      → _get_api_key_from_identity("DEEPSEEK_API_KEY")
-        → @require_api_key(provider_name="DEEPSEEK_API_KEY")
-          → AgentArts SDK 从 Identity Service 获取解密后的 Key
-            → 注入到 init_chat_model(api_key=...)
-              → LangGraph 使用该 Key 调用 DeepSeek API
-```
+
+`AgentHandler` lazy 创建不可变 Agent Bundle，并在
+`LLM_AGENT_BUNDLE_TTL_SECONDS`（默认 300 秒）内复用。TTL 到期时，第一个请求
+获取最新 Key 并重建 Model + compiled Agent，其他并发请求等待同一次 refresh。
+Checkpointer 不属于 Bundle，因此 credential rotation 不影响 Session 状态。
+
+API Key 不写入 `os.environ`、Settings、日志或 metric label。
 
 ### 选择依据
 
@@ -103,7 +123,7 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 | **代码仓库安全性** | 零密钥 ✅ | 零密钥 ✅ | 零密钥 ✅ |
 | **本地开发体验** | SDK fallback 到 `.agent_identity.json` | 需手动设 env var | 需手动设 env var |
 | **平台耦合度** | 绑定 AgentArts Identity | 无 | 无 |
-| **每次调用延迟** | SDK IPC 调用（~10-50ms） | 0ms（内存读取） | 0ms（内存读取） |
+| **重复调用开销** | TTL 内复用 Agent Bundle；refresh 时调用 Identity Service API | 0ms（内存读取） | 0ms（内存读取） |
 
 ## 拒绝的方案
 
@@ -119,11 +139,14 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 
 - **拒绝理由**：(1) 部署后同样在控制台明文可见；(2) 换 Key 需要重新触发 CI/CD 流水线（编译 → 打包 → 部署），耗时数分钟，而平台侧修改只需 5 秒；(3) Key 经过 GitHub Secrets → Workflow runner → 部署 API 三条链路，每一条都是潜在泄露面。
 
-### AgentArts Identity + 进程级缓存（未来优化）
+### API Key dict + `os.environ` write-back
 
-在当前方案基础上，首次获取 Key 后缓存到 `os.environ`，后续调用直接读环境变量，避免重复 SDK IPC 调用。详见 [Refactor 8](../../issues/refactor/backlog/refactor-8-llm-api-key-caching/issue.md)。
+曾考虑在首次获取 Key 后同时写入模块级字典和 `os.environ`。
 
-- **未在当前版本实现原因**：(1) 当前单 session 调用频率低，SDK 内部已有短时缓存；(2) 进程级缓存引入了"Key 更新后需重启服务才能生效"的 trade-off。属于优化项，非阻塞问题。
+- **拒绝理由**：形成两个可变状态源；扩大明文 Secret 的进程可见范围和 subprocess
+  继承面；无法同步刷新已经持有旧 Key 的 Model/Agent；rotation 依赖 container
+  restart。最终采用可轮转 Agent Bundle，详见
+  [Refactor 8](../../issues/refactor/backlog/refactor-8-llm-api-key-caching/issue.md)。
 
 ## 影响
 
@@ -137,7 +160,7 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 | 代码注入 | `@requires_api_key` | `@require_api_key` |
 | 配置引用 | provider name | `credential_provider_name` |
 | CI 可见性 | 不可见 | 不可见 |
-| 运行时缓存 | 需手动 `os.environ` | 同上（待优化） |
+| 运行时复用 | 应用生命周期管理 | TTL Agent Bundle，不写 `os.environ` |
 | 本地开发 | AWS CLI credential chain | `.agent_identity.json` |
 
 ### 依赖

@@ -1,145 +1,207 @@
 ---
-status: backlog
+status: in-progress
 ---
 
-# Refactor 8: 减少 LLM API Key 的重复获取开销
+# Refactor 8: 复用并安全轮转 LLM Agent Bundle
 
-每次调用 `get_model()` 都通过 `@require_api_key` 装饰器从 AgentArts Identity SDK 获取 API Key，可能产生不必要的重复 IPC 调用开销。后续计划在确认 SDK 行为、Key rotation 要求和安全边界后，引入应用层复用机制。
+当前 Service 在每个入站请求中重新获取 LLM API Key、创建 Model，并通过
+`create_deep_agent()` 重新组装 Agent。聊天上下文之所以仍能恢复，是因为所有
+Agent 共用同一个 Checkpointer；但 Model、Agent 和 credential 的生命周期没有被
+正确建模，造成重复 Identity API 调用和重复 Agent 构建。
 
-> 关联 ADR：[ADR-016：Secretless Credential Injection via AgentArts Identity](../../architecture/ADR/ADR-016-secretless-credential-injection.md)
+本 issue 引入进程级、可轮转的 **Agent Bundle**。Bundle 将使用同一 credential 的
+Model 和 compiled Agent 作为一个不可变单元管理；Checkpointer 独立于 Bundle，
+因此 Bundle 刷新不会丢失 Session 状态。
+
+> 关联 ADR：
+> [ADR-016：Secretless Credential Injection via AgentArts Identity](../../../../architecture/ADR/ADR-016-secretless-credential-injection.md)
 >
-> 历史实现参考：commit `57312f64875d088dea84f4123bf79df6058ab655`。该实现已由 commit `64107194ea7868fd86b3d1ef7ebbd20c455c76dc` 回退，不代表最终方案，也不应直接 cherry-pick 恢复。
+> 历史实现参考：commit `57312f64875d088dea84f4123bf79df6058ab655`。
+> 该实现将 Key 写入模块字典和 `os.environ`，随后由 commit
+> `64107194ea7868fd86b3d1ef7ebbd20c455c76dc` 回退。本 issue 不恢复该方案。
 
----
+## 当前问题
 
-## 背景
+```mermaid
+sequenceDiagram
+    participant Request
+    participant Handler as AgentHandler
+    participant Identity as AgentArts Identity
+    participant Model
+    participant Agent
+    participant CP as Shared Checkpointer
 
-当前 `llm_config.py` 的 `_get_api_key_from_identity()` 实现：
-
-```python
-def _get_api_key_from_identity(credential_provider_name: str) -> str:
-    @require_api_key(provider_name=credential_provider_name, into="api_key")
-    def _fetch(api_key: str | None = None) -> str:
-        if not api_key:
-            raise ValueError(...)
-        return api_key
-    return _fetch()
+    Request->>Handler: handle / handle_stream
+    Handler->>Identity: 获取 API Key
+    Handler->>Model: init_chat_model
+    Handler->>Agent: create_deep_agent(Model, CP)
+    Agent->>CP: 按 thread_id 读取/写入状态
+    Agent-->>Request: response
 ```
 
-`get_model()` 每次创建模型实例时都会调用此函数。若 AgentArts SDK 未在合适的生命周期内完成复用，每一轮对话（包括 tool 调用后的模型再调用）都可能触发一次 SDK IPC。需要通过 profiling 或 SDK 文档确认实际调用次数与延迟，避免仅根据旧实现中的估算作设计。潜在问题包括：
+`AgentHandler` 本身是进程级 singleton，`tools` 和 `checkpointer` 也只初始化一次；
+但 `handle()`、`handle_stream()` 和 Playground 每次请求都会调用
+`create_agent()`。AgentArts SDK 0.1.3 的 `@require_api_key` 会在每次调用时创建
+`IdentityClient` 并请求 Identity Service，没有 API Key cache。
 
-1. **延迟**：重复 IPC 会增加模型调用前的固定开销
-2. **不确定依赖**：依赖 SDK 内部实现细节，SDK 升级可能改变缓存策略
-3. **生命周期不清**：应用当前没有显式定义 Key 的复用、失效和 rotation 语义
+当前实现不是 Session Memory 丢失 bug，因为新 Agent 继续使用同一 Checkpointer
+和同一 `thread_id`。它是生命周期和资源复用缺陷：
 
-### 历史实现与回退
+1. 每个请求重复访问 Identity Service
+2. 每个请求重复创建 Model 和 compiled Agent
+3. API Key rotation、失效和并发 cold start 没有显式语义
+4. `self.model` / `self.agent` 被重复覆盖，但请求实际使用局部变量，生命周期表达混乱
+5. 现有测试只验证相同 `thread_id` 被传入，没有验证跨 Agent 实例的真实状态恢复
 
-2026-06-17 的 commit `57312f6` 曾实现以下三层读取顺序：
+## 目标设计
 
-1. 模块级 `_API_KEY_CACHE`
-2. `os.environ`
-3. AgentArts Identity SDK
+```mermaid
+flowchart TD
+    Request["入站请求<br/>Workload Access Token 已进入 Runtime Context"]
+    Handler["Process-scoped AgentHandler"]
+    Lock["asyncio.Lock<br/>single-flight refresh"]
+    Bundle["Immutable AgentBundle<br/>agent + expires_at"]
+    Model["Model<br/>持有当前 API Key"]
+    Agent["Compiled Agent<br/>Prompt + Tools + Graph"]
+    CP["Process-scoped Checkpointer<br/>独立于 Bundle"]
+    Identity["AgentArts Identity"]
 
-该实现还将 SDK 返回的明文 Key 写入 `os.environ`，并假设 Key rotation 通过 container restart 完成。代码随后在 commit `6410719` 中回退。后续方案应吸收“避免重复 IPC”的目标，但必须重新评估：
+    Request --> Handler
+    Handler -->|"Bundle 有效"| Bundle
+    Handler -->|"缺失 / 过期"| Lock
+    Lock --> Identity
+    Identity --> Model
+    Model --> Agent
+    CP --> Agent
+    Agent --> Bundle
+    Bundle -->|"atomic swap"| Handler
+    Bundle -->|"按 thread_id invoke"| CP
+```
 
-- 是否需要同时维护字典和 `os.environ` 两层可变状态
-- 将 SDK 返回的明文 Key 写入 `os.environ` 是否符合最小暴露原则
-- 多 worker / 多进程部署下缓存的作用域和一致性
-- Key rotation、失效、SDK 异常与重试语义
-- SDK 是否已经提供可配置且满足需求的缓存能力
+### Agent Bundle
 
----
+Bundle 是应用内部定义的不可变生命周期单元：
+
+```python
+@dataclass(frozen=True, slots=True)
+class AgentBundle:
+    agent: CompiledStateGraph
+    expires_at: float
+```
+
+Model 被 Agent 引用，不再作为独立可变状态保存。Bundle 不直接公开 API Key，也不
+将 Key 写入 `os.environ`。
+
+### 生命周期
+
+1. FastAPI lifespan 创建一次 `AgentHandler`
+2. Handler 创建并长期持有 `tools`、`checkpointer` 和 refresh lock
+3. 首个业务请求在 Workload Access Token 已写入 `AgentArtsRuntimeContext` 后，
+   lazy 创建 Bundle
+4. TTL 有效期内，普通请求、SSE 和 Playground 共用同一 compiled Agent
+5. TTL 到期后，第一个请求在 lock 内获取最新 Key 并构建新 Bundle；等待者复用结果
+6. 新 Bundle 构建成功后原子替换旧 Bundle；构建失败不得污染当前状态
+7. 已经取得旧 Bundle 的 in-flight 请求继续执行，不被中途切换
+8. Checkpointer 不随 Bundle 重建，因此 Session 状态连续
+
+TTL 使用 `time.monotonic()`，默认 300 秒，通过
+`LLM_AGENT_BUNDLE_TTL_SECONDS` 配置。每个 worker 维护独立 Bundle，不引入
+Redis 或分布式锁。
+
+### Rotation 与异常
+
+- Bundle 到期后，新请求必须刷新，不继续无限期使用旧 credential
+- Identity fetch、空 Key 或 Agent 构建失败时，不发布半成品 Bundle
+- LLM 明确返回 authentication failure 时，可使当前 Bundle 失效，使下一请求刷新
+- 不自动重放整个 Agent invocation；此前可能已经执行有副作用的 Tool，整轮重试可能
+  造成重复操作
+- 第一阶段不新增公开 cache-invalidation HTTP API
 
 ## 范围
 
-### 8.1 基线测量与约束确认
+### Service
 
-- [ ] 确认 `@require_api_key` 的官方缓存和刷新语义
-- [ ] 测量一次请求及连续请求中的 SDK 调用次数与耗时
-- [ ] 明确 Key rotation、失效和 container 生命周期约束
+- [ ] `AgentHandler` 增加不可变 `AgentBundle`
+- [ ] lazy 创建并在 TTL 内复用 compiled Agent
+- [ ] 使用 `asyncio.Lock` 实现 per-process single-flight refresh
+- [ ] Bundle 原子替换，Checkpointer 生命周期保持独立
+- [ ] `llm_config.py` 保持单一职责：解析配置、获取 Key、创建 Model
+- [ ] Settings 增加 positive `LLM_AGENT_BUNDLE_TTL_SECONDS`
+- [ ] 普通请求、SSE 和 Playground 使用同一个异步 Bundle 入口
+- [ ] 不将 API Key 写入 `os.environ`、Settings、日志或 metric label
 
-### 8.2 设计并实现复用机制
+### Tests
 
-- [ ] 选择单一、可测试的缓存或复用入口，避免重复状态源
-- [ ] 按 `credential_provider_name` 隔离不同 provider 的 Key
-- [ ] 定义 cache miss、空 Key、SDK 异常和 rotation 后的行为
-- [ ] 排查 Service 中其他直接获取 LLM Key 的路径并统一策略
+- [ ] 首次请求获取 credential 并创建一个 Bundle
+- [ ] TTL 内连续请求复用同一个 Agent，不再次调用 Identity
+- [ ] TTL 到期后重建 Bundle
+- [ ] 并发 cold start / refresh 只执行一次构建
+- [ ] refresh 失败不发布错误 Bundle，后续请求可再次尝试
+- [ ] Bundle 刷新前后复用同一个 Checkpointer
+- [ ] 两个不同 Agent 实例通过共享 Checkpointer 和相同 `thread_id` 恢复真实多轮状态
+- [ ] 不同 `user_id + session_id` 状态隔离
+- [ ] 普通请求、SSE 和 Playground 回归通过
 
-### 8.3 测试
+### Documentation
 
-- [ ] 新增测试：首次调用触发 SDK，第二次调用命中缓存（mock SDK 验证调用次数）
-- [ ] 新增测试：不同 provider 的 Key 分别缓存，互不干扰
-- [ ] 新增测试：空 Key 和 SDK 异常不会污染缓存
-- [ ] 根据最终失效策略覆盖 rotation / invalidation 场景
-
----
+- [ ] ADR-016 删除 `os.environ` cache 和未验证的 SDK cache 描述
+- [ ] backend/overall architecture 与实际 Bundle 生命周期一致
+- [ ] 修正文档中的“IPC”表述为 Identity Service API call
 
 ## 不涉及
 
-- OAuth2 Access Token 缓存 — Token 有过期时间，缓存策略不同，属于独立优化
-- STS Token 缓存 — 同理，临时凭证有自己的生命周期管理
-- `@require_api_key` 装饰器本身的实现修改 — 那是 AgentArts SDK 的职责
+- OAuth2 Access Token 或 STS Token cache
+- 修改 AgentArts SDK
+- 跨 worker 共享 Agent/Model
+- 本 issue 内引入新的生产 Checkpointer backend
+- 自动重放失败的 Agent invocation
 
----
+生产跨 container / 多 worker Session persistence 仍应使用 PostgreSQL 等持久化
+Checkpointer；默认 `InMemorySaver` 只保证单进程生命周期。
 
-## 影响
+## 影响范围
 
-### 修改文件
+GitNexus 对核心 symbol 的评估为 HIGH：
+
+| Symbol | Direct callers | 影响流程 |
+|--------|---------------:|----------|
+| `get_model()` | 5 | 普通 `/invocations`、SSE、Playground |
+| `AgentHandler.create_agent()` | 5 | `handle()`、`handle_stream()`、Playground |
+
+预计修改：
 
 | 文件 | 改动 |
 |------|------|
-| `personal-assistant-service/app/llm_config.py` | 预计增加 API Key 复用机制；具体数据结构由 Meta 阶段确定 |
-| `personal-assistant-service/tests/test_llm_config.py` | 新增复用、隔离、异常与失效测试 |
-| `personal-assistant-meta/architecture/ADR/ADR-016-secretless-credential-injection.md` | 根据最终决策同步 credential 生命周期与安全约束 |
-
-### 行为变化
-
-- **首次调用**：行为不变，仍通过 SDK 获取 Key
-- **后续调用**：在已定义的有效期内复用 Key，减少 SDK IPC
-- **Key 更新**：按最终确定的 rotation / invalidation 策略生效，不预设只能依赖 container restart
-
----
-
-## 任务拆解
-
-### 8.1 调研与设计
-- [ ] 验证实际性能问题及 SDK 现有能力
-- [ ] 在 Implementation Plan 中比较 SDK cache、进程内 cache、模型实例复用等方案
-- [ ] 明确安全边界、生命周期和可观测指标
-
-### 8.2 测试
-- [ ] 测试首次调用走 SDK
-- [ ] 测试第二次调用命中缓存、不触发 SDK
-- [ ] 测试多 provider 缓存隔离
-- [ ] 测试异常不缓存及 Key 失效策略
-
-### 8.3 文档
-- [ ] ADR-016 更新最终采用的复用和 rotation 策略
-- [ ] `llm_config.py` 模块 docstring 说明最终生命周期
-
----
+| `personal-assistant-service/app/agent_handler.py` | Bundle 生命周期、single-flight、Agent 复用 |
+| `personal-assistant-service/app/llm_config.py` | 保持无 cache 的 Model factory；必要的类型/docstring 调整 |
+| `personal-assistant-service/app/settings.py` | Bundle TTL Setting |
+| `personal-assistant-service/.env.example` | TTL 配置说明 |
+| `personal-assistant-service/app/playground.py` | 使用共享异步 Agent 获取入口 |
+| `personal-assistant-service/tests/` | 生命周期、并发、状态恢复测试 |
+| `personal-assistant-e2e/tests/` | 生命周期相关静态/回归验证 |
+| `personal-assistant-meta/architecture/` | ADR 和 current architecture 同步 |
 
 ## 验收条件
 
-- [ ] 有 profiling 或可重复测试证明重复 credential 获取路径及优化收益
-- [ ] 正常请求在有效期内不会重复触发不必要的 SDK IPC
-- [ ] 不同 provider 的 credential 状态互相隔离
-- [ ] 空 Key、SDK 异常和失效事件不会留下错误缓存
-- [ ] 明文 Key 不被写入超出必要范围的状态载体；若使用 `os.environ`，需在 Implementation Plan 中记录理由与 trade-off
-- [ ] Unit Tests、Integration Tests 和相关 E2E 验证通过
-- [ ] ADR-016 与实际实现保持一致
-
----
+- [ ] TTL 内任意数量的请求每个 worker 只创建一次 Model/Agent Bundle
+- [ ] 并发 cold start 不产生重复 Identity fetch
+- [ ] API Key 只存在于 AgentArts Identity、SDK 返回值和 Model object 必要范围
+- [ ] Bundle refresh 不替换或清空 Checkpointer
+- [ ] Bundle refresh 失败不污染已发布状态
+- [ ] 不自动重放可能包含 Tool side effects 的 invocation
+- [ ] 真实多轮状态恢复和 Session 隔离测试通过
+- [ ] Unit、Integration、相关 E2E、Ruff 全部通过
+- [ ] ADR-016 与 backend/overall architecture 和实现一致
+- [ ] `gitnexus detect-changes` 仅报告预期流程
 
 ## 依赖
 
-- Feature 1.3（多 LLM Provider 可配置）— `config.yaml` + `llm_config.py` 已存在
-- ADR-016（Secretless Credential Injection）— 本 issue 是 ADR-016 中记录的优化项
-
----
+- ADR-009：DeepAgents / LangGraph Agent 架构
+- ADR-016：Secretless Credential Injection
+- Refactor 10：typed Settings + internal Provider catalog
 
 ## 参考
 
-- [ADR-016：Secretless Credential Injection via AgentArts Identity](../../architecture/ADR/ADR-016-secretless-credential-injection.md)
-- [ADR-011：多 LLM Provider 可配置架构](../../architecture/ADR/ADR-011-multi-llm-provider.md)
-- [AWS Lambda 最佳实践：在 handler 外初始化以复用连接](https://docs.aws.amazon.com/lambda/latest/dg/best-practices.html)
+- [ADR-009：DeepAgents](../../../../architecture/ADR/ADR-009-deepagents.md)
+- [ADR-016：Secretless Credential Injection](../../../../architecture/ADR/ADR-016-secretless-credential-injection.md)
+- [ADR-011：多 LLM Provider](../../../../architecture/ADR/ADR-011-multi-llm-provider.md)

@@ -7,9 +7,11 @@ Covers:
   - Multi-turn context retention and session isolation
 """
 
+from typing import TypedDict
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from langgraph.graph import START, StateGraph
 
 from app.agent_handler import AgentHandler
 from app.settings import Settings
@@ -329,3 +331,56 @@ class TestContextRetention:
         )
         assert config_a["configurable"]["thread_id"] == "user_a:shared-session"
         assert config_b["configurable"]["thread_id"] == "user_b:shared-session"
+
+
+class _CounterState(TypedDict, total=False):
+    count: int
+
+
+def _increment(state: _CounterState) -> _CounterState:
+    return {"count": state.get("count", 0) + 1}
+
+
+def _compile_counter_graph(checkpointer):
+    builder = StateGraph(_CounterState)
+    builder.add_node("increment", _increment)
+    builder.add_edge(START, "increment")
+    return builder.compile(checkpointer=checkpointer)
+
+
+class TestCheckpointerAcrossAgentReplacement:
+    """Real checkpoint tests across independently compiled graph instances."""
+
+    @pytest.mark.asyncio
+    async def test_replacement_graph_restores_same_thread_state(self):
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        checkpointer = InMemorySaver()
+        first_agent = _compile_counter_graph(checkpointer)
+        second_agent = _compile_counter_graph(checkpointer)
+        config = {"configurable": {"thread_id": "user-a:session-a"}}
+
+        first = await first_agent.ainvoke({"count": 0}, config=config)
+        second = await second_agent.ainvoke({}, config=config)
+
+        assert first["count"] == 1
+        assert second["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_replacement_graph_keeps_threads_isolated(self):
+        from langgraph.checkpoint.memory import InMemorySaver
+
+        checkpointer = InMemorySaver()
+        first_agent = _compile_counter_graph(checkpointer)
+        second_agent = _compile_counter_graph(checkpointer)
+
+        await first_agent.ainvoke(
+            {"count": 0},
+            config={"configurable": {"thread_id": "user-a:session-a"}},
+        )
+        other = await second_agent.ainvoke(
+            {"count": 10},
+            config={"configurable": {"thread_id": "user-b:session-b"}},
+        )
+
+        assert other["count"] == 11

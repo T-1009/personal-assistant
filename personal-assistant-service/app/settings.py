@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     llm_base_url: AnyHttpUrl | None = None
     llm_credential_provider: str = "DEEPSEEK_API_KEY"
     llm_timeout_seconds: float = Field(default=60.0, gt=0.0)
+    llm_agent_bundle_ttl_seconds: float = Field(default=300.0, gt=0.0)
 
     postgres_dsn: str | None = None
     sqlite_db_path: Path | None = None

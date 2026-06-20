@@ -193,8 +193,17 @@ flowchart LR
 所有路由最终解析为统一消息格式，调用共享的 Agent 处理逻辑：
 
 ```python
+import asyncio
+import time
+from dataclasses import dataclass
+
 from deepagents import create_deep_agent
 from langgraph.checkpoint.memory import MemorySaver
+
+@dataclass(frozen=True, slots=True)
+class AgentBundle:
+    agent: object
+    expires_at: float
 
 class AgentHandler:
     """共享 Agent 处理逻辑 — 所有前端共用"""
@@ -202,14 +211,34 @@ class AgentHandler:
     def __init__(self):
         from app.llm_config import get_model
         from app.tools import build_tools  # ✅ Feature 10a: 工具注册工厂
-        self.model = get_model()
         self.checkpointer = self._init_checkpointer()  # 新增
-        self.agent = create_deep_agent(
-            model=self.model,
+        self.tools = build_tools()
+        self._bundle = None
+        self._bundle_lock = asyncio.Lock()
+
+    def _build_agent(self):
+        model = get_model()
+        return create_deep_agent(
+            model=model,
             system_prompt="你是 Personal Assistant...",
-            tools=build_tools(),  # ✅ Feature 10a: 动态加载工具
+            tools=self.tools,  # ✅ Feature 10a: 动态加载工具
             checkpointer=self.checkpointer,  # ✅ 注入 Checkpointer
         )
+
+    async def get_agent(self):
+        bundle = self._bundle
+        if bundle and time.monotonic() < bundle.expires_at:
+            return bundle.agent
+        async with self._bundle_lock:
+            bundle = self._bundle
+            if bundle and time.monotonic() < bundle.expires_at:
+                return bundle.agent
+            agent = await asyncio.to_thread(self._build_agent)
+            self._bundle = AgentBundle(
+                agent=agent,
+                expires_at=time.monotonic() + 300,
+            )
+            return agent
 
     def _init_checkpointer(self, settings):
         """通过 typed Settings 选择 Checkpointer 后端。"""
@@ -230,7 +259,8 @@ class AgentHandler:
     async def handle(self, message: str, user_id: str,
                      session_id: str = None) -> str:
         config = self._build_config(user_id, session_id)  # ✅ 新增
-        result = await self.agent.ainvoke(
+        agent = await self.get_agent()
+        result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": message}]},
             config=config,  # ✅ 传递 config
         )
@@ -241,7 +271,8 @@ class AgentHandler:
         """通过 LangGraph messages/custom stream 输出 SSE。"""
         config = self._build_config(user_id, session_id)
         try:
-            async for mode, data in self.agent.astream(
+            agent = await self.get_agent()
+            async for mode, data in agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
                 stream_mode=["messages", "custom"],
                 config=config,
@@ -270,6 +301,10 @@ class AgentHandler:
         except Exception as error:
             yield f"data: {json.dumps({'error': str(error), 'done': True})}\\n\\n"
 ```
+
+Model 和 compiled Agent 作为不可变 Bundle 在单个 worker 内复用。TTL 到期后通过
+single-flight refresh 原子替换 Bundle；Checkpointer 长期独立持有，所以 Agent
+替换不会丢失或混合 Session 状态。API Key 不写入 process environment。
 
 ---
 
@@ -484,7 +519,7 @@ result = sandbox.execute("print('hello')")
 |------|------|------|
 | **Web 框架** | FastAPI | 替代 AgentArtsRuntimeApp，统一管理所有路由。详见 [ADR-004](ADR/ADR-004-fastapi-over-agentarts-runtime-app.md) |
 | **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills。详见 [ADR-009](ADR/ADR-009-deepagents.md) |
-| **LLM** | typed Settings + internal Provider catalog | `.env.example` 是唯一用户配置入口；`app/settings.py` 校验 Runtime Settings，`provider_catalog.py` 保存随代码发布的非敏感 metadata，credential 由 AgentArts Identity 提供。详见 ADR-011 |
+| **LLM** | typed Settings + renewable Agent Bundle | `.env.example` 是唯一用户配置入口；credential 由 AgentArts Identity 提供；Model + compiled Agent 在 TTL 内按 worker 复用并原子刷新。详见 ADR-011、ADR-016 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，三种抽取策略 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API → MCP Tool 自动转换 |

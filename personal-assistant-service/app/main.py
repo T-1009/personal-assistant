@@ -42,8 +42,8 @@ from app.auth import (  # noqa: E402
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle for the FastAPI application."""
-    # Validate LLM provider metadata. API keys are fetched per request from
-    # AgentArts Identity after the Gateway workload token is in context.
+    # Validate LLM provider metadata. The Agent Bundle is built lazily after
+    # the first request places the Gateway workload token in Runtime Context.
     from app.llm_config import validate_model_config
 
     try:

@@ -1,11 +1,17 @@
 """Unit tests for app.agent_handler.AgentHandler and get_agent_handler singleton."""
 
+import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.agent_handler import SYSTEM_PROMPT, AgentHandler, get_agent_handler
+from app.agent_handler import (
+    SYSTEM_PROMPT,
+    AgentBundle,
+    AgentHandler,
+    get_agent_handler,
+)
 
 
 def _fake_chunk(content: str):
@@ -67,28 +73,29 @@ class TestAgentHandlerInit:
         mock_build_tools.assert_called_once()
         assert handler.checkpointer is mock_init_cp.return_value
         assert handler.tools == mock_build_tools.return_value
-        assert handler.model is None
-        assert handler.agent is None
+        assert handler._bundle is None
 
-    def test_agent_handler_uses_get_model(self, mock_deps):
+    @pytest.mark.asyncio
+    async def test_agent_handler_uses_get_model(self, mock_deps):
         mock_get_model, mock_create_agent, mock_model, mock_agent, _, _ = mock_deps
 
         handler = AgentHandler()
-        agent = handler.create_agent()
+        agent = await handler.get_agent()
 
-        mock_get_model.assert_called_once()
+        mock_get_model.assert_called_once_with(settings=handler.settings)
         mock_create_agent.assert_called_once()
         assert mock_create_agent.call_args[1]["model"] is mock_model
-        assert handler.model is mock_model
-        assert handler.agent is mock_agent
+        assert handler._bundle is not None
+        assert handler._bundle.agent is mock_agent
         assert agent is mock_agent
 
-    def test_agent_created_with_tools_from_build_tools(self, mock_deps):
+    @pytest.mark.asyncio
+    async def test_agent_created_with_tools_from_build_tools(self, mock_deps):
         """UT-AH-01: Agent creation uses build_tools() result for tools kwarg."""
         _, mock_create_agent, _, _, _, mock_build_tools = mock_deps
 
         handler = AgentHandler()
-        handler.create_agent()
+        await handler.get_agent()
 
         mock_build_tools.assert_called_once()
         kwargs = mock_create_agent.call_args[1]
@@ -123,6 +130,123 @@ class TestAgentHandlerInit:
         assert (
             "必须先确认" in SYSTEM_PROMPT or "必须先向用户展示预览" in SYSTEM_PROMPT
         ), "SYSTEM_PROMPT missing confirmation guard instruction"
+
+
+class TestAgentBundleLifecycle:
+    """Tests for lazy, renewable process-scoped Agent Bundles."""
+
+    @pytest.mark.asyncio
+    async def test_reuses_agent_within_ttl(self, mock_deps):
+        mock_get_model, mock_create_agent, _, mock_agent, _, _ = mock_deps
+        handler = AgentHandler()
+
+        first = await handler.get_agent()
+        second = await handler.get_agent()
+
+        assert first is mock_agent
+        assert second is mock_agent
+        mock_get_model.assert_called_once()
+        mock_create_agent.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refreshes_agent_after_expiry(self, mock_deps):
+        mock_get_model, mock_create_agent, _, first_agent, _, _ = mock_deps
+        handler = AgentHandler()
+
+        assert await handler.get_agent() is first_agent
+        assert handler._bundle is not None
+        handler._bundle = AgentBundle(agent=first_agent, expires_at=0.0)
+
+        second_agent = MagicMock()
+        mock_create_agent.return_value = second_agent
+
+        assert await handler.get_agent() is second_agent
+        assert mock_get_model.call_count == 2
+        assert mock_create_agent.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_concurrent_cold_start_builds_once(self, mock_deps):
+        _, mock_create_agent, _, mock_agent, _, _ = mock_deps
+        handler = AgentHandler()
+
+        async def delayed_to_thread(func):
+            await asyncio.sleep(0.01)
+            return func()
+
+        with patch(
+            "app.agent_handler.asyncio.to_thread", side_effect=delayed_to_thread
+        ) as mock_to_thread:
+            agents = await asyncio.gather(
+                handler.get_agent(),
+                handler.get_agent(),
+                handler.get_agent(),
+            )
+
+        assert agents == [mock_agent, mock_agent, mock_agent]
+        mock_to_thread.assert_called_once()
+        mock_create_agent.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_failed_build_does_not_publish_bundle(self, mock_deps):
+        mock_get_model, _, mock_model, mock_agent, _, _ = mock_deps
+        handler = AgentHandler()
+        mock_get_model.side_effect = [RuntimeError("identity unavailable"), mock_model]
+
+        with pytest.raises(RuntimeError, match="identity unavailable"):
+            await handler.get_agent()
+
+        assert handler._bundle is None
+        assert await handler.get_agent() is mock_agent
+        assert mock_get_model.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_invalidation_forces_next_request_to_refresh(self, mock_deps):
+        _, mock_create_agent, _, first_agent, _, _ = mock_deps
+        handler = AgentHandler()
+        assert await handler.get_agent() is first_agent
+
+        await handler.invalidate_agent_bundle()
+        second_agent = MagicMock()
+        mock_create_agent.return_value = second_agent
+
+        assert await handler.get_agent() is second_agent
+        assert mock_create_agent.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_refresh_reuses_same_checkpointer(self, mock_deps):
+        _, mock_create_agent, _, first_agent, mock_init_cp, _ = mock_deps
+        handler = AgentHandler()
+        await handler.get_agent()
+        handler._bundle = AgentBundle(agent=first_agent, expires_at=0.0)
+        mock_create_agent.return_value = MagicMock()
+
+        await handler.get_agent()
+
+        first_kwargs = mock_create_agent.call_args_list[0].kwargs
+        second_kwargs = mock_create_agent.call_args_list[1].kwargs
+        assert first_kwargs["checkpointer"] is mock_init_cp.return_value
+        assert second_kwargs["checkpointer"] is mock_init_cp.return_value
+
+    @pytest.mark.asyncio
+    async def test_worker_thread_receives_runtime_context(self, mock_deps):
+        from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
+
+        mock_get_model, _, _, _, _, _ = mock_deps
+        handler = AgentHandler()
+
+        def assert_context(*, settings):
+            assert settings is handler.settings
+            assert (
+                AgentArtsRuntimeContext.get_workload_access_token() == "workload-token"
+            )
+            return MagicMock()
+
+        mock_get_model.side_effect = assert_context
+        AgentArtsRuntimeContext.set_workload_access_token("workload-token")
+        try:
+            await handler.get_agent()
+        finally:
+            AgentArtsRuntimeContext.set_workload_access_token(None)
 
 
 class TestHandle:

@@ -67,3 +67,5 @@ def test_on_message_uses_get_agent_handler():
 
     source = inspect.getsource(app.playground.on_message)
     assert "get_agent_handler" in source, "on_message should call get_agent_handler()"
+    assert "await handler.get_agent()" in source
+    assert "create_agent()" not in source

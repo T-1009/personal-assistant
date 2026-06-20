@@ -386,21 +386,35 @@ AgentHandler 直接调用 deepagents 的 `.invoke()` 或 `.astream()`：
 ```python
 class AgentHandler:
     def __init__(self):
-        from app.llm_config import get_model
-        self.model = get_model()  # 使用 canonical Settings + Identity credential
-        self.agent = create_deep_agent(
-            model=self.model,
+        self.checkpointer = self._init_checkpointer()
+        self.tools = build_tools()
+        self._bundle = None
+        self._bundle_lock = asyncio.Lock()
+
+    def _build_agent(self):
+        model = get_model()  # canonical Settings + Identity credential
+        return create_deep_agent(
+            model=model,
             system_prompt="你是 Personal Assistant...",
-            tools=[...],  # Identity SDK 装饰的工具
+            tools=self.tools,  # Identity SDK 装饰的工具
+            checkpointer=self.checkpointer,
         )
 
+    async def get_agent(self):
+        # TTL fast path → single-flight refresh → atomic Bundle swap
+        ...
+
     async def handle(self, message: str, user_id: str) -> str:
-        result = await self.agent.ainvoke({
+        agent = await self.get_agent()
+        result = await agent.ainvoke({
             "messages": [{"role": "user", "content": message}],
         })
         return result["messages"][-1].content
+```
 
----
+Model 和 compiled Agent 组成 process-scoped Agent Bundle，在
+`LLM_AGENT_BUNDLE_TTL_SECONDS` 内复用。Bundle refresh 不替换共享 Checkpointer，
+因此相同 `user_id + session_id` 的 checkpoint 状态连续。
 
 ## 6. LLM Provider 配置
 
@@ -413,7 +427,8 @@ AgentArts Runtime 或 CI/CD 注入同名环境变量。`app/settings.py` 使用 
 Settings 进行类型转换、约束校验和 fail-fast；它是内部代码，不是第二配置入口。
 
 LLM canonical settings 包括 `LLM_PROVIDER`、`LLM_MODEL`、
-`LLM_CREDENTIAL_PROVIDER`、可选 `LLM_BASE_URL` 和 sampling/timeout 参数。
+`LLM_CREDENTIAL_PROVIDER`、`LLM_AGENT_BUNDLE_TTL_SECONDS`、可选
+`LLM_BASE_URL` 和 timeout 参数。
 
 ### 6.2 Provider metadata 与 Secret
 

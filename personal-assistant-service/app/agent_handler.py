@@ -1,5 +1,9 @@
+import asyncio
 import json
+import time
 from collections.abc import AsyncGenerator
+from dataclasses import dataclass
+from typing import Any
 
 from deepagents import create_deep_agent
 
@@ -8,6 +12,14 @@ from app.settings import Settings, get_settings
 from app.tools import build_tools
 
 _handler_instance: "AgentHandler | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class AgentBundle:
+    """An immutable, renewable compiled Agent lifecycle unit."""
+
+    agent: Any
+    expires_at: float
 
 
 def get_agent_handler() -> "AgentHandler":
@@ -110,21 +122,43 @@ class AgentHandler:
         self.settings = settings or get_settings()
         self.checkpointer = self._init_checkpointer(self.settings)
         self.tools = build_tools()
-        self.model = None
-        self.agent = None
+        self._bundle: AgentBundle | None = None
+        self._bundle_lock = asyncio.Lock()
 
-    def create_agent(self):
-        """Create an agent with a fresh SDK-managed LLM API key."""
-        model = get_model()
-        agent = create_deep_agent(
+    def _build_agent(self):
+        """Synchronously build a compiled Agent from the current credential."""
+        model = get_model(settings=self.settings)
+        return create_deep_agent(
             model=model,
             system_prompt=SYSTEM_PROMPT,
             tools=self.tools,
             checkpointer=self.checkpointer,
         )
-        self.model = model
-        self.agent = agent
-        return agent
+
+    async def get_agent(self):
+        """Return the valid process-scoped Agent, refreshing it single-flight."""
+        bundle = self._bundle
+        if bundle is not None and time.monotonic() < bundle.expires_at:
+            return bundle.agent
+
+        async with self._bundle_lock:
+            bundle = self._bundle
+            if bundle is not None and time.monotonic() < bundle.expires_at:
+                return bundle.agent
+
+            agent = await asyncio.to_thread(self._build_agent)
+            self._bundle = AgentBundle(
+                agent=agent,
+                expires_at=(
+                    time.monotonic() + self.settings.llm_agent_bundle_ttl_seconds
+                ),
+            )
+            return agent
+
+    async def invalidate_agent_bundle(self) -> None:
+        """Invalidate the published Bundle without interrupting in-flight calls."""
+        async with self._bundle_lock:
+            self._bundle = None
 
     def _init_checkpointer(self, settings: Settings | None = None):
         """Select the Checkpointer from validated Settings."""
@@ -161,7 +195,7 @@ class AgentHandler:
     ) -> str:
         """Invoke the agent synchronously and return the final response."""
         config = self._build_config(user_id, session_id)
-        agent = self.create_agent()
+        agent = await self.get_agent()
         result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": message}]},
             config=config,
@@ -181,7 +215,7 @@ class AgentHandler:
         config = self._build_config(user_id, session_id)
 
         try:
-            agent = self.create_agent()
+            agent = await self.get_agent()
             async for chunk in agent.astream(
                 {"messages": [{"role": "user", "content": message}]},
                 stream_mode=["messages", "custom"],
