@@ -87,6 +87,23 @@ async def test_ping_returns_status_ok(client):
 # ---------------------------------------------------------------------------
 
 
+def test_invocations_openapi_documents_json_and_sse_responses():
+    """The generated OpenAPI contract documents both response media types."""
+    operation = app.openapi()["paths"]["/invocations"]["post"]
+    response = operation["responses"]["200"]
+    content = response["content"]
+    request_schema = operation["requestBody"]["content"]["application/json"]["schema"]
+
+    assert set(content) == {"application/json", "text/event-stream"}
+    assert content["application/json"]["schema"] == {
+        "$ref": "#/components/schemas/InvocationResponse"
+    }
+    assert content["text/event-stream"]["schema"]["type"] == "string"
+    assert request_schema["required"] == ["message"]
+    assert request_schema["properties"]["stream"]["type"] == "boolean"
+    assert set(operation["responses"]) >= {"200", "400", "406"}
+
+
 @pytest.mark.asyncio
 async def test_invocations_returns_response(client, fake_handler):
     """POST /invocations with valid payload returns 200 and response."""
@@ -297,10 +314,8 @@ async def test_invocations_invalid_json_returns_400(client):
 
 
 @pytest.mark.asyncio
-async def test_invocations_whitespace_only_passes_through(client, fake_handler):
-    """Whitespace-only message is NOT rejected — app uses `if not message`
-    which treats whitespace as truthy for synchronous invocations.
-    """
+async def test_invocations_whitespace_only_returns_400(client, fake_handler):
+    """Whitespace-only messages are rejected consistently in sync mode."""
     response = await client.post(
         "/invocations",
         json={"message": "   "},
@@ -309,9 +324,59 @@ async def test_invocations_whitespace_only_passes_through(client, fake_handler):
             SESSION_HEADER: "sess-test",
         },
     )
-    # Currently passes through; should be 400 after fix
-    assert response.status_code == 200
-    assert len(fake_handler.handle_calls) == 1
+    assert response.status_code == 400
+    assert response.json()["detail"] == "message is required"
+    assert fake_handler.handle_calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", ["false", "true", 0, 1, None])
+async def test_invocations_rejects_non_boolean_stream(client, fake_handler, stream):
+    """The stream selector accepts JSON booleans only."""
+    response = await client.post(
+        "/invocations",
+        json={"message": "Hello", "stream": stream},
+        headers={
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "stream must be a boolean"
+    assert fake_handler.handle_calls == []
+    assert fake_handler.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_invocations_rejects_non_object_body(client):
+    """The request body must be a JSON object."""
+    response = await client.post(
+        "/invocations",
+        json=["not", "an", "object"],
+        headers={
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "invalid request body"
+
+
+@pytest.mark.asyncio
+async def test_invocations_sync_rejects_incompatible_accept(client, fake_handler):
+    """Sync invocations reject an Accept header that excludes JSON."""
+    response = await client.post(
+        "/invocations",
+        json={"message": "Hello"},
+        headers={
+            "Accept": "text/event-stream",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
+        },
+    )
+    assert response.status_code == 406
+    assert response.json()["detail"] == "Accept header must allow application/json"
+    assert fake_handler.handle_calls == []
 
 
 # ---------------------------------------------------------------------------
@@ -416,6 +481,44 @@ async def test_invocations_stream_content_format(client):
 
 
 @pytest.mark.asyncio
+async def test_invocations_stream_rejects_incompatible_accept(client, fake_handler):
+    """Streaming invocations reject an Accept header that excludes SSE."""
+    response = await client.post(
+        "/invocations",
+        json={"message": "hello", "stream": True},
+        headers={
+            "Accept": "application/json",
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
+        },
+    )
+    assert response.status_code == 406
+    assert response.json()["detail"] == "Accept header must allow text/event-stream"
+    assert fake_handler.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_invocations_logs_selected_mode(client):
+    """Invocation logs distinguish sync and stream traffic."""
+    headers = {
+        USER_ID_HEADER: "test-user",
+        SESSION_HEADER: "sess-test",
+    }
+    with patch("app.main.logger.info") as mock_info:
+        await client.post("/invocations", json={"message": "hello"}, headers=headers)
+        await client.post(
+            "/invocations",
+            json={"message": "hello", "stream": True},
+            headers=headers,
+        )
+
+    assert mock_info.call_args_list == [
+        (("Invocation started mode=%s", "sync"),),
+        (("Invocation started mode=%s", "stream"),),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_invocations_stream_empty_message_returns_400(client):
     """POST /invocations with stream=true and empty message returns 400."""
     response = await client.post(
@@ -461,7 +564,7 @@ async def test_invocations_stream_whitespace_message_returns_400(client):
 
 @pytest.mark.asyncio
 async def test_old_invocations_stream_route_returns_404(client):
-    """GET /invocations/stream is removed for AgentArts ACCURATE_MATCH."""
+    """GET /invocations/stream remains removed after route consolidation."""
     response = await client.get("/invocations/stream?q=hello")
     assert response.status_code == 404
 

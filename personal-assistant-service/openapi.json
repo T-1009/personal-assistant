@@ -33,17 +33,23 @@
               "schema": {
                 "properties": {
                   "message": {
-                    "type": "string"
+                    "type": "string",
+                    "title": "Message",
+                    "description": "User message sent to the Agent."
                   },
                   "stream": {
                     "type": "boolean",
+                    "title": "Stream",
+                    "description": "Return a Server-Sent Events stream instead of JSON.",
                     "default": false
                   }
                 },
                 "type": "object",
                 "required": [
                   "message"
-                ]
+                ],
+                "title": "InvocationRequest",
+                "description": "Agent invocation request."
               }
             }
           },
@@ -51,14 +57,75 @@
         },
         "responses": {
           "200": {
-            "description": "Successful Response",
+            "description": "JSON response when stream is false, or a Server-Sent Events stream when stream is true.",
             "content": {
               "application/json": {
-                "schema": {}
+                "schema": {
+                  "$ref": "#/components/schemas/InvocationResponse"
+                }
+              },
+              "text/event-stream": {
+                "schema": {
+                  "type": "string",
+                  "description": "Server-Sent Events stream."
+                },
+                "example": "data: {\"token\":\"你\",\"done\":false}\n\ndata: {\"token\":\"\",\"done\":true}\n\n"
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid JSON or invocation request.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "406": {
+            "description": "The Accept header excludes the selected response type.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
               }
             }
           }
         }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ErrorResponse": {
+        "properties": {
+          "detail": {
+            "type": "string",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "required": [
+          "detail"
+        ],
+        "title": "ErrorResponse",
+        "description": "HTTP error response."
+      },
+      "InvocationResponse": {
+        "properties": {
+          "response": {
+            "type": "string",
+            "title": "Response"
+          }
+        },
+        "type": "object",
+        "required": [
+          "response"
+        ],
+        "title": "InvocationResponse",
+        "description": "Successful non-streaming invocation response."
       }
     }
   }

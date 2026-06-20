@@ -30,6 +30,7 @@ from fastapi.responses import (  # noqa: E402
     RedirectResponse,
     StreamingResponse,
 )
+from pydantic import BaseModel, Field, StrictBool, ValidationError  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 from app.auth import (  # noqa: E402
@@ -37,6 +38,79 @@ from app.auth import (  # noqa: E402
     extract_gateway_user_id,
     extract_workload_access_token,
 )
+
+
+class InvocationRequest(BaseModel):
+    """Agent invocation request."""
+
+    message: str = Field(description="User message sent to the Agent.")
+    stream: StrictBool = Field(
+        default=False,
+        description="Return a Server-Sent Events stream instead of JSON.",
+    )
+
+
+class InvocationResponse(BaseModel):
+    """Successful non-streaming invocation response."""
+
+    response: str
+
+
+class ErrorResponse(BaseModel):
+    """HTTP error response."""
+
+    detail: str
+
+
+def _parse_invocation_request(body: object) -> InvocationRequest:
+    """Validate an invocation body while preserving the public 400 contract."""
+    try:
+        invocation = InvocationRequest.model_validate(body)
+    except ValidationError as e:
+        errors = e.errors()
+        if any(error["loc"] == ("message",) for error in errors):
+            detail = "message is required"
+        elif any(error["loc"] == ("stream",) for error in errors):
+            detail = "stream must be a boolean"
+        else:
+            detail = "invalid request body"
+        raise HTTPException(status_code=400, detail=detail) from e
+
+    if not invocation.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+    return invocation
+
+
+def _accepts_media_type(accept: str | None, media_type: str) -> bool:
+    """Return whether an Accept header permits the selected response type."""
+    if not accept:
+        return True
+
+    expected_type, expected_subtype = media_type.lower().split("/", maxsplit=1)
+    for entry in accept.split(","):
+        parts = [part.strip() for part in entry.split(";")]
+        accepted_type = parts[0].lower()
+        if "/" not in accepted_type:
+            continue
+
+        quality = 1.0
+        for parameter in parts[1:]:
+            name, separator, value = parameter.partition("=")
+            if separator and name.strip().lower() == "q":
+                try:
+                    quality = float(value)
+                except ValueError:
+                    quality = 0.0
+        if quality <= 0:
+            continue
+
+        accepted_main, accepted_subtype = accepted_type.split("/", maxsplit=1)
+        if accepted_main in {"*", expected_type} and accepted_subtype in {
+            "*",
+            expected_subtype,
+        }:
+            return True
+    return False
 
 
 @asynccontextmanager
@@ -72,19 +146,41 @@ async def ping():
 
 @app.post(
     "/invocations",
+    response_model=InvocationResponse,
+    responses={
+        200: {
+            "description": (
+                "JSON response when stream is false, or a Server-Sent Events "
+                "stream when stream is true."
+            ),
+            "content": {
+                "text/event-stream": {
+                    "schema": {
+                        "type": "string",
+                        "description": "Server-Sent Events stream.",
+                    },
+                    "example": (
+                        'data: {"token":"你","done":false}\n\n'
+                        'data: {"token":"","done":true}\n\n'
+                    ),
+                }
+            },
+        },
+        400: {
+            "model": ErrorResponse,
+            "description": "Invalid JSON or invocation request.",
+        },
+        406: {
+            "model": ErrorResponse,
+            "description": "The Accept header excludes the selected response type.",
+        },
+    },
     openapi_extra={
         "requestBody": {
             "required": True,
             "content": {
                 "application/json": {
-                    "schema": {
-                        "type": "object",
-                        "required": ["message"],
-                        "properties": {
-                            "message": {"type": "string"},
-                            "stream": {"type": "boolean", "default": False},
-                        },
-                    }
+                    "schema": InvocationRequest.model_json_schema(),
                 }
             },
         }
@@ -97,20 +193,25 @@ async def invocations(request: Request):
     except JSONDecodeError as e:
         raise HTTPException(status_code=400, detail="invalid JSON body") from e
 
-    message = body.get("message", "")
-    stream = body.get("stream", False)
+    invocation = _parse_invocation_request(body)
+    message = invocation.message
+    stream = invocation.stream
     user_id = extract_gateway_user_id(request)
     session_id = extract_gateway_session_id(request)
     extract_workload_access_token(request)
 
-    if not message:
-        raise HTTPException(status_code=400, detail="message is required")
+    mode = "stream" if stream else "sync"
+    response_media_type = "text/event-stream" if stream else "application/json"
+    if not _accepts_media_type(request.headers.get("accept"), response_media_type):
+        raise HTTPException(
+            status_code=406,
+            detail=f"Accept header must allow {response_media_type}",
+        )
 
     handler: AgentHandler = request.app.state.agent_handler
+    logger.info("Invocation started mode=%s", mode)
 
     if stream:
-        if not message.strip():
-            raise HTTPException(status_code=400, detail="message is required")
 
         async def event_generator():
             try:
@@ -121,7 +222,11 @@ async def invocations(request: Request):
                 ):
                     yield sse_data
             except Exception as e:
-                logger.error(f"Stream generator error: {e}", exc_info=True)
+                logger.error(
+                    "Invocation failed mode=stream: %s",
+                    e,
+                    exc_info=True,
+                )
                 yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
 
         return StreamingResponse(
@@ -141,10 +246,10 @@ async def invocations(request: Request):
             session_id=session_id,
         )
     except Exception as e:
-        logger.error(f"Agent handler error: {e}", exc_info=True)
+        logger.error("Invocation failed mode=sync: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e)) from e
 
-    return JSONResponse(content={"response": result})
+    return JSONResponse(content=InvocationResponse(response=result).model_dump())
 
 
 # === Chainlit Playground（Agent 调试 UI）===
