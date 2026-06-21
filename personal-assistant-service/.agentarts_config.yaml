@@ -30,8 +30,8 @@ agents:
         vpc_config:
           vpc_id: ${AGENTARTS_VPC_ID}
           subnet_id: ${AGENTARTS_SUBNET_ID}
-          security_group_id:
-          - ${AGENTARTS_SECURITY_GROUP_ID}
+          security_group_ids:
+          - ${AGENTARTS_SECURITY_GROUP_IDS}
       identity_configuration:
         authorizer_type: CUSTOM_JWT
         authorizer_configuration:

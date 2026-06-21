@@ -92,7 +92,7 @@ jobs:
           LLM_CREDENTIAL_PROVIDER: ${{ vars.LLM_CREDENTIAL_PROVIDER }}
           AGENTARTS_VPC_ID: ${{ vars.AGENTARTS_VPC_ID }}
           AGENTARTS_SUBNET_ID: ${{ vars.AGENTARTS_SUBNET_ID }}
-          AGENTARTS_SECURITY_GROUP_ID: ${{ vars.AGENTARTS_SECURITY_GROUP_ID }}
+          AGENTARTS_SECURITY_GROUP_IDS: ${{ vars.AGENTARTS_SECURITY_GROUP_IDS }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
         run: |
           cd personal-assistant-service
@@ -104,7 +104,7 @@ jobs:
             LLM_CREDENTIAL_PROVIDER \
             AGENTARTS_VPC_ID \
             AGENTARTS_SUBNET_ID \
-            AGENTARTS_SECURITY_GROUP_ID \
+            AGENTARTS_SECURITY_GROUP_IDS \
             POSTGRES_DSN
           do
             test -n "$(printenv "$name")" || {

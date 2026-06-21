@@ -38,6 +38,11 @@ flowchart LR
 7. 创建 `personal_assistant` Database 和 `pa_app` Application Role。
 8. Password 仅通过敏感 OpenTofu Variable 注入，不进入 Git 或 Output。
 
+AgentArts SDK 0.1.3 的 `VpcConfig` model 错误地声明了单数字段
+`security_group_id`，但 AgentArts Private Connector API 实际要求
+`security_group_ids`。部署 YAML 必须使用复数字段；SDK 的 `extra = "allow"`
+会将其透传到 API。
+
 ## Service
 
 1. 新增 `langgraph-checkpoint-postgres` 依赖。
