@@ -30,7 +30,8 @@ flowchart LR
 
 1. OpenTofu 使用 Data Source 引用现有 VPC/Subnet，不接管其 lifecycle。
 2. 创建 `pa-runtime-sg` 与 `pa-rds-sg`。
-3. `pa-rds-sg` 仅允许 `pa-runtime-sg` 访问 TCP 5432。
+3. `pa-rds-sg` 仅允许 Runtime 所在私有 Subnet CIDR 访问 TCP 5432。AgentArts
+   使用托管 ENI，跨平台边界不依赖来源 Security Group 引用语义。
 4. 创建按需、Single、SSD 云盘 40 GB 的 `pa-postgresql`。
 5. 不绑定 EIP，不开启磁盘加密，不开启自动扩容。
 6. 自动备份保留 7 天。
@@ -67,4 +68,3 @@ flowchart LR
 | 40 GB 无自动扩容 | 设置容量告警并维护人工扩容 Runbook |
 | Password 已出现在会话记录 | 首次连通后立即轮换为随机 Secret |
 | Single Instance 无 HA | 当前成本优先；生产 SLA 提升时迁移为 Primary/Standby |
-

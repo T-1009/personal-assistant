@@ -202,7 +202,8 @@ flowchart LR
 - Runtime 与 RDS 位于同一 VPC，或位于已经建立受控路由的 VPC；
 - 不使用 `default` Security Group。为 Runtime 和 RDS 分别创建
   `pa-runtime-sg`、`pa-rds-sg`；
-- `pa-rds-sg` 仅允许来自 `pa-runtime-sg` 的 TCP 5432 Ingress；
+- `pa-rds-sg` 仅允许 Runtime 所在私有 Subnet CIDR 的 TCP 5432 Ingress；
+  AgentArts 使用托管 ENI，不依赖来源 Security Group 引用跨平台传播；
 - RDS 不绑定 EIP；若 Runtime 的 VPC Mode 无默认公网 Egress，使用 NAT Gateway
   + SNAT + EIP，仅提供主动出站；
 - `root` 仅用于实例初始化和管理。应用连接使用独立的 least-privilege Role，
