@@ -2,19 +2,22 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 import httpx
 from agentarts.sdk import require_access_token
 from langchain_core.tools import tool
+from langgraph.config import get_stream_writer
 
 from app.identity import (
     AuthorizationRequired,
-    GitHubAuthorizationRequiredPoller,
     capture_github_authorization_url,
     get_gitee_provider_name,
 )
+
+logger = logging.getLogger(__name__)
 
 GITEE_API_BASE_URL = "https://gitee.com/api/v5"
 DEFAULT_GITEE_SCOPES = ("user_info", "projects")
@@ -23,6 +26,29 @@ GiteeVisibility = Literal["all", "public", "private"]
 GiteeRepoType = Literal["all", "owner", "personal", "member", "public", "private"]
 GiteeSort = Literal["created", "updated", "pushed", "full_name"]
 GiteeDirection = Literal["asc", "desc"]
+
+
+async def handle_auth_url(auth_url: str) -> None:
+    """Push the Gitee authorization URL to the frontend as an auth card."""
+    capture_github_authorization_url(auth_url)
+    logger.info("Gitee authorization required — auth URL: %s", auth_url)
+    try:
+        writer = get_stream_writer()
+        writer(
+            {
+                "type": "system_message",
+                "system_message": "Gitee 功能需要您的授权。请点击该链接进行授权",
+                "auth_url": auth_url,
+                "auth_required": True,
+                "provider": get_gitee_provider_name(),
+            }
+        )
+    except RuntimeError:
+        logger.warning(
+            "get_stream_writer unavailable (not in graph context) — "
+            "Gitee auth URL not streamed: %s",
+            auth_url,
+        )
 
 
 @dataclass(slots=True)
@@ -98,10 +124,8 @@ async def _raw_gitee_request(
     provider_name=get_gitee_provider_name(),
     into="access_token",
     scopes=list(DEFAULT_GITEE_SCOPES),
-    on_auth_url=capture_github_authorization_url,
+    on_auth_url=handle_auth_url,
     auth_flow="USER_FEDERATION",
-    force_authentication=False,
-    token_poller=GitHubAuthorizationRequiredPoller(provider_name=get_gitee_provider_name()),
 )
 async def _gitee_request(
     method: str,

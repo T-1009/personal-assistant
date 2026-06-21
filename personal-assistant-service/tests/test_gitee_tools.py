@@ -2,10 +2,44 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from app.identity import AuthorizationRequired
+from app.tools import gitee_tools as gt
 from app.tools.gitee_tools import list_repositories
+
+
+@pytest.mark.asyncio
+async def test_handle_auth_url_writes_auth_card():
+    writer = MagicMock()
+    with (
+        patch("app.tools.gitee_tools.get_stream_writer", return_value=writer),
+        patch("app.tools.gitee_tools.capture_github_authorization_url") as capture,
+    ):
+        await gt.handle_auth_url("https://example.test/gitee-auth")
+
+    capture.assert_called_once_with("https://example.test/gitee-auth")
+    writer.assert_called_once()
+    event = writer.call_args.args[0]
+    assert event["auth_url"] == "https://example.test/gitee-auth"
+    assert event["auth_required"] is True
+    assert event["provider"] == gt.get_gitee_provider_name()
+
+
+@pytest.mark.asyncio
+async def test_handle_auth_url_without_stream_context_is_graceful():
+    with (
+        patch(
+            "app.tools.gitee_tools.get_stream_writer",
+            side_effect=RuntimeError("not in graph context"),
+        ),
+        patch("app.tools.gitee_tools.logger") as logger,
+    ):
+        await gt.handle_auth_url("https://example.test/gitee-auth")
+
+    logger.warning.assert_called_once()
 
 
 @pytest.mark.asyncio
