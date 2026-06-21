@@ -17,7 +17,7 @@ Personal Assistant 项目的架构决策记录。采用 [Michael Nygard 的 ADR 
 | [ADR-009](ADR-009-deepagents.md) | deepagents 替代 LangGraph 裸用 | Accepted | 用 deepagents harness 替代手写 StateGraph，底层仍是 LangGraph |
 | [ADR-010](ADR-010-astral-ecosystem-tooling.md) | Astral 生态工具链（uv + ruff） | Accepted | uv 管理包和虚拟环境，ruff 负责 linting 和 formatting |
 | [ADR-011](ADR-011-multi-llm-provider.md) | 多 LLM Provider 可配置架构 | Accepted (Amended 2026-06-19) | `.env.example` + typed Settings；Provider metadata 随代码发布，Secret 来自 AgentArts Identity |
-| [ADR-012](ADR-012-database-postgresql.md) | 持久化数据库选型 | Accepted | PostgreSQL 16，本地 Docker Compose，生产华为云 RDS，SQLAlchemy 2.0 async + asyncpg |
+| [ADR-012](ADR-012-database-postgresql.md) | 持久化数据库选型 | Accepted (Amended 2026-06-21) | PostgreSQL 17，本地 Docker Compose，生产华为云 RDS 私网部署，SQLAlchemy 2.0 async + asyncpg |
 | [ADR-013](ADR-013-assistant-ui-chat-library.md) | AI Chat UI 组件库选型 | Accepted | assistant-ui 替代 shadcn/ui 作为 Web Chat 组件库，保留 Chainlit 为 Playground |
 | [ADR-014](ADR-014-netlify-edge-function-auth-proxy.md) | Netlify Proxy 与生产 CORS 直连评估 | Superseded by ADR-017 | 证实 Gateway `OPTIONS` 401 阻断 Browser CORS 直连 |
 | [ADR-015](ADR-015-obs-cdn-path-routing-no-cors.md) | OBS + CDN 路径分发同域部署 | Superseded by ADR-017 | 无自定义域名时不实施，改用 Cloudflare Pages Function |

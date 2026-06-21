@@ -121,12 +121,18 @@ class AgentHandler:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         self.checkpointer = self._init_checkpointer(self.settings)
+        self._checkpointer_context = None
+        self._startup_lock = asyncio.Lock()
         self.tools = build_tools()
         self._bundle: AgentBundle | None = None
         self._bundle_lock = asyncio.Lock()
 
     def _build_agent(self):
         """Synchronously build a compiled Agent from the current credential."""
+        if self.checkpointer is None:
+            raise RuntimeError(
+                "AgentHandler.startup() must initialize the Checkpointer"
+            )
         model = get_model(settings=self.settings)
         return create_deep_agent(
             model=model,
@@ -137,6 +143,7 @@ class AgentHandler:
 
     async def get_agent(self):
         """Return the valid process-scoped Agent, refreshing it single-flight."""
+        await self.startup()
         bundle = self._bundle
         if bundle is not None and time.monotonic() < bundle.expires_at:
             return bundle.agent
@@ -161,25 +168,64 @@ class AgentHandler:
             self._bundle = None
 
     def _init_checkpointer(self, settings: Settings | None = None):
-        """Select the Checkpointer from validated Settings."""
+        """Initialize the synchronous Checkpointer or defer persistent backends."""
         current = settings or get_settings()
 
-        # PostgresSaver — 生产环境（留桩，未测试）
-        if current.postgres_dsn:
-            from langgraph.checkpoint.postgres import PostgresSaver
-
-            return PostgresSaver.from_conn_string(current.postgres_dsn)
-
-        # AsyncSqliteSaver — 本地持久化
-        if current.sqlite_db_path:
-            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
-            return AsyncSqliteSaver.from_conn_string(str(current.sqlite_db_path))
+        # Async persistent backends require an event loop and are opened by startup().
+        if current.postgres_dsn or current.sqlite_db_path:
+            return None
 
         # InMemorySaver — 默认（开发/调试/测试）
         from langgraph.checkpoint.memory import InMemorySaver
 
         return InMemorySaver()
+
+    async def startup(self) -> None:
+        """Open and migrate the configured persistent Checkpointer backend."""
+        if self.checkpointer is not None:
+            return
+
+        async with self._startup_lock:
+            if self.checkpointer is not None:
+                return
+
+            if self.settings.postgres_dsn:
+                from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+                context = AsyncPostgresSaver.from_conn_string(
+                    self.settings.postgres_dsn
+                )
+            elif self.settings.sqlite_db_path:
+                from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+                context = AsyncSqliteSaver.from_conn_string(
+                    str(self.settings.sqlite_db_path)
+                )
+            else:
+                raise RuntimeError("No Checkpointer backend is configured")
+
+            checkpointer = await context.__aenter__()
+            try:
+                if self.settings.postgres_dsn:
+                    await checkpointer.setup()
+            except Exception:
+                await context.__aexit__(None, None, None)
+                raise
+
+            self._checkpointer_context = context
+            self.checkpointer = checkpointer
+
+    async def shutdown(self) -> None:
+        """Close the persistent Checkpointer connection pool."""
+        async with self._startup_lock:
+            context = self._checkpointer_context
+            if context is None:
+                return
+
+            self._bundle = None
+            self.checkpointer = None
+            self._checkpointer_context = None
+            await context.__aexit__(None, None, None)
 
     @staticmethod
     def _build_config(user_id: str, session_id: str | None = None) -> dict:

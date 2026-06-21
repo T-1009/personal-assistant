@@ -26,11 +26,12 @@ agents:
         file_transfer_config: null
         url_match_type: PREFIX_MATCH
       network_config:
-        network_mode: PUBLIC
+        network_mode: VPC
         vpc_config:
-          vpc_id: null
-          subnet_id: null
-          security_group_id: []
+          vpc_id: ${AGENTARTS_VPC_ID}
+          subnet_id: ${AGENTARTS_SUBNET_ID}
+          security_group_id:
+          - ${AGENTARTS_SECURITY_GROUP_ID}
       identity_configuration:
         authorizer_type: CUSTOM_JWT
         authorizer_configuration:
@@ -63,6 +64,8 @@ agents:
         value: ${LLM_MODEL}
       - key: LLM_CREDENTIAL_PROVIDER
         value: ${LLM_CREDENTIAL_PROVIDER}
+      - key: POSTGRES_DSN
+        value: ${POSTGRES_DSN}
       tags:
       - key: app
         value: personal-assistant

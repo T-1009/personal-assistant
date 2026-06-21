@@ -131,10 +131,15 @@ async def lifespan(app: FastAPI):
     except ValueError as e:
         raise RuntimeError(f"LLM 配置错误: {e}") from e
 
-    # Initialize agent handler
-    app.state.agent_handler = get_agent_handler()
+    # Initialize the shared handler and persistent Checkpointer before serving.
+    handler = get_agent_handler()
+    await handler.startup()
+    app.state.agent_handler = handler
 
-    yield
+    try:
+        yield
+    finally:
+        await handler.shutdown()
 
 
 app = FastAPI(

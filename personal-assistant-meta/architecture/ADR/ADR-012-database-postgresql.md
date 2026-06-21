@@ -1,6 +1,6 @@
 # ADR-012: 持久化数据库选型
 
-> 状态：Accepted | 日期：2026-06-07
+> 状态：Accepted（2026-06-21 修订） | 日期：2026-06-07
 
 ---
 
@@ -19,11 +19,16 @@ Personal Assistant 的核心存储——对话历史和用户偏好——由 Age
 
 ## 决策
 
-**使用 PostgreSQL 16，本地开发用 Docker Compose，生产走华为云 RDS PostgreSQL。**
+**使用 PostgreSQL 17，本地开发用 Docker Compose，生产走华为云 RDS for
+PostgreSQL。**
+
+2026-06-21 修订：目标 Region `cn-southwest-2` 已通过 HuaweiCloud Provider
+实时查询确认 PostgreSQL 17 可售，PostgreSQL 18 返回 `Invalid database version`。
+因此将原 PostgreSQL 16 基线升级为当前区域最新可用的 PostgreSQL 17。
 
 选择依据：
 
-| 因素 | PostgreSQL 16 | SQLite | MySQL 8.0 | GaussDB | Redis | MongoDB |
+| 因素 | PostgreSQL 17 | SQLite | MySQL 8.0 | GaussDB | Redis | MongoDB |
 |------|:---:|:---:|:---:|:---:|:---:|:---:|
 | **关系型数据建模** | ✅ 最强（CTE、窗口函数、JSONB） | ✅ 基础 SQL | ⚠️ 弱于 PG（无 DISTINCT ON、LATERAL 有限） | ✅ PG 兼容 | ❌ 非关系型 | ❌ 文档型不适配 |
 | **并发 / 连接池** | ✅ 原生连接池，生产级 | ❌ 单写者，多容器并发锁竞争 | ✅ 连接池 | ✅ 同 PG | ✅ 但用错工具 | ✅ 但用错工具 |
@@ -79,13 +84,13 @@ Redis 的正确角色是 Cache / Session Store，不是 primary database：
 
 ### 本地开发策略
 
-使用 Docker Compose 起 PostgreSQL 16，Zero-config 可选方案：
+使用 Docker Compose 起 PostgreSQL 17，Zero-config 可选方案：
 
 ```yaml
 # docker-compose.yml（项目根目录）
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:17-alpine
     environment:
       POSTGRES_USER: pa
       POSTGRES_PASSWORD: pa_dev
@@ -164,31 +169,83 @@ CREATE INDEX idx_oauth_tokens_mapping ON oauth_tokens(mapping_id);
 | Feature 4（Inbound Identity） | ✅ | `user_channel_mapping` + `oauth_tokens` |
 | Feature 6-8（Tools） | ✅ | `tool_configs` |
 
-### IaC 生产部署
+### 生产 RDS Baseline
 
-生产环境走华为云 RDS PostgreSQL，CDKTF 代码（ADR-006 已预留结构）：
+生产基础资源由 OpenTofu + HCL 管理（ADR-006）。初始部署采用低成本、可升级的
+Baseline：
 
-```typescript
-// infra/stacks/pa-stack.ts
-import { RdsInstance } from "@cdktf-provider-huaweicloud/rds";
+| 配置项 | Baseline | 说明 |
+|--------|----------|------|
+| Region | `cn-southwest-2` | 与 AgentArts Runtime 同 Region |
+| 计费 | `postPaid`（按需） | 适合早期负载，避免预付费锁定 |
+| Engine | PostgreSQL 17 | 2026-06-21 实测的区域最新可用 Major Version |
+| Instance Mode | Single | 初期成本优先；达到生产可用性要求后升级 HA |
+| Flavor | 通用型 1 vCPU / 2 GB | 当前流量起步规格，以上线监控数据决定扩容 |
+| Storage | SSD 云盘 40 GB | 开启使用率告警；建议启用自动扩容或预设扩容 Runbook |
+| Availability Zone | 可用区 4 | 与目标 Subnet 和 Flavor 库存保持一致 |
+| Parameter Template | `Default-PostgreSQL-17` | 初期不做未经基准测试的参数调优 |
+| Timezone | `UTC+08:00` | 业务时间；数据字段仍统一使用 `TIMESTAMPTZ` |
+| Backup | 每日自动备份，保留 7 天 | 上线前必须完成一次恢复演练 |
+| Disk Encryption | KMS 加密 | 数据包含身份映射和 credential material，创建时启用 |
+| Public EIP | 不绑定 | RDS 仅允许私网访问 |
 
-new RdsInstance(this, "pa-db", {
-  name: "personal-assistant-db",
-  flavor: "rds.pg.c2.medium.2",  // 2 vCPU, 4 GB（初期够用）
-  availabilityZone: ["cn-southwest-2a"],
-  db: {
-    type: "PostgreSQL",
-    version: "16",
-    password: process.env.RDS_PASSWORD!,
-  },
-  vpcId: vpc.id,
-  subnetId: subnet.id,
-});
+```mermaid
+flowchart LR
+    Gateway["AgentArts Gateway"] --> Runtime["AgentArts Runtime<br/>VPC Mode"]
+    Runtime -->|"Private network :5432"| RDS["RDS PostgreSQL 17<br/>No EIP"]
+    Runtime --> NAT["NAT Gateway + EIP<br/>only if outbound Internet is required"]
+    NAT --> External["DeepSeek / Microsoft Graph"]
+```
+
+网络与权限约束：
+
+- Runtime 与 RDS 位于同一 VPC，或位于已经建立受控路由的 VPC；
+- 不使用 `default` Security Group。为 Runtime 和 RDS 分别创建
+  `pa-runtime-sg`、`pa-rds-sg`；
+- `pa-rds-sg` 仅允许来自 `pa-runtime-sg` 的 TCP 5432 Ingress；
+- RDS 不绑定 EIP；若 Runtime 的 VPC Mode 无默认公网 Egress，使用 NAT Gateway
+  + SNAT + EIP，仅提供主动出站；
+- `root` 仅用于实例初始化和管理。应用连接使用独立的 least-privilege Role，
+  例如 `pa_app`，不得使用 `root`；
+- RDS 管理密码不得写入 HCL、tfvars、Git 或 Output，必须通过受保护的 Secret
+  注入；
+- OpenTofu Cloud Resource Name 遵循 `pa-` 前缀，实例名使用
+  `pa-postgresql`。
+
+核心 OpenTofu 形态：
+
+```hcl
+resource "huaweicloud_rds_instance" "postgresql" {
+  name              = "pa-postgresql"
+  charging_mode     = "postPaid"
+  flavor            = var.rds_flavor
+  vpc_id            = huaweicloud_vpc.main.id
+  subnet_id         = huaweicloud_vpc_subnet.rds.id
+  security_group_id = huaweicloud_networking_secgroup.rds.id
+  availability_zone = [var.rds_availability_zone]
+
+  db {
+    type     = "PostgreSQL"
+    version  = "17"
+    password = var.rds_admin_password
+  }
+
+  volume {
+    type               = "CLOUDSSD"
+    size               = 40
+    disk_encryption_id = var.rds_kms_key_id
+  }
+
+  backup_strategy {
+    start_time = "18:00-19:00"
+    keep_days  = 7
+  }
+}
 ```
 
 ## 参考
 
 - `ADR-003` — AgentArts 平台作为基础设施（Memory Service 托管对话存储）
-- `ADR-006` — IaC 工具选型 CDKTF（RDS Typed 配置）
+- `ADR-006` — IaC 工具选型（OpenTofu + HCL）
 - `architecture/devops/cicd.md` #4 — RDS PostgreSQL 触发条件
 - `issues/features/feature-4-inbound-identity/issue.md` — Inbound Identity Feature Spec

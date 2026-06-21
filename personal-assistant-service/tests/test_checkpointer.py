@@ -88,46 +88,55 @@ class TestInitCheckpointer:
             f"Expected InMemorySaver, got {type(result).__name__}"
         )
 
-    def test_init_checkpointer_sqlite_from_settings(self):
-        """SQLITE_DB_PATH setting → returns AsyncSqliteSaver instance."""
-        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-
+    def test_init_checkpointer_sqlite_is_deferred_until_startup(self):
+        """SQLITE_DB_PATH defers async Checkpointer creation until startup."""
         settings = Settings(
             _env_file=None,
             sqlite_db_path="/tmp/test-checkpoint.sqlite",
         )
 
-        # Patch from_conn_string to avoid actual SQLite connection
-        with patch.object(AsyncSqliteSaver, "from_conn_string") as mock_from:
-            mock_checkpointer = MagicMock(spec=AsyncSqliteSaver)
-            mock_from.return_value = mock_checkpointer
+        handler = self._make_uninitialized_handler()
+        assert handler._init_checkpointer(settings) is None
 
-            handler = self._make_uninitialized_handler()
-            result = handler._init_checkpointer(settings)
-
-            assert result is mock_checkpointer, (
-                f"Expected mocked AsyncSqliteSaver, got {type(result).__name__}"
-            )
-            mock_from.assert_called_once_with("/tmp/test-checkpoint.sqlite")
-
-    def test_init_checkpointer_postgres_from_settings(self):
-        """POSTGRES_DSN setting selects PostgresSaver."""
+    def test_init_checkpointer_postgres_is_deferred_until_startup(self):
+        """POSTGRES_DSN defers async Checkpointer creation until startup."""
         settings = Settings(
             _env_file=None,
             postgres_dsn="postgresql://localhost/test",
         )
 
-        # PostgresSaver module is not installed — we expect an ImportError
-        # that surfaces as ModuleNotFoundError (stub behavior).
-        # This test verifies that the Postgres path is attempted first.
         handler = self._make_uninitialized_handler()
+        assert handler._init_checkpointer(settings) is None
 
-        with pytest.raises(ImportError) as exc_info:
-            handler._init_checkpointer(settings)
+    @pytest.mark.asyncio
+    async def test_startup_opens_and_sets_up_postgres_checkpointer(self):
+        """startup() opens AsyncPostgresSaver and applies its schema."""
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
-        assert "langgraph.checkpoint.postgres" in str(exc_info.value), (
-            f"Expected PostgresSaver import error, got: {exc_info.value}"
+        settings = Settings(
+            _env_file=None,
+            postgres_dsn="postgresql://localhost/test",
         )
+        checkpointer = MagicMock(spec=AsyncPostgresSaver)
+        checkpointer.setup = AsyncMock()
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=checkpointer)
+        context.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(
+            AsyncPostgresSaver,
+            "from_conn_string",
+            return_value=context,
+        ) as mock_from:
+            handler = AgentHandler(settings=settings)
+            await handler.startup()
+
+            assert handler.checkpointer is checkpointer
+            mock_from.assert_called_once_with("postgresql://localhost/test")
+            checkpointer.setup.assert_awaited_once()
+
+            await handler.shutdown()
+            context.__aexit__.assert_awaited_once_with(None, None, None)
 
 
 # ---------------------------------------------------------------------------

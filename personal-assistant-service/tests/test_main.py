@@ -23,6 +23,14 @@ class FakeAgentHandler:
         self.handle_calls: list[tuple] = []
         self.stream_calls: list[tuple] = []
         self._handle_response = handle_response
+        self.startup_calls = 0
+        self.shutdown_calls = 0
+
+    async def startup(self):
+        self.startup_calls += 1
+
+    async def shutdown(self):
+        self.shutdown_calls += 1
 
     async def handle(
         self, message: str, user_id: str = "anonymous", session_id: str | None = None
@@ -429,6 +437,8 @@ async def test_lifespan_sets_agent_handler(fake_handler):
     with patch("app.llm_config.validate_model_config"):
         async with lifespan(test_app):
             assert test_app.state.agent_handler is fake_handler
+            assert fake_handler.startup_calls == 1
+        assert fake_handler.shutdown_calls == 1
 
 
 # ---------------------------------------------------------------------------
