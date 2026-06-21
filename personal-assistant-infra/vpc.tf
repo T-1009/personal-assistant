@@ -23,8 +23,8 @@ resource "huaweicloud_networking_secgroup_rule" "rds_postgresql_from_runtime" {
   ethertype         = "IPv4"
   protocol          = "tcp"
   ports             = "5432"
-  remote_ip_prefix  = data.huaweicloud_vpc_subnet.main.cidr
+  remote_ip_prefix  = "0.0.0.0/0"
   action            = "allow"
   priority          = 1
-  description       = "Allow PostgreSQL from the private Runtime subnet."
+  description       = "Allow PostgreSQL from any routed IPv4 source."
 }
