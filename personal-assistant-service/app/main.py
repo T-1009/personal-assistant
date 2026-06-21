@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from json import JSONDecodeError
 from pathlib import Path
@@ -68,8 +69,13 @@ def _parse_invocation_request(body: object) -> InvocationRequest:
         invocation = InvocationRequest.model_validate(body)
     except ValidationError as e:
         errors = e.errors()
-        if any(error["loc"] == ("message",) for error in errors):
+        if any(
+            error["loc"] == ("message",) and error["type"] == "missing"
+            for error in errors
+        ):
             detail = "message is required"
+        elif any(error["loc"] == ("message",) for error in errors):
+            detail = "message must be a string"
         elif any(error["loc"] == ("stream",) for error in errors):
             detail = "stream must be a boolean"
         else:
@@ -209,11 +215,13 @@ async def invocations(request: Request):
         )
 
     handler: AgentHandler = request.app.state.agent_handler
+    started_at = time.perf_counter()
     logger.info("Invocation started mode=%s", mode)
 
     if stream:
 
         async def event_generator():
+            status = "cancelled"
             try:
                 async for sse_data in handler.handle_stream(
                     message=message,
@@ -221,13 +229,22 @@ async def invocations(request: Request):
                     session_id=session_id,
                 ):
                     yield sse_data
+                status = "success"
             except Exception as e:
+                status = "error"
                 logger.error(
-                    "Invocation failed mode=stream: %s",
+                    "Invocation failed mode=stream duration_ms=%.2f: %s",
+                    (time.perf_counter() - started_at) * 1000,
                     e,
                     exc_info=True,
                 )
                 yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+            finally:
+                logger.info(
+                    "Invocation completed mode=stream status=%s duration_ms=%.2f",
+                    status,
+                    (time.perf_counter() - started_at) * 1000,
+                )
 
         return StreamingResponse(
             event_generator(),
@@ -246,9 +263,18 @@ async def invocations(request: Request):
             session_id=session_id,
         )
     except Exception as e:
-        logger.error("Invocation failed mode=sync: %s", e, exc_info=True)
+        logger.error(
+            "Invocation failed mode=sync duration_ms=%.2f: %s",
+            (time.perf_counter() - started_at) * 1000,
+            e,
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=str(e)) from e
 
+    logger.info(
+        "Invocation completed mode=sync status=success duration_ms=%.2f",
+        (time.perf_counter() - started_at) * 1000,
+    )
     return JSONResponse(content=InvocationResponse(response=result).model_dump())
 
 

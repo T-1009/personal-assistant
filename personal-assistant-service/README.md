@@ -107,6 +107,15 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
 
 `/invocations` 需要可信用户身份和会话 ID。生产环境由 AgentArts Gateway 注入；本地直连时需要显式传入 `X-HW-AgentGateway-User-Id` 和 `x-hw-agentarts-session-id`。
 
+`message` 必须是非空字符串，`stream` 仅接受 JSON boolean。客户端未发送
+`Accept` 或发送 `*/*` 时保持兼容；若明确排除实际响应类型，服务返回 `406`：
+
+- sync：`application/json`
+- streaming：`text/event-stream`
+
+invocation 日志包含 `mode`、完成状态和 `duration_ms`，可分别统计 sync/stream
+延迟与错误率。
+
 ### OpenAPI 规范
 
 `openapi.json` 是从当前 FastAPI app 自动生成并提交到 repository 的

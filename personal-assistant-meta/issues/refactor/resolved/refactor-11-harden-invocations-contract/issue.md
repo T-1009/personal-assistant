@@ -20,7 +20,7 @@ status: done
 - `stream` 仅接受 JSON boolean，同时保持既有 HTTP 400 错误语义
 - sync 与 streaming 统一拒绝空白 `message`
 - 缺省或通配 `Accept` 保持兼容；明确排除目标 media type 时返回 406
-- invocation 日志增加 `mode=sync|stream`
+- invocation 日志增加 `mode=sync|stream`、完成状态和 `duration_ms`
 - OpenAPI 自动生成 JSON 与 `text/event-stream` 两种 200 response media type
 
 ## Expected Result

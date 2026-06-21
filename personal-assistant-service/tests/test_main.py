@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from unittest.mock import patch
+from unittest.mock import ANY, patch
 
 import httpx
 import pytest
@@ -363,6 +363,21 @@ async def test_invocations_rejects_non_object_body(client):
 
 
 @pytest.mark.asyncio
+async def test_invocations_rejects_non_string_message(client):
+    """The message field accepts strings only."""
+    response = await client.post(
+        "/invocations",
+        json={"message": 123},
+        headers={
+            USER_ID_HEADER: "test-user",
+            SESSION_HEADER: "sess-test",
+        },
+    )
+    assert response.status_code == 400
+    assert response.json()["detail"] == "message must be a string"
+
+
+@pytest.mark.asyncio
 async def test_invocations_sync_rejects_incompatible_accept(client, fake_handler):
     """Sync invocations reject an Accept header that excludes JSON."""
     response = await client.post(
@@ -512,10 +527,17 @@ async def test_invocations_logs_selected_mode(client):
             headers=headers,
         )
 
-    assert mock_info.call_args_list == [
-        (("Invocation started mode=%s", "sync"),),
-        (("Invocation started mode=%s", "stream"),),
-    ]
+    mock_info.assert_any_call("Invocation started mode=%s", "sync")
+    mock_info.assert_any_call(
+        "Invocation completed mode=sync status=success duration_ms=%.2f",
+        ANY,
+    )
+    mock_info.assert_any_call("Invocation started mode=%s", "stream")
+    mock_info.assert_any_call(
+        "Invocation completed mode=stream status=%s duration_ms=%.2f",
+        "success",
+        ANY,
+    )
 
 
 @pytest.mark.asyncio
