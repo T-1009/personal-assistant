@@ -89,4 +89,4 @@ Zone 与 `pa-terraform-state`，删除 CNAME 和 Legacy website bucket。
 - [ADR-006 IaC 选型](../personal-assistant-meta/architecture/ADR/ADR-006-iac-cdktf-typescript.md)
 - [Cloudflare Pages](../personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md)
 - [CI/CD 架构](../personal-assistant-meta/architecture/devops/cicd.md)
-- [Legacy domain 记录](../personal-assistant-meta/architecture/cloud-service/domain.md)
+- [Legacy domain 记录](../personal-assistant-meta/architecture/cloud-service/huaweicloud/domain.md)

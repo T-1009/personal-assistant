@@ -846,8 +846,8 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 
 > 本节保留历史排障信息。Production Frontend 已迁移到 Cloudflare Pages，
 > 当前拓扑与运维命令见
-> [`cloudflare/pages.md`](./cloudflare/pages.md) 和
-> [ADR-017](../ADR/ADR-017-cloudflare-pages-proxy.md)。
+> [`cloudflare/pages.md`](../cloudflare/pages.md) 和
+> [ADR-017](../../ADR/ADR-017-cloudflare-pages-proxy.md)。
 
 | 方案 | 超时 | 注入 header | CORS | 适用场景 |
 |------|:---:|:---:|:---:|---------|
