@@ -66,6 +66,10 @@ agents:
         value: ${LLM_CREDENTIAL_PROVIDER}
       - key: POSTGRES_DSN
         value: ${POSTGRES_DSN}
+      - key: HUAWEICLOUD_SDK_AK
+        value: ${HUAWEICLOUD_SDK_AK}
+      - key: HUAWEICLOUD_SDK_SK
+        value: ${HUAWEICLOUD_SDK_SK}
       tags:
       - key: app
         value: personal-assistant
