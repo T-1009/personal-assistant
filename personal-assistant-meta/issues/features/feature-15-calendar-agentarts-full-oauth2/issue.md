@@ -71,6 +71,62 @@ sequenceDiagram
     Agent-->>UI: 返回日程摘要
 ```
 
+## Callback URL 约定
+
+本 Feature 采用“双 URL”模型，区分 OAuth2 浏览器 redirect 与后端 session binding：
+
+```text
+# 用户浏览器可见，配置到 Microsoft Entra App 与 AgentArts Allowed Resource OAuth2 Return URL
+GET https://<frontend-domain>/auth/callback/m365-calendar
+
+# 前端 callback page 调用，实际完成 AgentArts Resource Token Auth session binding
+POST https://<frontend-domain>/invocations/auth/oauth2/complete
+```
+
+生产环境逐层映射：
+
+```text
+Browser:
+  POST /invocations/auth/oauth2/complete
+
+Cloudflare Pages Function:
+  /invocations/auth/oauth2/complete
+  → https://defaultgw-...huaweicloud-agentarts.com/runtimes/personal-assistant/invocations/auth/oauth2/complete
+
+AgentArts Gateway:
+  /runtimes/personal-assistant/invocations/auth/oauth2/complete
+  → container :8080 /invocations/auth/oauth2/complete
+
+FastAPI:
+  @app.post("/invocations/auth/oauth2/complete")
+```
+
+`AgentArtsRuntimeContext.set_oauth2_callback_url(...)` 必须设置为前端 callback URL：
+
+```python
+AgentArtsRuntimeContext.set_oauth2_callback_url(
+    "https://<frontend-domain>/auth/callback/m365-calendar"
+)
+```
+
+不能设置为 `/invocations/auth/oauth2/complete`，因为该 endpoint 是浏览器拿到
+callback 参数后主动调用的后端 complete API；第三方 OAuth2 provider 的 redirect
+目标应是用户可见、可展示授权结果并可读取前端登录态的 callback page。
+
+本地开发与生产环境必须分别配置完整 absolute URL：
+
+| 环境 | `oauth2_callback_url` 示例 |
+|------|-----------------------------|
+| Vite + local backend | `http://localhost:5173/auth/callback/m365-calendar` |
+| Cloudflare Pages production | `https://<frontend-domain>/auth/callback/m365-calendar` |
+
+上述 URL 需要同时加入：
+
+- Microsoft Entra App 的 redirect URI allowlist；
+- AgentArts 工作负载身份的 Allowed Resource OAuth2 Return URL allowlist；
+- Calendar OAuth2 Credential Provider 的 callback/return URL 配置（如平台要求 provider
+  级配置）。
+
 ## 范围
 
 ### 包含
@@ -84,6 +140,10 @@ sequenceDiagram
   - 使用 Microsoft Graph Calendar API 读取用户日历事件；
   - 使用 AgentArts Identity SDK `require_access_token`，provider 建议为
     `m365-calendar-provider` 或经 Implementation Plan 确认后的统一 provider；
+  - 在每次 `/invocations` 请求进入 Agent / Tool 执行前设置
+    `AgentArtsRuntimeContext.set_user_id(...)`、
+    `AgentArtsRuntimeContext.set_oauth2_callback_url(...)`、
+    `AgentArtsRuntimeContext.set_oauth2_custom_state(...)` 和 Workload Access Token；
   - 为 Calendar OAuth2 增加 callback / complete endpoint；
   - 在 callback 路径中解析并校验 `session_uri`、`state` 和可信 `user_id`；
   - 使用 AgentArts Identity SDK / client 调用 `complete_resource_token_auth`；
