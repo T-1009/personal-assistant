@@ -1,0 +1,40 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  console:
+    "()": app.logging_config.ConsoleFormatter
+    format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+filters:
+  runtime_level:
+    "()": app.logging_config.RuntimeLevelFilter
+  context:
+    "()": app.logging_config.ContextFilter
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    stream: ext://sys.stdout
+    formatter: console
+    filters: [runtime_level, context]
+
+loggers:
+  app:
+    handlers: [console]
+    level: DEBUG
+    propagate: false
+  uvicorn:
+    handlers: [console]
+    level: DEBUG
+    propagate: false
+  uvicorn.error:
+    level: DEBUG
+  uvicorn.access:
+    handlers: []
+    level: CRITICAL
+    propagate: false
+
+root:
+  handlers: [console]
+  level: DEBUG

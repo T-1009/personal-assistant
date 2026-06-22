@@ -184,6 +184,31 @@ flowchart LR
 
 <!-- updated by issue: chore-5-workload-access-token-from-header -->
 
+### 2.4 Structured Logging 与 Request Correlation
+
+Service 使用 Uvicorn `--log-config` 作为 process logging 的唯一配置入口。本地
+加载 `config/logging.dev.yaml` 输出 UTC console text，AgentArts Runtime 加载
+`config/logging.prod.yaml` 输出 single-line JSON。Application import 不执行
+`dictConfig`。
+
+```mermaid
+flowchart LR
+    Uvicorn["Uvicorn lifecycle"] --> Config["Shared logging config"]
+    Request["HTTP request"] --> Middleware["RequestLoggingMiddleware"]
+    Middleware --> AppLogs["Application events"]
+    Config --> AppLogs
+    Config --> Output["stdout JSON"]
+    AppLogs --> Output
+    Output --> AgentArts["AgentArts Logs"]
+```
+
+`RequestLoggingMiddleware` 为每个非 `/ping` request 记录
+`http.request.completed` event，包含 request ID、session ID、route、status、
+duration，以及可用的 OpenTelemetry trace/span ID。Uvicorn access logger
+关闭，避免生成缺少 application context 的重复 access line。日志不得包含
+Authorization、Workload token、用户输入或 LLM 原始 response。完整决策见
+[ADR-018](ADR/ADR-018-service-structured-logging.md)。
+
 ---
 
 ## 3. Agent 处理逻辑

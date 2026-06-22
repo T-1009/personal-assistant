@@ -13,9 +13,10 @@ RUN uv sync --frozen --no-dev
 
 # Copy application code
 COPY personal-assistant-service/app/ ./app/
+COPY personal-assistant-service/config/ ./config/
 COPY personal-assistant-service/.agentarts_config.yaml ./
 
 EXPOSE 8080
 
 # Use system Python directly — no uv run, no venv, no shell tricks
-CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]
+CMD ["python3", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080", "--log-config", "config/logging.prod.yaml"]

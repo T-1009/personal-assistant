@@ -5,24 +5,9 @@ from contextlib import asynccontextmanager
 from json import JSONDecodeError
 from pathlib import Path
 
-from app.logging_config import configure as configure_logging
-from app.settings import get_settings
-
-settings = get_settings()
-configure_logging(settings)
+from app.logging_config import RequestLoggingMiddleware
 
 logger = logging.getLogger("app")
-
-
-class PingFilter(logging.Filter):
-    """Filter out /ping 200 access logs."""
-
-    def filter(self, record: logging.LogRecord) -> bool:
-        message = record.getMessage()
-        return "GET /ping " not in message or "200" not in message
-
-
-logging.getLogger("uvicorn.access").addFilter(PingFilter())
 
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
@@ -147,6 +132,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.add_middleware(RequestLoggingMiddleware)
 
 
 @app.get("/ping")

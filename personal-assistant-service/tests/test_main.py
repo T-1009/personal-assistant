@@ -88,6 +88,22 @@ async def test_ping_returns_status_ok(client):
     response = await client.get("/ping")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
+    assert response.headers["x-request-id"]
+
+
+@pytest.mark.asyncio
+async def test_request_id_is_preserved_when_safe(client):
+    response = await client.get("/ping", headers={"X-Request-ID": "request-123"})
+
+    assert response.headers["x-request-id"] == "request-123"
+
+
+@pytest.mark.asyncio
+async def test_unsafe_request_id_is_replaced(client):
+    response = await client.get("/ping", headers={"X-Request-ID": "bad request id"})
+
+    assert response.headers["x-request-id"] != "bad request id"
+    assert len(response.headers["x-request-id"]) == 32
 
 
 # ---------------------------------------------------------------------------

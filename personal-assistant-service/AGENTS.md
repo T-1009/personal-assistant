@@ -20,7 +20,7 @@
 ## Build and Test Commands
 
 - **依赖安装**: `uv sync`
-- **本地启动**: `uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload`
+- **本地启动**: `uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload --log-config config/logging.dev.yaml`
 - **代码检查与格式化**: `uv run ruff check .` 以及 `uv run ruff format .`
 - **运行测试**: `uv run pytest tests/`
 

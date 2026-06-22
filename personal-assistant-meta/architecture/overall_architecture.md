@@ -75,7 +75,7 @@ flowchart TB
 | **Memory** | AgentArts Memory SDK | 长期语义/偏好/情景记忆，跨 Session 持久化用户知识。与 Checkpoint 分工：Checkpoint 管短期会话状态，Memory 管长期用户知识。详见 [session-state-management.md](session-state-management.md) §2 |
 | **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API 定义 → MCP Tool 自动转换 |
-| **可观测** | OTEL (AgentArts 内置) | Tracing + Logging + Metrics |
+| **可观测** | OTEL (AgentArts 内置) + stdout structured logging | Tracing + Metrics；Service 使用统一 Uvicorn log config 输出 JSON 并关联 request/session/trace context，见 [ADR-018](ADR/ADR-018-service-structured-logging.md) |
 | **Container** | Docker (linux/arm64) | Python 3.12+ |
 
 ---

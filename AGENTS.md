@@ -70,7 +70,8 @@ personal-assistant/
 cd personal-assistant-service
 uv sync
 cp .env.example .env
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload \
+  --log-config config/logging.dev.yaml
 ```
 
 验证：

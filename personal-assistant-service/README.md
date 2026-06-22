@@ -17,7 +17,7 @@ personal-assistant-service/
 │   ├── llm_config.py        # LLM 配置解析 + Identity credential 获取
 │   ├── auth.py              # Gateway 注入身份 header 提取
 │   ├── identity.py          # Outbound Identity provider 配置与辅助函数
-│   ├── logging_config.py    # 日志配置
+│   ├── logging_config.py    # Structured logging formatter/filter/middleware
 │   ├── playground.py        # Chainlit Playground 挂载
 │   └── tools/               # Identity SDK 装饰的外部工具
 │       ├── __init__.py      # 工具注册工厂
@@ -45,6 +45,9 @@ personal-assistant-service/
 ├── pyproject.toml           # 项目元数据 + 依赖 (uv)
 ├── uv.lock                  # 确定性依赖锁定
 ├── Dockerfile               # ARM64 容器镜像
+├── config/
+│   ├── logging.dev.yaml     # 本地 UTC console logs
+│   └── logging.prod.yaml    # 生产 single-line JSON logs
 ├── .agentarts_config.yaml   # AgentArts 平台部署配置
 └── .dockerignore
 ```
@@ -91,8 +94,13 @@ DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Ident
 ### 4. 启动服务
 
 ```bash
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload \
+  --log-config config/logging.dev.yaml
 ```
+
+Production container 使用 `config/logging.prod.yaml`，将 Uvicorn lifecycle、
+application 和 HTTP completion events 统一输出为 stdout JSON。`LOG_LEVEL`
+同时控制全部 logger；request ID 会通过 `X-Request-ID` response header 返回。
 
 ### 5. 打开浏览器
 
