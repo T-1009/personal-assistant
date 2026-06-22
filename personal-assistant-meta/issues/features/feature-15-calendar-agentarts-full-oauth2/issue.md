@@ -1,0 +1,254 @@
+---
+status: backlog
+related:
+  - feature-10a-outbound-email
+  - feature-on-auth-url
+  - refactor-email-auth-normal-control-flow
+---
+
+# Feature 15: Calendar Tool 使用 AgentArts 完整 OAuth2 流程
+
+## 动机
+
+当前 Microsoft 365 Email Tools 已经使用 AgentArts Identity SDK 的
+`@require_access_token` / `require_access_token` 和 `on_auth_url` callback 完成
+User Federation 授权：
+
+- 当用户未授权时，SDK 生成 Microsoft OAuth2 授权 URL；
+- `email_tools.handle_auth_url()` 通过 LangGraph `stream_writer` 将授权卡片直接推给
+  Web Chat；
+- 用户完成授权后，后续工具调用可由 SDK 注入 Microsoft Graph access token。
+
+但按照 AgentArts SDK 文档中的 OAuth2 USER_FEDERATION 完整流程，用户在浏览器完成
+授权并回调后，Agent 应用可以显式调用 `complete_resource_token_auth`，用
+`user_id + session_uri` 完成 Resource Token Auth 会话绑定，再由 Identity Service
+换取并保存第三方 OAuth2 access token。这个步骤在平台流程中是可选的：如果不调用，
+SDK 仍可通过内置 polling / callback 机制完成授权；但项目目前所有工具都没有覆盖
+这个完整路径，缺少一个可运行、可观察、可测试的示范实现。
+
+本 Feature 不修改既有 Email Tool，而是新增 Microsoft 365 Calendar Tool，专门用于
+展示 AgentArts OAuth2 完整流程。Calendar Tool 读取用户 Microsoft 账号中的日历与
+日程内容，例如“今天有哪些会议”“下周的日程安排”“查看某个会议详情”。它只读取日历，
+不创建、修改或删除事件，因此可作为低风险、可验证的 OAuth2 full-flow 示例。
+
+> 命名说明：用户口语中可能写作 “calender tool”，代码与文档统一使用正确拼写
+> `calendar`。
+
+## 目标
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 用户
+    participant UI as Web Chat
+    participant Agent as Personal Assistant Service
+    participant SDK as AgentArts Identity SDK
+    participant IdSvc as AgentArts Identity Service
+    participant MS as Microsoft OAuth2
+    participant Graph as Microsoft Graph API
+
+    User->>UI: 请求查看日历/日程
+    UI->>Agent: POST /invocations
+    Agent->>SDK: 调用 @require_access_token 包裹的 Calendar Tool
+    SDK->>IdSvc: get_resource_oauth2_token(provider=m365-calendar-provider)
+    IdSvc-->>SDK: auth_url + session_uri
+    SDK-->>Agent: on_auth_url(auth_url, session_uri)
+    Agent-->>UI: SSE system_message(AuthCard)
+    User->>MS: 在浏览器完成 Microsoft 授权
+    MS-->>Agent: redirect callback(code/state/session_uri)
+    Agent->>IdSvc: complete_resource_token_auth(user_id, session_uri)
+    IdSvc->>MS: 使用授权码换取 Microsoft Graph access token
+    IdSvc->>IdSvc: 保存用户 Calendar Resource Token
+    IdSvc-->>Agent: binding complete
+    Agent-->>UI: auth_complete / popup close signal
+    UI->>Agent: 重试或继续原日历请求
+    Agent->>SDK: 再次调用 Calendar Tool
+    SDK->>IdSvc: get_resource_oauth2_token(provider=m365-calendar-provider)
+    IdSvc-->>SDK: stored access token
+    SDK-->>Agent: 注入 access_token
+    Agent->>Graph: 使用 access_token 调用 Calendar API
+    Graph-->>Agent: 日历/事件数据
+    Agent-->>UI: 返回日程摘要
+```
+
+## 范围
+
+### 包含
+
+- **Service**
+  - 新增 `app/tools/calendar_tools.py`；
+  - 新增只读 Calendar Tool，例如：
+    - `list_calendar_events(start_time, end_time, calendar_id="primary")`；
+    - `get_calendar_event(event_id, calendar_id="primary")`；
+    - `search_calendar_events(query, start_time=None, end_time=None)`；
+  - 使用 Microsoft Graph Calendar API 读取用户日历事件；
+  - 使用 AgentArts Identity SDK `require_access_token`，provider 建议为
+    `m365-calendar-provider` 或经 Implementation Plan 确认后的统一 provider；
+  - 为 Calendar OAuth2 增加 callback / complete endpoint；
+  - 在 callback 路径中解析并校验 `session_uri`、`state` 和可信 `user_id`；
+  - 使用 AgentArts Identity SDK / client 调用 `complete_resource_token_auth`；
+  - 对授权完成、失败、重复 callback、session 过期等场景输出结构化日志。
+- **Client**
+  - AuthCard / popup callback 页面支持 Calendar 授权完成状态；
+  - 授权完成后可通知主聊天窗口重试或继续原请求；
+  - 不在浏览器中保存 Microsoft access token、Workload Access Token 或平台管理凭据。
+- **Meta / Architecture**
+  - 更新 AgentArts OAuth2 架构说明，明确 `complete_resource_token_auth` 在本项目中
+    是 optional step，但 Calendar Tool 会作为完整流程示范实现；
+  - 标清 `require_access_token`、`on_auth_url`、callback endpoint、
+    `complete_resource_token_auth` 与 token injection 的职责边界；
+  - 更新 Microsoft 365 Tools 规格，将 Email 与 Calendar 分开描述。
+- **Tests / E2E**
+  - 单元测试覆盖 Calendar Tool 的 Graph API request formatting、response parsing
+    和 error handling；
+  - 单元测试覆盖 callback 参数校验、SDK client 调用和错误处理；
+  - Service integration test 覆盖未授权 → auth URL → complete → retry 成功；
+  - E2E 覆盖 Web Chat 中 Calendar 授权卡片、授权完成状态和后续日历工具可用。
+
+### 不包含
+
+- 修改既有 Email Tool 的 OAuth2 行为；
+- 创建、修改、删除或回复 Calendar 事件；
+- 引入非 Microsoft 的 Calendar Provider；
+- 将 GitHub、Gitee、OBS、STS 或 M2M Tool 全部迁移到 complete flow；
+- 在前端直接调用 AgentArts Identity Service；
+- 把 third-party access token 暴露给 LLM、浏览器或日志。
+
+## Calendar Tool 初始能力
+
+| Tool | 用途 | Microsoft Graph API 候选 |
+|------|------|--------------------------|
+| `list_calendar_events` | 列出指定时间范围内的日程 | `GET /me/calendarView?startDateTime=...&endDateTime=...` |
+| `get_calendar_event` | 查看单个日程详情 | `GET /me/events/{event_id}` |
+| `search_calendar_events` | 按关键词搜索日程 | `GET /me/events?$search="..."` 或 Implementation Plan 确认的 Graph 查询方式 |
+
+默认使用只读 scope：
+
+```text
+https://graph.microsoft.com/Calendars.Read
+```
+
+如 Implementation Plan 发现 Microsoft Graph 对搜索、会议正文或附件读取有额外 scope
+要求，必须记录原因与最小权限选择。
+
+## 关键设计约束
+
+### 1. `complete_resource_token_auth` 是 Calendar Tool 的完整流程示范
+
+AgentArts OAuth2 流程允许应用不显式调用 complete step，而依赖 SDK 的默认机制。
+本 Feature 只要求新增 Calendar Tool 走完整流程，用于验证平台能力、沉淀最佳实践和
+作为后续 User Federation Tool 的参考模板。既有 Email Tool 暂不改动。
+
+### 2. Callback 必须在可信服务端完成
+
+`complete_resource_token_auth` 需要可信 `user_id` 与 `session_uri`。浏览器只能携带
+callback 参数并展示状态，不能持有或直接调用平台级 Identity client。
+
+### 3. Session binding 与日历业务调用解耦
+
+callback endpoint 只负责完成 OAuth2 session binding，不直接读取日历。日历读取仍由
+用户的后续 `/invocations` 和 Calendar Tool 调用触发。
+
+### 4. 授权状态不得通过 LLM 转述
+
+授权 URL、授权完成和授权失败均应通过 `system_message` / AuthCard / callback page
+等带外 UI 呈现，不要求 LLM 复述 URL，也不把 token 或 callback 参数写入 prompt。
+
+### 5. Calendar 是 read-only MVP
+
+Calendar Tool 首版只读，避免“误改会议”这类高影响风险。后续如需创建/修改事件，应另起
+feature issue，并引入 Guard / confirmation 机制。
+
+## 验收标准
+
+### AC1：新增 Calendar Tool
+
+- [ ] Service 新增 `calendar_tools.py`，并接入 Agent tool registry；
+- [ ] Agent system prompt 能说明 Calendar Tool 的只读能力；
+- [ ] 用户可询问今天、本周、指定日期范围内的日程；
+- [ ] 用户可查看单个日程详情；
+- [ ] 用户可按关键词搜索日历事件；
+- [ ] Calendar Tool 使用 Microsoft Graph API 和 `Calendars.Read` 最小权限 scope。
+
+### AC2：完整 OAuth2 callback 与 complete
+
+- [ ] Calendar Tool 触发未授权时，通过 AuthCard 展示 Microsoft 授权 URL；
+- [ ] 授权 URL / state 中包含或可关联 AgentArts 返回的 `session_uri`；
+- [ ] 用户完成 Microsoft 授权后，callback endpoint 可收到并解析必要参数；
+- [ ] Service 使用可信 `user_id` 调用 `complete_resource_token_auth(session_uri=...)`；
+- [ ] complete 成功后，AgentArts Identity Service 保存 Calendar Resource Token；
+- [ ] 后续同一用户调用 Calendar Tool 时，`require_access_token` 可注入 access token。
+
+### AC3：安全与隔离
+
+- [ ] callback endpoint 不接受客户端伪造的 `user_id` 作为授权依据；
+- [ ] `state` / `session_uri` 做 CSRF 与 replay 防护；
+- [ ] 不在日志、SSE、浏览器 storage 或 LLM-visible tool result 中输出 access token；
+- [ ] 不同用户的 Calendar OAuth2 session 不可交叉 complete；
+- [ ] complete 失败、session 过期或重复 callback 时返回安全、可理解的错误状态；
+- [ ] Calendar Tool 首版不能创建、修改或删除事件。
+
+### AC4：用户体验
+
+- [ ] AuthCard 能区分 `auth_required`、`auth_complete`、`auth_failed`；
+- [ ] popup / callback 页面授权完成后能通知主聊天窗口；
+- [ ] 用户无需复制粘贴 callback 参数；
+- [ ] 授权完成后可自动或半自动重试原日历请求；
+- [ ] 授权失败时用户可重新发起日历请求并获得新的授权入口。
+
+### AC5：回归保护
+
+- [ ] 既有 Email Tool 行为不改变；
+- [ ] `send_email` / `reply_to_email` 仍保持现有 Guard 二次确认要求；
+- [ ] 本地开发未配置真实 Microsoft OAuth2 时，单元测试仍可通过 mock 覆盖 complete
+  路径；
+- [ ] `uv run ruff check .` 和 `uv run pytest tests/` 通过；
+- [ ] E2E Calendar 授权与读取流程在 staging 或等价环境完成验证。
+
+## 风险与缓解
+
+| 风险 | 严重度 | 缓解 |
+|------|:------:|------|
+| AgentArts SDK 当前版本的 `complete_resource_token_auth` 参数名或 client 入口与文档不一致 | High | Implementation Plan 阶段先用官方 SDK / API 文档 spike，锁定真实方法签名后再编码 |
+| Microsoft OAuth callback 与 AgentArts callback URL 白名单不匹配 | High | 在 AgentArts Credential Provider 与 Microsoft Entra App 中同步配置 return URL，并纳入部署 runbook |
+| Calendar provider 是否应复用现有 `m365-provider-common` 不明确 | Medium | Implementation Plan 阶段比较独立 provider 与统一 provider 的 scope、consent UX、token cache 影响 |
+| callback 与原聊天请求之间状态关联不稳 | Medium | 使用 signed `state`、短 TTL server-side pending auth record 和 popup `postMessage` |
+| 重复 callback 导致用户看到失败 | Medium | complete endpoint 做幂等处理：已完成视为成功或返回可恢复状态 |
+| 日历内容包含敏感隐私 | High | 只读最小权限、日志脱敏、LLM prompt 不包含 token 或 callback 参数；按用户请求范围读取 |
+
+## Four-Question Gate
+
+| Question | Answer | 说明 |
+|----------|:------:|------|
+| Is it best practice? | **Yes** | OAuth callback 与 token binding 在可信服务端完成，前端不持有 token；Calendar MVP 只读，符合 least privilege 与 separation of concerns。 |
+| Is it industry standard? | **Yes** | 三方 OAuth2 的 authorization code callback、state 校验、server-side token exchange / binding 是标准生产模式；AgentArts 的 `complete_resource_token_auth` 对应平台侧 session binding。 |
+| Is it conventional? | **Yes** | 日历读取是 Personal Assistant 的核心常见能力，以 Calendar Tool 作为 User Federation 示例清晰直观。 |
+| Is it modern? | **Yes** | 使用带外 AuthCard、popup callback、server-side binding、structured observability 和 E2E 授权验证，符合现代 Agent application 的 UX 与安全实践。 |
+
+## 依赖
+
+- Feature on-auth-url：授权 URL 带外呈现；
+- Feature 4：Inbound Identity，提供可信 `user_id`；
+- Feature 10a：已有 Microsoft 365 / Graph API 接入经验与 AuthCard UX；
+- AgentArts Identity SDK 支持或可访问 `complete_resource_token_auth`；
+- Microsoft Entra App 与 AgentArts Credential Provider 的 callback URL 配置。
+
+## 受影响文档
+
+Implementation 完成后至少更新：
+
+- `personal-assistant-meta/specs/overall_specifications.md`；
+- `personal-assistant-meta/specs/dictionary.md`；
+- `personal-assistant-meta/architecture/backend_architecture.md`；
+- `personal-assistant-meta/architecture/cloud-service/huaweicloud/` 下 AgentArts 相关文档；
+- `personal-assistant-service/README.md`；
+- `personal-assistant-client/README.md`（若 AuthCard / callback UX 有变化）。
+
+## 参考
+
+- Huawei Cloud AgentArts SDK:
+  `https://github.com/huaweicloud/agentarts-sdk-python/blob/main/docs/cn/sdk_user_guide/agent_identity_guide.md`
+- `personal-assistant-service/app/tools/email_tools.py`
+- `personal-assistant-meta/issues/features/resolved/feature-10-outbound-email-obs/issue.md`
+- `personal-assistant-meta/issues/features/resolved/feature-on-auth-url/issue.md`
+- `personal-assistant-meta/architecture/backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递`

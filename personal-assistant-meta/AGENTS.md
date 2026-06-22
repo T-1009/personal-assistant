@@ -52,6 +52,10 @@ personal-assistant-meta/
 - 以组件图、模块划分、数据流和接口定义为主线组织
 - **入口文件**：`architecture/overall_architecture.md` 是该目录的根入口，目录内所有其他文件都必须被该文件引用（直接或间接）
 
+#### Huawei Cloud 架构参考优先级
+
+`architecture/cloud-service/huaweicloud/` 是本项目云服务架构设计的**首要参考目录**。涉及 AgentArts Runtime、Huawei Cloud 基础服务、部署约束、domain/routing、认证、可观测性或云端集成方案时，必须优先查阅并更新该目录下的文档；其他云厂商目录仅作为对比参考，不能取代 Huawei Cloud 目录中的结论。
+
 **ADR → Architecture 同步规则**：`architecture/ADR/` 中记录的决策，其结论必须体现到 `architecture/` 下的对应文档中。方式二选一：
 
 1. **直接写入**：将 ADR 的决策结论（如技术选型结果、架构约束）直接写入对应的 architecture 文档
