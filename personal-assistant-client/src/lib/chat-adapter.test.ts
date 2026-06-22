@@ -152,6 +152,58 @@ describe("chatAdapter", () => {
   });
 
   describe("SSE token parsing", () => {
+    it("preserves a pending Auth Card when the user sends another message", async () => {
+      useAuthCardStore.getState().setAuth(
+        "auth-message",
+        "m365-provider-common",
+        "https://auth.example.com",
+        "请完成授权",
+      );
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([
+          encoder.encode("data: " + JSON.stringify({ done: true }) + "\n"),
+        ]),
+      }) as unknown as typeof fetch;
+
+      await collectResults("稍后再授权");
+
+      expect(useAuthCardStore.getState()).toMatchObject({
+        messageId: "auth-message",
+        provider: "m365-provider-common",
+        authUrl: "https://auth.example.com",
+        message: "请完成授权",
+        authComplete: false,
+      });
+    });
+
+    it("preserves a completed Auth Card when the user sends another message", async () => {
+      const authStore = useAuthCardStore.getState();
+      authStore.setAuth(
+        "auth-message",
+        "m365-provider-common",
+        "https://auth.example.com",
+        "请完成授权",
+      );
+      authStore.setAuthComplete("m365-provider-common", "授权已完成 ✅");
+      globalThis.fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        body: createMockStream([
+          encoder.encode("data: " + JSON.stringify({ done: true }) + "\n"),
+        ]),
+      }) as unknown as typeof fetch;
+
+      await collectResults("继续处理邮件");
+
+      expect(useAuthCardStore.getState()).toMatchObject({
+        messageId: "auth-message",
+        provider: "m365-provider-common",
+        authUrl: "https://auth.example.com",
+        message: "授权已完成 ✅",
+        authComplete: true,
+      });
+    });
+
     it("yields content chunks for SSE token events", async () => {
       const chunks = [
         encoder.encode("data: " + JSON.stringify({ token: "Hello" }) + "\n"),

@@ -6,7 +6,6 @@ import type {
 import { handleChatEvent } from "@/lib/chat/chat-event-handler";
 import { invokeChat } from "@/lib/chat/chat-api-client";
 import { parseSSEStream } from "@/lib/chat/sse-parser";
-import { useAuthCardStore } from "@/stores/auth-card-store";
 export { getSessionId, resetSessionId } from "@/lib/chat/session";
 
 /**
@@ -28,7 +27,6 @@ export const chatAdapter: ChatModelAdapter = {
       options.unstable_assistantMessageId ?? "unknown";
     let fullText = "";
 
-    useAuthCardStore.getState().clearAuth();
     const stream = await invokeChat(query, abortSignal);
 
     for await (const event of parseSSEStream(stream)) {
