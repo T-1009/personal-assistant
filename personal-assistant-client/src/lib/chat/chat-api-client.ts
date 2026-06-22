@@ -14,7 +14,7 @@ function applyTokenHeaders(
   }
 }
 
-function buildHeaders(idToken: string | null): Record<string, string> {
+export function buildHeaders(idToken: string | null): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "text/event-stream",
     "Content-Type": "application/json",
@@ -39,7 +39,7 @@ function sendChatRequest(
   });
 }
 
-async function getRequestToken(): Promise<string | null> {
+export async function getRequestToken(): Promise<string | null> {
   let idToken = useAuthStore.getState().idToken;
   if (idToken && isTokenExpiringSoon(idToken)) {
     const freshToken = await acquireIdTokenSilently();

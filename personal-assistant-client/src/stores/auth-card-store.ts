@@ -11,6 +11,8 @@ interface AuthCardState {
   message: string;
   /** Whether the user has completed authorization (green card). */
   authComplete: boolean;
+  /** Whether the latest authorization attempt failed (red card). */
+  authFailed: boolean;
   setAuth: (
     messageId: string,
     provider: string,
@@ -18,6 +20,7 @@ interface AuthCardState {
     message: string,
   ) => void;
   setAuthComplete: (provider: string, message?: string) => void;
+  setAuthFailed: (provider: string, message?: string) => void;
   clearAuth: () => void;
 }
 
@@ -27,6 +30,7 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
   authUrl: null,
   message: "",
   authComplete: false,
+  authFailed: false,
   setAuth: (messageId, provider, url, message) =>
     set({
       messageId,
@@ -34,6 +38,7 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
       authUrl: url,
       message,
       authComplete: false,
+      authFailed: false,
     }),
   setAuthComplete: (provider, message) =>
     set((state) => {
@@ -42,6 +47,18 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
       }
       return {
         authComplete: true,
+        authFailed: false,
+        message: message ?? state.message,
+      };
+    }),
+  setAuthFailed: (provider, message) =>
+    set((state) => {
+      if (!state.authUrl || state.provider !== provider) {
+        return state;
+      }
+      return {
+        authComplete: false,
+        authFailed: true,
         message: message ?? state.message,
       };
     }),
@@ -52,5 +69,6 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
       authUrl: null,
       message: "",
       authComplete: false,
+      authFailed: false,
     }),
 }));

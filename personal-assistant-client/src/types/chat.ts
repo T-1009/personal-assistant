@@ -14,5 +14,6 @@ export interface SSEEvent {
   auth_url?: string;
   auth_required?: boolean;
   auth_complete?: boolean;
+  auth_failed?: boolean;
   provider?: string;
 }

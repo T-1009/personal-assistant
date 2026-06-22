@@ -31,7 +31,9 @@ export function handleChatEvent(
   const systemMessage =
     typeof event.system_message === "string" ? event.system_message : "";
   const isAuthEvent =
-    event.auth_required === true || event.auth_complete === true;
+    event.auth_required === true ||
+    event.auth_complete === true ||
+    event.auth_failed === true;
 
   if (
     event.auth_required &&
@@ -53,6 +55,12 @@ export function handleChatEvent(
       .setAuthComplete(event.provider, systemMessage || undefined);
   }
 
+  if (event.auth_failed && event.provider) {
+    useAuthCardStore
+      .getState()
+      .setAuthFailed(event.provider, systemMessage || undefined);
+  }
+
   if (!isAuthEvent && systemMessage.trim()) {
     fullText += systemMessage;
     contentUpdates.push(fullText);
@@ -64,4 +72,3 @@ export function handleChatEvent(
     done: event.done === true,
   };
 }
-

@@ -9,6 +9,8 @@ from app.logging_config import RequestLoggingMiddleware
 
 logger = logging.getLogger("app")
 
+from agentarts.sdk import IdentityClient  # noqa: E402
+from agentarts.sdk.utils.constant import get_region  # noqa: E402
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
 from fastapi.responses import (  # noqa: E402
@@ -16,6 +18,7 @@ from fastapi.responses import (  # noqa: E402
     RedirectResponse,
     StreamingResponse,
 )
+from huaweicloudsdkagentidentity.v1.model import UserIdentifier  # noqa: E402
 from pydantic import BaseModel, Field, StrictBool, ValidationError  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
@@ -24,6 +27,13 @@ from app.auth import (  # noqa: E402
     extract_gateway_user_id,
     extract_workload_access_token,
 )
+from app.oauth2_state import (  # noqa: E402
+    OAuth2StateError,
+    is_oauth2_state_completed,
+    mark_oauth2_state_completed,
+    verify_oauth2_state,
+)
+from app.settings import get_settings  # noqa: E402
 
 
 class InvocationRequest(BaseModel):
@@ -48,6 +58,27 @@ class ErrorResponse(BaseModel):
     detail: str
 
 
+class OAuth2CompleteRequest(BaseModel):
+    """OAuth2 Resource Token Auth completion request."""
+
+    provider: str = Field(description="AgentArts resource credential provider name.")
+    session_uri: str = Field(description="AgentArts Resource Token Auth session URI.")
+    state: str = Field(description="Signed OAuth2 state returned by the callback.")
+    error: str | None = Field(default=None, description="OAuth2 callback error code.")
+    error_description: str | None = Field(
+        default=None,
+        description="OAuth2 callback error description.",
+    )
+
+
+class OAuth2CompleteResponse(BaseModel):
+    """OAuth2 completion response."""
+
+    status: str
+    provider: str
+    message: str
+
+
 def _parse_invocation_request(body: object) -> InvocationRequest:
     """Validate an invocation body while preserving the public 400 contract."""
     try:
@@ -70,6 +101,21 @@ def _parse_invocation_request(body: object) -> InvocationRequest:
     if not invocation.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
     return invocation
+
+
+def _parse_oauth2_complete_request(body: object) -> OAuth2CompleteRequest:
+    try:
+        complete_request = OAuth2CompleteRequest.model_validate(body)
+    except ValidationError as e:
+        raise HTTPException(status_code=400, detail="invalid request body") from e
+
+    if not complete_request.provider.strip():
+        raise HTTPException(status_code=400, detail="provider is required")
+    if not complete_request.session_uri.strip():
+        raise HTTPException(status_code=400, detail="session_uri is required")
+    if not complete_request.state.strip():
+        raise HTTPException(status_code=400, detail="state is required")
+    return complete_request
 
 
 def _accepts_media_type(accept: str | None, media_type: str) -> bool:
@@ -267,6 +313,91 @@ async def invocations(request: Request):
         (time.perf_counter() - started_at) * 1000,
     )
     return JSONResponse(content=InvocationResponse(response=result).model_dump())
+
+
+@app.post(
+    "/invocations/auth/oauth2/complete",
+    response_model=OAuth2CompleteResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid callback payload."},
+        401: {"model": ErrorResponse, "description": "Missing trusted user header."},
+        403: {"model": ErrorResponse, "description": "Invalid OAuth2 state."},
+        502: {"model": ErrorResponse, "description": "Identity Service failure."},
+    },
+)
+async def complete_oauth2_auth(request: Request):
+    """Complete AgentArts Resource Token Auth for Calendar OAuth2 callbacks."""
+    try:
+        body = await request.json()
+    except JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail="invalid JSON body") from e
+
+    complete_request = _parse_oauth2_complete_request(body)
+    user_id = extract_gateway_user_id(request)
+    settings = get_settings()
+
+    if complete_request.error:
+        logger.warning(
+            "Calendar OAuth2 callback failed provider=%s error=%s",
+            complete_request.provider,
+            complete_request.error,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail="Calendar authorization failed. Please try again.",
+        )
+
+    if complete_request.provider != settings.m365_calendar_provider_name:
+        raise HTTPException(status_code=400, detail="unsupported OAuth2 provider")
+
+    try:
+        claims = verify_oauth2_state(
+            complete_request.state,
+            settings=settings,
+            expected_user_id=user_id,
+            expected_provider=settings.m365_calendar_provider_name,
+        )
+    except OAuth2StateError as e:
+        logger.warning("Calendar OAuth2 state rejected: %s", e)
+        raise HTTPException(status_code=403, detail="invalid OAuth2 state") from e
+
+    if is_oauth2_state_completed(claims):
+        return OAuth2CompleteResponse(
+            status="already_complete",
+            provider=complete_request.provider,
+            message="Calendar authorization was already completed.",
+        )
+
+    try:
+        client = IdentityClient(region=get_region())
+        client.complete_resource_token_auth(
+            session_uri=complete_request.session_uri,
+            user_identifier=UserIdentifier(user_id=user_id),
+        )
+    except Exception as e:
+        logger.warning(
+            "Calendar OAuth2 complete failed provider=%s user_id=%s: %s",
+            complete_request.provider,
+            user_id,
+            e,
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail="Calendar authorization could not be completed.",
+        ) from e
+
+    mark_oauth2_state_completed(claims)
+    logger.info(
+        "Calendar OAuth2 complete succeeded provider=%s user_id=%s",
+        complete_request.provider,
+        user_id,
+    )
+    return OAuth2CompleteResponse(
+        status="complete",
+        provider=complete_request.provider,
+        message="Calendar authorization completed.",
+    )
 
 
 # === Chainlit Playground（Agent 调试 UI）===

@@ -118,7 +118,12 @@ def _format_tool_error(e: Exception, tool_name: str) -> dict[str, Any]:
         if status == 503:
             return {"error": "邮件服务暂时不可用，请稍后再试。"}
         if status == 401:
-            return {"error": "邮件功能未授权或当前账号类型不支持（访客/个人账号需使用 common 租户端点）。"}
+            return {
+                "error": (
+                    "邮件功能未授权或当前账号类型不支持"
+                    "（访客/个人账号需使用 common 租户端点）。"
+                )
+            }
         return {"error": f"邮件服务返回错误（{status}），请稍后再试。"}
     return {"error": f"操作失败: {tool_name}。如果问题持续，请联系支持。"}
 
