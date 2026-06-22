@@ -4,14 +4,16 @@
 
 ## 目标
 
-在 `cn-southwest-2` 创建按需计费的 RDS for PostgreSQL 17，并通过 VPC 私网
-连接 AgentArts Runtime。生产 Checkpointer 从进程内 `InMemorySaver` 切换为
-shared durable `AsyncPostgresSaver`。
+在 `cn-southwest-2` 创建按需计费的 RDS for PostgreSQL 17。Demo 阶段通过
+RDS EIP + TLS 连接 PUBLIC AgentArts Runtime，不引入 NAT Gateway。生产
+Checkpointer 从进程内 `InMemorySaver` 切换为 shared durable
+`AsyncPostgresSaver`。
 
 ```mermaid
 flowchart LR
-    Gateway["AgentArts Gateway"] --> Runtime["AgentArts Runtime<br/>VPC Mode"]
-    Runtime -->|"TCP 5432"| RDS["RDS PostgreSQL 17<br/>Single / 1C2G / 40 GB"]
+    Gateway["AgentArts Gateway"] --> Runtime["AgentArts Runtime<br/>PUBLIC Mode"]
+    Runtime -->|"TLS / TCP 5432"| EIP["RDS EIP"]
+    EIP --> RDS["RDS PostgreSQL 17<br/>Single / 1C2G / 40 GB"]
     RDS --> CP["LangGraph Checkpoint Tables"]
 ```
 
@@ -29,11 +31,12 @@ flowchart LR
 ## Infra
 
 1. OpenTofu 使用 Data Source 引用现有 VPC/Subnet，不接管其 lifecycle。
-2. 创建 `pa-runtime-sg` 与 `pa-rds-sg`。
-3. `pa-rds-sg` 允许任何可路由 IPv4 来源访问 TCP 5432，避免 AgentArts 托管
-   网络的实际源地址影响业务连通性。RDS 不绑定 EIP，因此仍无公网访问路径。
+2. 创建 `pa-rds-sg`；现有 `pa-runtime-sg` 仅在迁移期保留，PUBLIC Runtime
+   验证完成后删除。
+3. `pa-rds-sg` 允许 `0.0.0.0/0` 访问 TCP 5432，适配没有固定出口 IP 的
+   AgentArts PUBLIC Runtime。
 4. 创建按需、Single、SSD 云盘 40 GB 的 `pa-postgresql`。
-5. 不绑定 EIP，不开启磁盘加密，不开启自动扩容。
+5. 创建按流量计费的 1 Mbit/s EIP 并绑定 RDS。
 6. 自动备份保留 7 天。
 7. 创建 `personal_assistant` Database 和 `pa_app` Application Role。
 8. Password 仅通过敏感 OpenTofu Variable 注入，不进入 Git 或 Output。
@@ -46,10 +49,10 @@ AgentArts SDK 0.1.3 的 `VpcConfig` model 错误地声明了单数字段
 ## Service
 
 1. 新增 `langgraph-checkpoint-postgres` 依赖。
-2. `POSTGRES_DSN` 使用 `pa_app` 和 RDS Private IP。
+2. `POSTGRES_DSN` 使用 `pa_app`、RDS EIP 和 `sslmode=require`。
 3. 使用 `AsyncPostgresSaver`，在 FastAPI startup 执行 `setup()`。
 4. shutdown 时关闭 Checkpointer Connection Pool。
-5. Runtime 切换为 VPC Mode，使用目标 VPC/Subnet 和 `pa-runtime-sg`。
+5. Runtime 使用 PUBLIC Mode，保留 IAM、LLM 和外部 API Egress。
 
 ## 验证
 
@@ -68,7 +71,7 @@ AgentArts SDK 0.1.3 的 `VpcConfig` model 错误地声明了单数字段
 
 | 风险 | 缓解 |
 |------|------|
-| VPC Mode 影响公网 Egress | 部署后验证 DeepSeek/Microsoft Graph；必要时增加 NAT Gateway + SNAT |
+| 公网 PostgreSQL 被扫描 | 仅开放 5432、使用 password authentication + TLS；Demo 完成后解绑 EIP |
 | 1C2G 连接数或内存不足 | 监控 CPU、Memory、Connections 后在线扩规格 |
 | 40 GB 无自动扩容 | 设置容量告警并维护人工扩容 Runbook |
 | Password 已出现在会话记录 | 首次连通后立即轮换为随机 Secret |

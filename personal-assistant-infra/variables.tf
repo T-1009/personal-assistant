@@ -12,13 +12,13 @@ variable "region" {
 }
 
 variable "vpc_name" {
-  description = "AgentArts Runtime 与 RDS 共用的 VPC 名称"
+  description = "RDS 所在的 VPC 名称"
   type        = string
   default     = "vpc-default-smb"
 }
 
 variable "subnet_name" {
-  description = "AgentArts Runtime 与 RDS 共用的子网名称"
+  description = "RDS 所在的子网名称"
   type        = string
   default     = "subnet-default-smb"
 }
@@ -45,6 +45,23 @@ variable "rds_database_name" {
   description = "Personal Assistant 应用数据库名称"
   type        = string
   default     = "personal_assistant"
+}
+
+variable "rds_eip_type" {
+  description = "RDS EIP 类型；5_bgp 为动态 BGP"
+  type        = string
+  default     = "5_bgp"
+}
+
+variable "rds_eip_bandwidth_size" {
+  description = "RDS EIP 带宽上限，单位 Mbit/s"
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.rds_eip_bandwidth_size >= 1
+    error_message = "rds_eip_bandwidth_size must be at least 1 Mbit/s."
+  }
 }
 
 variable "rds_password" {

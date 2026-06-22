@@ -527,7 +527,7 @@ result = sandbox.execute("print('hello')")
 | **包管理** | uv (Astral) | 替代 pip/virtualenv，Rust 实现，uv.lock 确定性构建。详见 [ADR-010](ADR/ADR-010-astral-ecosystem-tooling.md) |
 | **Lint / Format** | ruff (Astral) | 替代 flake8 + black + isort，Rust 实现，单一配置。详见 [ADR-010](ADR/ADR-010-astral-ecosystem-tooling.md) |
 | **Container** | Docker (linux/arm64) | Python 3.12+。详见 [ADR-001](ADR/ADR-001-python-3.12.md) |
-| **数据库** | PostgreSQL 17 | SQLAlchemy 2.0 async + asyncpg，本地 Docker Compose，生产华为云 RDS 私网部署。详见 [ADR-012](ADR/ADR-012-database-postgresql.md) |
+| **数据库** | PostgreSQL 17 | LangGraph AsyncPostgresSaver，本地 Docker Compose；Demo 使用华为云 RDS EIP + TLS，未来 Production 恢复私网部署。详见 [ADR-012](ADR/ADR-012-database-postgresql.md) |
 
 ---
 

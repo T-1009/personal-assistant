@@ -1,6 +1,7 @@
 # Personal Assistant Infra
 
-OpenTofu + HCL 的华为云基础资源空基线。Production Web Chat 由 Cloudflare
+OpenTofu + HCL 的华为云基础资源。当前管理 PostgreSQL 17 RDS、独立
+Security Group、RDS EIP 与公网绑定。Production Web Chat 由 Cloudflare
 Pages 托管，前端请求通过 Pages Function same-origin Proxy 转发到 AgentArts
 Gateway；本目录不管理 Cloudflare resources。
 
@@ -8,9 +9,13 @@ Legacy `personal-assistant-web-chat` OBS static website 和
 `chat.resource-governance.cloud` CNAME 已退役。注册域名对应的
 `resource-governance.cloud` DNS Zone 保留在华为云，不再由 OpenTofu 管理。
 
-## 保留策略
+## 当前架构
 
-- 保留 `personal-assistant-infra/`，用于未来 RDS、IAM、VPC、EIP 等资源。
+- AgentArts Runtime 使用 PUBLIC Mode，以保留 IAM、LLM 和外部 API Egress。
+- RDS 位于现有 VPC/Subnet，但通过独立 EIP 提供 Demo 公网连接。
+- RDS Security Group 仅开放 TCP 5432；当前 Demo 来源为 `0.0.0.0/0`。
+- 应用 DSN 必须使用 `sslmode=require` 和非管理员账号 `pa_app`。
+- `pa-runtime-sg` 仅为迁移期保留，PUBLIC Runtime 验证完成后删除。
 - 保留 `pa-terraform-state` OBS backend，供未来 HuaweiCloud IaC 继续使用。
 - Pull Request 和 `main` push 只执行 `tofu plan`。
 - `tofu apply` 只能通过手动 `workflow_dispatch` 并显式选择 `apply` 执行。
@@ -45,6 +50,10 @@ tofu plan
 ```text
 personal-assistant-infra/
 ├── main.tf                # OpenTofu、Provider 与 OBS backend
+├── vpc.tf                 # Existing VPC/Subnet 与 RDS Security Group
+├── rds.tf                 # PostgreSQL 17、应用账号与数据库
+├── eip.tf                 # RDS EIP 与 Association
+├── outputs.tf             # RDS Private/Public Endpoint metadata
 ├── variables.tf           # 通用变量
 ├── .terraform.lock.hcl    # Provider 版本锁
 ├── .gitignore
@@ -52,7 +61,21 @@ personal-assistant-infra/
 └── README.md              # 本文件
 ```
 
-新增资源时按类型创建独立文件，例如 `rds.tf`、`iam.tf`、`vpc.tf`。
+Apply 完成后，通过 `tofu output -raw rds_public_ip` 获取公网地址，并更新
+GitHub Secret `POSTGRES_DSN`。Password 中的 `@` 必须编码为 `%40`：
+
+```text
+postgresql://pa_app:<url-encoded-password>@<rds_public_ip>:5432/personal_assistant?sslmode=require
+```
+
+完整 DSN 和 password 不得提交到 Git。
+
+Rollout 必须按以下顺序执行，避免 PUBLIC Runtime 在 EIP 尚未就绪时启动失败：
+
+1. 先执行 Infra Apply，创建并绑定 RDS EIP；
+2. 使用 `rds_public_ip` 更新 GitHub Secret `POSTGRES_DSN`；
+3. 再部署 Service，将 Runtime 切换为 PUBLIC；
+4. 验证完成后删除迁移期 `pa-runtime-sg`。
 
 ## Legacy retirement 记录
 

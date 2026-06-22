@@ -187,25 +187,24 @@ Baseline：
 | Timezone | `UTC+08:00` | 业务时间；数据字段仍统一使用 `TIMESTAMPTZ` |
 | Backup | 每日自动备份，保留 7 天 | 上线前必须完成一次恢复演练 |
 | Disk Encryption | KMS 加密 | 数据包含身份映射和 credential material，创建时启用 |
-| Public EIP | 不绑定 | RDS 仅允许私网访问 |
+| Public EIP | Demo 绑定 | PUBLIC Runtime 通过 TLS 连接；Production 恢复私网 |
 
 ```mermaid
 flowchart LR
-    Gateway["AgentArts Gateway"] --> Runtime["AgentArts Runtime<br/>VPC Mode"]
-    Runtime -->|"Private network :5432"| RDS["RDS PostgreSQL 17<br/>No EIP"]
-    Runtime --> NAT["NAT Gateway + EIP<br/>only if outbound Internet is required"]
-    NAT --> External["DeepSeek / Microsoft Graph"]
+    Gateway["AgentArts Gateway"] --> Runtime["AgentArts Runtime<br/>PUBLIC Mode"]
+    Runtime -->|"TLS / TCP 5432"| EIP["RDS EIP"]
+    EIP --> RDS["RDS PostgreSQL 17"]
+    Runtime --> External["IAM / DeepSeek / Microsoft Graph"]
 ```
 
 网络与权限约束：
 
-- Runtime 与 RDS 位于同一 VPC，或位于已经建立受控路由的 VPC；
-- 不使用 `default` Security Group。为 Runtime 和 RDS 分别创建
-  `pa-runtime-sg`、`pa-rds-sg`；
-- `pa-rds-sg` 允许任何可路由 IPv4 来源的 TCP 5432 Ingress，避免 AgentArts
-  托管网络源地址影响业务连通性；RDS 不绑定 EIP，因此仍无公网访问路径；
-- RDS 不绑定 EIP；若 Runtime 的 VPC Mode 无默认公网 Egress，使用 NAT Gateway
-  + SNAT + EIP，仅提供主动出站；
+- Demo Runtime 使用 PUBLIC Mode，避免引入 NAT Gateway，并保留公网 API
+  Egress；
+- 不使用 `default` Security Group。RDS 使用独立 `pa-rds-sg`；
+- Demo 阶段 `pa-rds-sg` 允许 `0.0.0.0/0` 的 TCP 5432 Ingress，以兼容
+  AgentArts PUBLIC Runtime 的非固定出口 IP；
+- RDS 绑定独立 EIP，连接必须使用 `sslmode=require`；Demo 完成后解绑 EIP；
 - `root` 仅用于实例初始化和管理。应用连接使用独立的 least-privilege Role，
   例如 `pa_app`，不得使用 `root`；
 - RDS 管理密码不得写入 HCL、tfvars、Git 或 Output，必须通过受保护的 Secret

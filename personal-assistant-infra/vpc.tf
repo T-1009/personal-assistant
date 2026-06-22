@@ -9,15 +9,20 @@ data "huaweicloud_vpc_subnet" "main" {
 
 resource "huaweicloud_networking_secgroup" "runtime" {
   name        = "pa-runtime-sg"
-  description = "Security group for the Personal Assistant AgentArts Runtime."
+  description = "Transitional AgentArts Runtime security group; remove after PUBLIC migration."
 }
 
 resource "huaweicloud_networking_secgroup" "rds" {
   name        = "pa-rds-sg"
-  description = "Security group for the Personal Assistant RDS instance."
+  description = "Public PostgreSQL access for the Personal Assistant demo RDS."
 }
 
-resource "huaweicloud_networking_secgroup_rule" "rds_postgresql_from_runtime" {
+moved {
+  from = huaweicloud_networking_secgroup_rule.rds_postgresql_from_runtime
+  to   = huaweicloud_networking_secgroup_rule.rds_postgresql_public
+}
+
+resource "huaweicloud_networking_secgroup_rule" "rds_postgresql_public" {
   security_group_id = huaweicloud_networking_secgroup.rds.id
   direction         = "ingress"
   ethertype         = "IPv4"
@@ -26,5 +31,5 @@ resource "huaweicloud_networking_secgroup_rule" "rds_postgresql_from_runtime" {
   remote_ip_prefix  = "0.0.0.0/0"
   action            = "allow"
   priority          = 1
-  description       = "Allow PostgreSQL from any routed IPv4 source."
+  description       = "Allow public PostgreSQL access for the demo environment."
 }
