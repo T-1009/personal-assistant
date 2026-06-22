@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
@@ -12,6 +13,14 @@ from app.settings import Settings, get_settings
 from app.tools import build_tools
 
 _handler_instance: "AgentHandler | None" = None
+logger = logging.getLogger("app.agent_handler")
+
+_RECOVERABLE_CHECKPOINTER_ERROR_MARKERS = (
+    "terminating connection due to idle-session timeout",
+    "the connection is closed",
+    "connection is closed",
+    "connection closed",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +236,26 @@ class AgentHandler:
             self._checkpointer_context = None
             await context.__aexit__(None, None, None)
 
+    def _uses_persistent_checkpointer(self) -> bool:
+        return bool(self.settings.postgres_dsn or self.settings.sqlite_db_path)
+
+    @staticmethod
+    def _is_recoverable_checkpointer_error(error: Exception) -> bool:
+        message = str(error).lower()
+        return any(
+            marker in message for marker in _RECOVERABLE_CHECKPOINTER_ERROR_MARKERS
+        )
+
+    async def _restart_checkpointer(self) -> None:
+        """Reopen persistent Checkpointer resources after stale DB connections."""
+        if not self._uses_persistent_checkpointer():
+            return
+
+        logger.warning("Restarting persistent Checkpointer after stale connection")
+        await self.shutdown()
+        await self.startup()
+        await self.invalidate_agent_bundle()
+
     @staticmethod
     def _build_config(user_id: str, session_id: str | None = None) -> dict:
         """构造 LangGraph config，thread_id = {user_id}:{session_id}。
@@ -241,15 +270,32 @@ class AgentHandler:
     ) -> str:
         """Invoke the agent synchronously and return the final response."""
         config = self._build_config(user_id, session_id)
-        agent = await self.get_agent()
-        result = await agent.ainvoke(
-            {"messages": [{"role": "user", "content": message}]},
-            config=config,
-        )
+        try:
+            result = await self._ainvoke_once(message, config)
+        except Exception as e:
+            if not (
+                self._uses_persistent_checkpointer()
+                and self._is_recoverable_checkpointer_error(e)
+            ):
+                raise
+            logger.warning(
+                "Recoverable Checkpointer error during sync invocation; retrying once",
+                exc_info=True,
+            )
+            await self._restart_checkpointer()
+            result = await self._ainvoke_once(message, config)
+
         messages = result.get("messages", [])
         if not messages:
             raise RuntimeError("Agent returned empty response")
         return messages[-1].content
+
+    async def _ainvoke_once(self, message: str, config: dict) -> dict:
+        agent = await self.get_agent()
+        return await agent.ainvoke(
+            {"messages": [{"role": "user", "content": message}]},
+            config=config,
+        )
 
     async def handle_stream(
         self,
@@ -259,40 +305,28 @@ class AgentHandler:
     ) -> AsyncGenerator[str, None]:
         """Stream tokens and custom events via LangGraph stream_mode."""
         config = self._build_config(user_id, session_id)
+        emitted = False
 
         try:
-            agent = await self.get_agent()
-            async for chunk in agent.astream(
-                {"messages": [{"role": "user", "content": message}]},
-                stream_mode=["messages", "custom"],
-                config=config,
-            ):
-                mode, data = chunk
-
-                # ── 1. Custom event from get_stream_writer() (auth URLs) ──
-                if mode == "custom":
-                    if isinstance(data, dict) and (
-                        data.get("auth_required") or data.get("auth_complete")
-                    ):
-                        yield (
-                            f"event: auth_card\n"
-                            f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                        )
-                    else:
-                        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-
-                # ── 2. Token streaming (LLM output only, skip tool results) ──
-                elif mode == "messages":
-                    token_chunk, _metadata = data
-                    # ToolMessage content is for the LLM, not the user
-                    if getattr(token_chunk, "type", None) == "tool":
-                        continue
-                    token = getattr(token_chunk, "content", "") or ""
-                    if token:
-                        payload = json.dumps(
-                            {"token": token, "done": False}, ensure_ascii=False
-                        )
-                        yield f"data: {payload}\n\n"
+            try:
+                async for sse in self._stream_once(message, config):
+                    emitted = True
+                    yield sse
+            except Exception as e:
+                if (
+                    emitted
+                    or not self._uses_persistent_checkpointer()
+                    or not self._is_recoverable_checkpointer_error(e)
+                ):
+                    raise
+                logger.warning(
+                    "Recoverable Checkpointer error before stream output; "
+                    "retrying once",
+                    exc_info=True,
+                )
+                await self._restart_checkpointer()
+                async for sse in self._stream_once(message, config):
+                    yield sse
 
             # ── 3. Signal completion ──
             yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
@@ -301,3 +335,41 @@ class AgentHandler:
             raise
         except Exception as e:
             yield f"data: {json.dumps({'error': str(e), 'done': True})}\n\n"
+
+    async def _stream_once(
+        self,
+        message: str,
+        config: dict,
+    ) -> AsyncGenerator[str, None]:
+        agent = await self.get_agent()
+        async for chunk in agent.astream(
+            {"messages": [{"role": "user", "content": message}]},
+            stream_mode=["messages", "custom"],
+            config=config,
+        ):
+            mode, data = chunk
+
+            # ── 1. Custom event from get_stream_writer() (auth URLs) ──
+            if mode == "custom":
+                if isinstance(data, dict) and (
+                    data.get("auth_required") or data.get("auth_complete")
+                ):
+                    yield (
+                        f"event: auth_card\n"
+                        f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    )
+                else:
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+
+            # ── 2. Token streaming (LLM output only, skip tool results) ──
+            elif mode == "messages":
+                token_chunk, _metadata = data
+                # ToolMessage content is for the LLM, not the user
+                if getattr(token_chunk, "type", None) == "tool":
+                    continue
+                token = getattr(token_chunk, "content", "") or ""
+                if token:
+                    payload = json.dumps(
+                        {"token": token, "done": False}, ensure_ascii=False
+                    )
+                    yield f"data: {payload}\n\n"
