@@ -32,6 +32,27 @@ AgentArts 提供显式的
 本 Feature 将“New Chat”从单纯重置 UUID 升级为完整的多 Conversation 产品能力，
 并为每个用户引入可观测、可降级的 Runtime pre-warm 流程。
 
+### 现状缺口：Checkpoint 已持久化，但 UI 不会自动恢复
+
+当前 Service 已可通过 `AsyncPostgresSaver` 将 LangGraph state 持久化到 PostgreSQL，
+相同 `thread_id` 的后续 invocation 也可以继续使用此前的 Agent state。但这不等于
+Web Chat 已具备 history loading：
+
+- LangGraph Checkpointer 是 Agent execution state store，不会主动将 messages 推送到
+  浏览器；
+- 当前 Service 只有 invocation contract，没有面向 UI 的 Conversation/message
+  history read API；
+- 当前 Client 使用 assistant-ui `useLocalRuntime(chatAdapter)`，页面刷新后 runtime
+  从空消息数组启动；
+- `localStorage` 中保留相同 Session ID 只能让后端继续同一个 Checkpoint，不能让
+  assistant-ui 自动重建页面上的历史消息。
+
+因此，本 Feature 必须同时完成 durable write 与 UI hydration read path。正式目标是
+由 `conversation_messages` 提供稳定、可分页的 UI read model；LangGraph
+`aget_state()` / `aget_state_history()` 或 Checkpointer `aget_tuple()` / `alist()`
+仅用于 Agent state 恢复、迁移、诊断和 reconciliation，不作为浏览器日常分页查询
+Checkpoint 内部格式的接口。
+
 ## 核心架构决策
 
 本 Feature 固定以下四条 invariant，Implementation Plan 不得重新合并这些概念：
@@ -79,7 +100,9 @@ flowchart LR
   - New Chat、切换、重命名、删除/归档；
   - 当前 Conversation 的稳定 `conversation_id`；
   - 用户级 Runtime pre-warm 状态；
-  - 页面刷新后恢复 Conversation 列表与当前选择。
+  - 页面刷新后恢复 Conversation 列表、当前选择及当前 Conversation messages；
+  - history hydration 完成前显示明确的 loading/skeleton，空白 welcome state 不得
+    短暂覆盖已有历史。
 - **Conversation Metadata**
   - 至少保存 `conversation_id`、`title`、`created_at`、`updated_at`、`status`；
   - Metadata 必须按已认证 `user_id` 隔离；
@@ -347,6 +370,48 @@ resource lease 表，保留 lifecycle history：
 复制一套 Conversation truth。Zustand 只允许保存瞬时 UI state；PostgreSQL
 Conversation API 是跨设备、跨刷新一致的唯一事实源。
 
+### Message history hydration
+
+页面刷新和 Conversation 切换必须走显式 history read path，而不是期待
+`AsyncPostgresSaver` 自动驱动 UI：
+
+```mermaid
+sequenceDiagram
+    participant UI as Web Chat
+    participant BFF as Conversation API / BFF
+    participant Store as PostgreSQL Read Model
+    participant CP as LangGraph Checkpointer
+
+    UI->>BFF: GET /conversations?cursor=...
+    BFF->>Store: query by authenticated user_id
+    Store-->>BFF: Conversation list + selected/default id
+    BFF-->>UI: Conversation metadata
+    UI->>BFF: GET /conversations/{id}/messages?cursor=...
+    BFF->>Store: ownership check + paginated message query
+    Store-->>BFF: normalized UI messages
+    BFF-->>UI: messages + next_cursor
+    UI->>UI: hydrate assistant-ui ThreadHistoryAdapter
+    Note over BFF,CP: Checkpoint is not queried on the normal UI read path
+    UI->>BFF: POST /invocations with conversation_id
+    BFF->>CP: Agent resumes stable thread_id state
+```
+
+Hydration 规则：
+
+- 首次进入 Chat 时，先恢复 Conversation metadata，再加载选中的 Conversation
+  messages；
+- 切换 Conversation 时取消或忽略旧 Conversation 的过期 history response，避免
+  race condition 将消息灌入错误 thread；
+- message API 返回 assistant-ui 可消费的稳定 DTO，不暴露 LangChain message
+  class、Checkpoint blob、tool state 或内部 serialization；
+- response 至少包含稳定 `message_id`、`role`、`content`、`created_at` 和 pagination
+  cursor；Tool/attachment 等复杂 part 在 Implementation Plan 中版本化定义；
+- history hydration 与 Agent state resume 是两条协作但独立的路径：前者恢复用户
+  可见消息，后者通过相同 `conversation_id` 派生的稳定 `thread_id` 恢复 execution
+  state；
+- history API 失败时保留可重试 error state，不得把“加载失败”显示成“没有历史”；
+- 新发送消息与 history hydration 并发时必须按 `message_id` 去重并保持稳定顺序。
+
 ### Runtime Session 状态机
 
 ```mermaid
@@ -411,6 +476,8 @@ Cloudflare Pages Function 可向浏览器提供 same-origin `/api/conversations/
 - 从 Gateway 验证后的 identity 获取 `user_id`；
 - 在数据库中执行 `(user_id, conversation_id)` ownership query；
 - 对 list 使用 cursor pagination；
+- message history 返回 normalized message DTO 与 `next_cursor`，不得返回原始
+  Checkpoint payload；
 - 对 Conversation create/delete 与 Runtime ensure/stop 使用 idempotency key；
 - 不允许客户端指定或覆盖 `thread_id`；
 - 不返回 AgentArts 管理凭据。
@@ -599,6 +666,28 @@ Plan 必须在以下方案中作出明确决策：
 UI，但不得将其标记为 Feature 完成；正式验收必须具备服务端 Metadata 与 durable
 Checkpoint。
 
+### 现有 Checkpoint 数据迁移
+
+Feature 上线前可能已经存在“只有 LangGraph Checkpoint、没有
+`conversations`/`conversation_messages`”的数据。Implementation Plan 必须定义一次性
+或 lazy migration，不能直接让 UI 丢失这些历史：
+
+1. 对当前已认证用户读取旧版 `localStorage` Session ID，仅将其作为 migration hint，
+   不作为授权依据；
+2. Service 以可信 `user_id` 组合旧 `thread_id`，通过 LangGraph public state API
+   读取最新 state；
+3. 若存在 messages，则幂等创建对应 Conversation metadata，并将可见
+   Human/AI messages 投影到 `conversation_messages`；
+4. Tool/internal messages 默认不进入 UI read model，除非 DTO 规范明确支持；
+5. migration 完成后记录 marker，后续正常读取只访问 Conversation API/read model；
+6. migration 失败不得修改或删除原 Checkpoint，并提供可重试与 reconciliation
+   路径；
+7. 禁止浏览器直接读取 Checkpoint，也禁止根据客户端提交的任意 `thread_id`
+   执行迁移。
+
+该迁移允许使用 LangGraph state API 作为受控 backfill source，但不改变
+“正常 UI history 从 `conversation_messages` 加载”的目标 invariant。
+
 ## 验收标准
 
 ### AC1：多 Conversation 列表与切换
@@ -671,6 +760,10 @@ Checkpoint。
 ### AC8：E2E
 
 - [ ] E2E 覆盖创建 → pre-warm → 首条消息 → 切换 → 返回；
+- [ ] E2E 覆盖发送消息 → 刷新页面 → 恢复当前 Conversation 与完整可见消息；
+- [ ] E2E 覆盖 history loading 期间切换 Conversation，不发生跨 Conversation
+  消息串入；
+- [ ] E2E 覆盖 history API 失败时显示可重试错误，而不是错误的空 Conversation；
 - [ ] E2E 覆盖 pre-warm failure fallback；
 - [ ] E2E 覆盖删除/归档；
 - [ ] E2E 覆盖同一用户多 Conversation 共享 Runtime Session；
@@ -682,10 +775,18 @@ Checkpoint。
 
 - [ ] Conversation history 从 `conversation_messages` 加载，而不是解析 Checkpoint
   内部存储格式；
+- [ ] `AsyncPostgresSaver` 中已有 state 不被误认为会自动 hydrate assistant-ui；
+- [ ] 页面刷新后通过 `ThreadHistoryAdapter` 或等价 remote history adapter 加载
+  当前 Conversation messages；
+- [ ] message history API 返回 normalized DTO、稳定 `message_id` 与 cursor
+  pagination，不暴露 Checkpoint blob；
 - [ ] 同一 `conversation_id` 始终派生相同 `thread_id`；
 - [ ] Runtime Session 替换后历史消息与 LangGraph state 均可恢复；
 - [ ] assistant message 只能由可信 Service execution 写入；
-- [ ] history 支持分页，且不同用户之间严格隔离。
+- [ ] history 支持分页、去重和稳定排序，且不同用户之间严格隔离；
+- [ ] 旧版仅有 Checkpoint 的当前会话可通过幂等 migration/backfill 恢复到 UI；
+- [ ] migration 失败不破坏原 Checkpoint，且正常 UI read path 不持续依赖
+  Checkpoint scan。
 
 ### AC10：Pre-warm 资源策略
 
@@ -706,6 +807,8 @@ Checkpoint。
 | 同一 Conversation 跨 Tab 并发写 Checkpoint | High | per-thread serialization 或 Checkpointer optimistic concurrency |
 | Runtime Session 与 Checkpoint 生命周期错配 | High | 分层建模，不以 Runtime instance 存在性判断历史是否存在 |
 | Message read model 与 Checkpoint 漂移 | High | 定义可信写入边界、reconciliation job 与一致性测试 |
+| Checkpoint 已存在但 UI history 未 hydration | High | 显式 Conversation message API + ThreadHistoryAdapter；刷新/切换 E2E |
+| 旧版 Checkpoint backfill 重复或丢消息 | High | public state API、幂等 message identity、migration marker、保留原始 Checkpoint |
 | `sessions-stop` 误杀活跃请求 | Medium | streaming/active-run guard，停止前进入 closing 状态 |
 | Conversation list 数据跨用户泄露 | Critical | 服务端 ownership 校验 + user-scoped query + E2E negative tests |
 | localStorage 无法跨设备 | Medium | PostgreSQL 为目标架构；local-first 仅允许 staged rollout |
