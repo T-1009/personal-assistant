@@ -29,6 +29,7 @@ function setupAuth(isAuthenticated: boolean, hydrated: boolean) {
   // Set auth store hydrated state
   const store = useAuthStore.getState();
   store.setHydrated(hydrated);
+  store.setIdToken(isAuthenticated ? "id-token" : null);
 }
 
 describe("App", () => {
@@ -74,6 +75,18 @@ describe("App", () => {
       expect(screen.getByTestId("chat-page")).toBeInTheDocument();
     });
     expect(screen.queryByTestId("landing-page")).not.toBeInTheDocument();
+  });
+
+  it("shows LandingPage when MSAL is authenticated but idToken is missing", async () => {
+    setupAuth(true, true);
+    useAuthStore.getState().clearToken();
+
+    render(<App />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("landing-page")).toBeInTheDocument();
+    });
+    expect(screen.queryByTestId("chat-page")).not.toBeInTheDocument();
   });
 
   it("shows LoadingState during MSAL transition", () => {

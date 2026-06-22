@@ -11,13 +11,15 @@ const LandingPage = React.lazy(() => import("./components/landing/LandingPage"))
 function App() {
   const isAuthenticated = useIsAuthenticated();
   const hydrated = useAuthStore((s) => s.hydrated);
+  const idToken = useAuthStore((s) => s.idToken);
+  const canShowChat = isAuthenticated && Boolean(idToken);
 
   return (
     <AuthGuard>
       <ChunkErrorBoundary>
         <Suspense fallback={<LoadingState />}>
           {!hydrated ? <LoadingState /> :
-           isAuthenticated ? <ChatPage /> : <LandingPage />}
+           canShowChat ? <ChatPage /> : <LandingPage />}
         </Suspense>
       </ChunkErrorBoundary>
     </AuthGuard>

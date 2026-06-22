@@ -82,6 +82,10 @@ sequenceDiagram
   Web Chat 只负责展示 SDK 产生的 Auth Card，不接触 Microsoft Graph access
   token。
 
+Web Chat Inbound Auth 的完整登录态生命周期（AuthGuard、Zustand `idToken`、
+silent refresh、401/403 retry、LandingPage / ChatPage gate）见
+[`auth/inbound-auth-lifecycle.md`](auth/inbound-auth-lifecycle.md)。
+
 #### 2.1.1 Chainlit Playground（调试工具）
 
 Web Chat（Vite + React）面向最终用户，需要工程化构建。在开发阶段，需要一个零构建的轻量调试界面直接与 Agent 交互，观察推理过程。
@@ -150,7 +154,7 @@ flowchart TB
     MAIN["main.tsx → MsalProvider → App.tsx"]
     MAIN --> GUARD["AuthGuard"]
     GUARD -->|"MSAL Startup / HandleRedirect"| LOADING["LoadingState"]
-    GUARD -->|"MSAL Idle (None)"| AUTH{"isAuthenticated?"}
+    GUARD -->|"MSAL Idle (None)"| AUTH{"isAuthenticated<br/>&& idToken?"}
     AUTH -->|"false"| LP["LandingPage<br/>(lazy loaded)"]
     AUTH -->|"true"| CP["ChatPage<br/>(lazy loaded)"]
 ```
@@ -159,7 +163,32 @@ flowchart TB
 
 - 检查 MSAL `InteractionStatus` 枚举：`Startup`、`HandleRedirect` 或未认证期间任何非 `None` 状态 → 渲染 LoadingState
 - 排除 `acquireToken`（静默 token 刷新不触发 loading）
-- MSAL idle 后交由 `isAuthenticated` 决定渲染 LandingPage 或 ChatPage
+- MSAL idle 后由 `isAuthenticated && Boolean(idToken)` 决定渲染
+  ChatPage；只要 MSAL account 与 Zustand `idToken` 任一侧失效，即回到
+  LandingPage，避免 token 过期后继续停留在 ChatPage。
+
+**Inbound Auth token 生命周期**：
+
+```mermaid
+stateDiagram-v2
+    [*] --> Hydrating: main.tsx 启动
+    Hydrating --> SignedIn: MSAL cache silent refresh 成功
+    Hydrating --> SignedOut: 无 account / refresh 失败
+    SignedIn --> Refreshing: idToken 即将过期或 /invocations 401/403
+    Refreshing --> SignedIn: silent refresh 成功
+    Refreshing --> SignedOut: silent refresh 失败
+    SignedIn --> SignedOut: 401/403 retry 后仍失败
+    SignedOut --> Hydrating: 用户重新登录 redirect 返回
+```
+
+- 请求前若 `idToken` 已过期或即将过期，`chat-api-client.ts` 先调用
+  `acquireIdTokenSilently()`；成功则用新 token 发送请求。
+- silent refresh 返回 `null` 时，不再发送旧 token；Client 清理 Zustand token
+  与 MSAL cache/account，并进入 signed-out 状态。
+- `/invocations` 返回 401/403 时最多触发一次 silent refresh + retry；retry
+  仍失败后执行同一 signed-out 清理路径，防止旧 token 请求循环。
+- `clearToken()` 只清除 token，不把 hydration 状态回滚为未初始化，避免认证失效后
+  UI 卡在 LoadingState。
 
 **Landing Page Tile 序列**（自上而下，全出血，tile 间 0 gap，颜色变化即为分割线）：
 

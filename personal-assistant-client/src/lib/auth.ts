@@ -1,5 +1,6 @@
 import { PublicClientApplication, type Configuration } from "@azure/msal-browser";
 import { getPublicConfig } from "@/config";
+import { useAuthStore } from "@/stores/auth-store";
 
 const publicConfig = getPublicConfig();
 const msalConfig: Configuration = {
@@ -31,6 +32,16 @@ export async function acquireIdTokenSilently(): Promise<string | null> {
   } catch (e) {
     console.warn("acquireIdTokenSilently failed:", e);
     return null;
+  }
+}
+
+export async function clearInboundAuthSession(): Promise<void> {
+  useAuthStore.getState().clearToken();
+  try {
+    msalInstance.setActiveAccount(null);
+    await msalInstance.clearCache();
+  } catch (e) {
+    console.warn("clearInboundAuthSession failed:", e);
   }
 }
 
