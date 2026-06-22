@@ -15,7 +15,9 @@ request/session/trace correlation。
 
 - local：`config/logging.dev.yaml`，UTC console text
 - production：`config/logging.prod.yaml`，stdout single-line JSON
-- 配置统一覆盖 `root`、`app`、`uvicorn`、`uvicorn.error`
+- 配置统一覆盖 `root`、`app`、`agentarts`、`uvicorn`、`uvicorn.error`
+- 清除 AgentArts SDK 自带的 `agentarts` handler，仅向 root propagation，
+  防止同一 SDK event 同时输出 plain text 与 JSON
 - 禁用 `uvicorn.access` handler，使用 pure ASGI middleware 记录结构化 HTTP event
 - application 不在 import 时调用 `logging.config.dictConfig`
 - 现有 `LOG_LEVEL` 通过 handler filter 同时约束 Uvicorn、application 与第三方日志

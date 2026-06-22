@@ -24,6 +24,10 @@ loggers:
     handlers: [stdout]
     level: DEBUG
     propagate: false
+  agentarts:
+    handlers: []
+    level: DEBUG
+    propagate: true
   uvicorn:
     handlers: [stdout]
     level: DEBUG

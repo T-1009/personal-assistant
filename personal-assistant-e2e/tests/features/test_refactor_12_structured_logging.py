@@ -24,9 +24,15 @@ class TestStructuredLoggingContract:
             assert config["disable_existing_loggers"] is False
             assert set(config["loggers"]) == {
                 "app",
+                "agentarts",
                 "uvicorn",
                 "uvicorn.error",
                 "uvicorn.access",
+            }
+            assert config["loggers"]["agentarts"] == {
+                "handlers": [],
+                "level": "DEBUG",
+                "propagate": True,
             }
             assert config["loggers"]["uvicorn.access"]["handlers"] == []
 

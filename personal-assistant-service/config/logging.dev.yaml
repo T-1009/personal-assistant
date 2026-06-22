@@ -24,6 +24,10 @@ loggers:
     handlers: [console]
     level: DEBUG
     propagate: false
+  agentarts:
+    handlers: []
+    level: DEBUG
+    propagate: true
   uvicorn:
     handlers: [console]
     level: DEBUG

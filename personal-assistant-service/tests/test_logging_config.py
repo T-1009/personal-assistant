@@ -23,9 +23,13 @@ def test_dev_and_prod_configs_cover_the_same_loggers():
     dev = yaml.safe_load((PROJECT_ROOT / "config/logging.dev.yaml").read_text())
     prod = yaml.safe_load((PROJECT_ROOT / "config/logging.prod.yaml").read_text())
 
-    expected = {"app", "uvicorn", "uvicorn.error", "uvicorn.access"}
+    expected = {"app", "agentarts", "uvicorn", "uvicorn.error", "uvicorn.access"}
     assert set(dev["loggers"]) == expected
     assert set(prod["loggers"]) == expected
+    assert dev["loggers"]["agentarts"]["handlers"] == []
+    assert prod["loggers"]["agentarts"]["handlers"] == []
+    assert dev["loggers"]["agentarts"]["propagate"] is True
+    assert prod["loggers"]["agentarts"]["propagate"] is True
     assert dev["loggers"]["uvicorn.access"]["handlers"] == []
     assert prod["loggers"]["uvicorn.access"]["handlers"] == []
 
