@@ -52,7 +52,7 @@ sequenceDiagram
     Agent->>SDK: 调用 @require_access_token 包裹的 Calendar Tool
     SDK->>IdSvc: get_resource_oauth2_token(provider=m365-calendar-provider)
     IdSvc-->>SDK: auth_url + session_uri
-    SDK-->>Agent: on_auth_url(auth_url, session_uri)
+    SDK-->>Agent: on_auth_url(auth_url)
     Agent-->>UI: SSE system_message(AuthCard)
     User->>MS: 在浏览器完成 Microsoft 授权
     MS-->>Agent: redirect callback(code/state/session_uri)
@@ -100,6 +100,20 @@ AgentArts Gateway:
 FastAPI:
   @app.post("/invocations/auth/oauth2/complete")
 ```
+
+当前 AgentArts SDK 的 `on_auth_url` callback 签名是 `Callable[[str], Any]`，只向
+应用层传递 `auth_url`，不会把 SDK 内部从 Identity Service 收到的 `session_uri`
+一起传给 callback。因此本 Feature 不依赖 AuthCard 或 SSE event 携带 `session_uri`。
+`session_uri` 的可信来源是用户完成 Microsoft 授权后，AgentArts / OAuth2 redirect
+回前端 callback URL 时附带的 query parameter：
+
+```text
+GET /auth/callback/m365-calendar?code=...&state=...&session_uri=...
+```
+
+前端 callback page 只负责读取浏览器 callback 参数、展示授权状态，并调用后端 complete
+API；后端 complete endpoint 必须从该请求中解析 `session_uri`，并结合可信 `user_id`
+与 `state` / pending auth record 校验后再调用 `complete_resource_token_auth`。
 
 `AgentArtsRuntimeContext.set_oauth2_callback_url(...)` 必须设置为前端 callback URL：
 
@@ -233,8 +247,12 @@ feature issue，并引入 Guard / confirmation 机制。
 ### AC2：完整 OAuth2 callback 与 complete
 
 - [ ] Calendar Tool 触发未授权时，通过 AuthCard 展示 Microsoft 授权 URL；
-- [ ] 授权 URL / state 中包含或可关联 AgentArts 返回的 `session_uri`；
-- [ ] 用户完成 Microsoft 授权后，callback endpoint 可收到并解析必要参数；
+- [ ] `on_auth_url` 只通过 AuthCard 展示 Microsoft 授权 URL，不要求 AuthCard 携带
+  `session_uri`；
+- [ ] 用户完成 Microsoft 授权后，前端 callback page 可从 redirect query parameter
+  读取 `session_uri`、`state` 等必要参数；
+- [ ] 后端 complete endpoint 可从前端 complete request 中解析 `session_uri`，并校验
+  `state` / pending auth record；
 - [ ] Service 使用可信 `user_id` 调用 `complete_resource_token_auth(session_uri=...)`；
 - [ ] complete 成功后，AgentArts Identity Service 保存 Calendar Resource Token；
 - [ ] 后续同一用户调用 Calendar Tool 时，`require_access_token` 可注入 access token。
