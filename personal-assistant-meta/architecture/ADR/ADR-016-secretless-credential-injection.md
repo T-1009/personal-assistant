@@ -146,7 +146,7 @@ API Key 不写入 `os.environ`、Settings、日志或 metric label。
 - **拒绝理由**：形成两个可变状态源；扩大明文 Secret 的进程可见范围和 subprocess
   继承面；无法同步刷新已经持有旧 Key 的 Model/Agent；rotation 依赖 container
   restart。最终采用可轮转 Agent Bundle，详见
-  [Refactor 8](../../issues/refactor/backlog/refactor-8-llm-api-key-caching/issue.md)。
+  [Refactor 8](../../issues/refactor/resolved/refactor-8-llm-api-key-caching/issue.md)。
 
 ## 影响
 

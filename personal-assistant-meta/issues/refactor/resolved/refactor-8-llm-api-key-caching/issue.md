@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: done
 ---
 
 # Refactor 8: 复用并安全轮转 LLM Agent Bundle
@@ -121,32 +121,32 @@ Redis 或分布式锁。
 
 ### Service
 
-- [ ] `AgentHandler` 增加不可变 `AgentBundle`
-- [ ] lazy 创建并在 TTL 内复用 compiled Agent
-- [ ] 使用 `asyncio.Lock` 实现 per-process single-flight refresh
-- [ ] Bundle 原子替换，Checkpointer 生命周期保持独立
-- [ ] `llm_config.py` 保持单一职责：解析配置、获取 Key、创建 Model
-- [ ] Settings 增加 positive `LLM_AGENT_BUNDLE_TTL_SECONDS`
-- [ ] 普通请求、SSE 和 Playground 使用同一个异步 Bundle 入口
-- [ ] 不将 API Key 写入 `os.environ`、Settings、日志或 metric label
+- [x] `AgentHandler` 增加不可变 `AgentBundle`
+- [x] lazy 创建并在 TTL 内复用 compiled Agent
+- [x] 使用 `asyncio.Lock` 实现 per-process single-flight refresh
+- [x] Bundle 原子替换，Checkpointer 生命周期保持独立
+- [x] `llm_config.py` 保持单一职责：解析配置、获取 Key、创建 Model
+- [x] Settings 增加 positive `LLM_AGENT_BUNDLE_TTL_SECONDS`
+- [x] 普通请求、SSE 和 Playground 使用同一个异步 Bundle 入口
+- [x] 不将 API Key 写入 `os.environ`、Settings、日志或 metric label
 
 ### Tests
 
-- [ ] 首次请求获取 credential 并创建一个 Bundle
-- [ ] TTL 内连续请求复用同一个 Agent，不再次调用 Identity
-- [ ] TTL 到期后重建 Bundle
-- [ ] 并发 cold start / refresh 只执行一次构建
-- [ ] refresh 失败不发布错误 Bundle，后续请求可再次尝试
-- [ ] Bundle 刷新前后复用同一个 Checkpointer
-- [ ] 两个不同 Agent 实例通过共享 Checkpointer 和相同 `thread_id` 恢复真实多轮状态
-- [ ] 不同 `user_id + session_id` 状态隔离
-- [ ] 普通请求、SSE 和 Playground 回归通过
+- [x] 首次请求获取 credential 并创建一个 Bundle
+- [x] TTL 内连续请求复用同一个 Agent，不再次调用 Identity
+- [x] TTL 到期后重建 Bundle
+- [x] 并发 cold start / refresh 只执行一次构建
+- [x] refresh 失败不发布错误 Bundle，后续请求可再次尝试
+- [x] Bundle 刷新前后复用同一个 Checkpointer
+- [x] 两个不同 Agent 实例通过共享 Checkpointer 和相同 `thread_id` 恢复真实多轮状态
+- [x] 不同 `user_id + session_id` 状态隔离
+- [x] 普通请求、SSE 和 Playground 回归通过
 
 ### Documentation
 
-- [ ] ADR-016 删除 `os.environ` cache 和未验证的 SDK cache 描述
-- [ ] backend/overall architecture 与实际 Bundle 生命周期一致
-- [ ] 修正文档中的“IPC”表述为 Identity Service API call
+- [x] ADR-016 删除 `os.environ` cache 和未验证的 SDK cache 描述
+- [x] backend/overall architecture 与实际 Bundle 生命周期一致
+- [x] 修正文档中的“IPC”表述为 Identity Service API call
 
 ## 不涉及
 
@@ -183,16 +183,16 @@ GitNexus 对核心 symbol 的评估为 HIGH：
 
 ## 验收条件
 
-- [ ] TTL 内任意数量的请求每个 worker 只创建一次 Model/Agent Bundle
-- [ ] 并发 cold start 不产生重复 Identity fetch
-- [ ] API Key 只存在于 AgentArts Identity、SDK 返回值和 Model object 必要范围
-- [ ] Bundle refresh 不替换或清空 Checkpointer
-- [ ] Bundle refresh 失败不污染已发布状态
-- [ ] 不自动重放可能包含 Tool side effects 的 invocation
-- [ ] 真实多轮状态恢复和 Session 隔离测试通过
-- [ ] Unit、Integration、相关 E2E、Ruff 全部通过
-- [ ] ADR-016 与 backend/overall architecture 和实现一致
-- [ ] `gitnexus detect-changes` 仅报告预期流程
+- [x] TTL 内任意数量的请求每个 worker 只创建一次 Model/Agent Bundle
+- [x] 并发 cold start 不产生重复 Identity fetch
+- [x] API Key 只存在于 AgentArts Identity、SDK 返回值和 Model object 必要范围
+- [x] Bundle refresh 不替换或清空 Checkpointer
+- [x] Bundle refresh 失败不污染已发布状态
+- [x] 不自动重放可能包含 Tool side effects 的 invocation
+- [x] 真实多轮状态恢复和 Session 隔离测试通过
+- [x] Unit、Integration、相关 E2E、Ruff 全部通过
+- [x] ADR-016 与 backend/overall architecture 和实现一致
+- [x] `gitnexus detect-changes` 仅报告预期流程
 
 ## 依赖
 
