@@ -14,6 +14,8 @@ const M365CalendarCallbackPage = React.lazy(
 function App() {
   const isAuthenticated = useIsAuthenticated();
   const hydrated = useAuthStore((s) => s.hydrated);
+  const idToken = useAuthStore((s) => s.idToken);
+  const canShowChat = isAuthenticated && Boolean(idToken);
   const isCalendarCallback =
     window.location.pathname === "/auth/callback/m365-calendar";
 
@@ -32,7 +34,7 @@ function App() {
       <ChunkErrorBoundary>
         <Suspense fallback={<LoadingState />}>
           {!hydrated ? <LoadingState /> :
-           isAuthenticated ? <ChatPage /> : <LandingPage />}
+           canShowChat ? <ChatPage /> : <LandingPage />}
         </Suspense>
       </ChunkErrorBoundary>
     </AuthGuard>

@@ -6,9 +6,15 @@ import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/reac
 import type { ThreadMessage, ThreadUserMessagePart } from "@assistant-ui/core";
 
 // Mock the auth module to control acquireIdTokenSilently behavior
-const mockAcquireIdTokenSilently = vi.fn();
+const { mockAcquireIdTokenSilently, mockClearInboundAuthSession } = vi.hoisted(
+  () => ({
+    mockAcquireIdTokenSilently: vi.fn(),
+    mockClearInboundAuthSession: vi.fn(),
+  }),
+);
 vi.mock("@/lib/auth", () => ({
   acquireIdTokenSilently: () => mockAcquireIdTokenSilently(),
+  clearInboundAuthSession: () => mockClearInboundAuthSession(),
 }));
 
 /**
@@ -90,6 +96,10 @@ describe("chatAdapter", () => {
     useAuthStore.getState().clearToken();
     useAuthCardStore.getState().clearAuth();
     mockAcquireIdTokenSilently.mockReset();
+    mockClearInboundAuthSession.mockReset();
+    mockClearInboundAuthSession.mockImplementation(async () => {
+      useAuthStore.getState().clearToken();
+    });
   });
 
   afterEach(() => {
@@ -516,7 +526,8 @@ describe("chatAdapter", () => {
   describe("auth header", () => {
     it("includes Authorization: Bearer header when idToken is set", async () => {
       // Set idToken in the zustand store
-      useAuthStore.getState().setIdToken("test-token-123");
+      const idToken = makeTestJWT();
+      useAuthStore.getState().setIdToken(idToken);
 
       const mockFetch = vi.fn().mockResolvedValue({
         ok: true,
@@ -529,7 +540,7 @@ describe("chatAdapter", () => {
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       const headers = init.headers as Record<string, string>;
       expect(headers).toHaveProperty("Authorization");
-      expect(headers["Authorization"]).toBe("Bearer test-token-123");
+      expect(headers["Authorization"]).toBe(`Bearer ${idToken}`);
     });
 
     it("does NOT include Authorization header when idToken is null", async () => {
@@ -582,6 +593,7 @@ describe("chatAdapter", () => {
 
       // Verify store token was cleared
       expect(useAuthStore.getState().idToken).toBeNull();
+      expect(mockClearInboundAuthSession).toHaveBeenCalledTimes(1);
     });
 
     it("on 403: calls acquireIdTokenSilently, clears token when refresh returns null, throws auth error", async () => {
@@ -601,6 +613,7 @@ describe("chatAdapter", () => {
 
       expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
       expect(useAuthStore.getState().idToken).toBeNull();
+      expect(mockClearInboundAuthSession).toHaveBeenCalledTimes(1);
     });
 
     it("on 401: calls acquireIdTokenSilently, updates store with fresh token, still throws auth error", async () => {
@@ -621,8 +634,14 @@ describe("chatAdapter", () => {
       // Verify acquireIdTokenSilently was called exactly once (401 handler)
       expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
 
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      const retryInit = mockFetch.mock.calls[1][1] as RequestInit;
+      const retryHeaders = retryInit.headers as Record<string, string>;
+      expect(retryHeaders["Authorization"]).toBe("Bearer fresh-token-456");
+
       // Verify store was cleared after fresh token also failed
       expect(useAuthStore.getState().idToken).toBeNull();
+      expect(mockClearInboundAuthSession).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -674,9 +693,9 @@ describe("chatAdapter", () => {
       expect(useAuthStore.getState().idToken).not.toBe("should-not-be-called");
     });
 
-    it("keeps existing token when proactive refresh returns null", async () => {
-      // Token expiring soon, but refresh fails — the adapter sends the
-      // original token and lets the backend return 401 for handling.
+    it("signs out and does not send an expired token when proactive refresh returns null", async () => {
+      // Token expiring soon, but refresh fails — the adapter must not send the
+      // original expired token and wait for the backend to reject it.
       const nearExpiryToken = makeTestJWT(30);
       useAuthStore.getState().setIdToken(nearExpiryToken);
       mockAcquireIdTokenSilently.mockResolvedValue(null);
@@ -687,19 +706,16 @@ describe("chatAdapter", () => {
       });
       globalThis.fetch = mockFetch as unknown as typeof fetch;
 
-      await collectResults("refresh-fails test");
+      await expect(collectResults("refresh-fails test")).rejects.toThrow(
+        "Authentication required. Please sign in.",
+      );
 
       // acquireIdTokenSilently should have been called
       expect(mockAcquireIdTokenSilently).toHaveBeenCalledTimes(1);
 
-      // Token remains unchanged (not cleared by proactive refresh path)
-      expect(useAuthStore.getState().idToken).toBe(nearExpiryToken);
-
-      // Authorization header still contains the original token
-      const init = mockFetch.mock.calls[0][1] as RequestInit;
-      const headers = init.headers as Record<string, string>;
-      expect(headers).toHaveProperty("Authorization");
-      expect(headers["Authorization"]).toBe(`Bearer ${nearExpiryToken}`);
+      expect(mockFetch).not.toHaveBeenCalled();
+      expect(useAuthStore.getState().idToken).toBeNull();
+      expect(mockClearInboundAuthSession).toHaveBeenCalledTimes(1);
     });
   });
 
