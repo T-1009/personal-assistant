@@ -204,6 +204,40 @@ describe("chatAdapter", () => {
       });
     });
 
+    it("keeps historical Auth Cards when a new Auth Card arrives", () => {
+      const authStore = useAuthCardStore.getState();
+
+      authStore.setAuth(
+        "auth-message-1",
+        "m365-provider-common",
+        "https://auth-1.example.com",
+        "请先完成日历授权",
+      );
+      authStore.setAuth(
+        "auth-message-2",
+        "m365-provider-common",
+        "https://auth-2.example.com",
+        "请再完成邮件授权",
+      );
+
+      expect(useAuthCardStore.getState().cardsByMessageId).toMatchObject({
+        "auth-message-1": {
+          authUrl: "https://auth-1.example.com",
+          message: "请先完成日历授权",
+          authComplete: false,
+        },
+        "auth-message-2": {
+          authUrl: "https://auth-2.example.com",
+          message: "请再完成邮件授权",
+          authComplete: false,
+        },
+      });
+      expect(useAuthCardStore.getState()).toMatchObject({
+        messageId: "auth-message-2",
+        authUrl: "https://auth-2.example.com",
+      });
+    });
+
     it("yields content chunks for SSE token events", async () => {
       const chunks = [
         encoder.encode("data: " + JSON.stringify({ token: "Hello" }) + "\n"),

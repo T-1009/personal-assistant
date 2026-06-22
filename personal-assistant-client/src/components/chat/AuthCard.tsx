@@ -12,11 +12,9 @@ export interface AuthCardProps {
 }
 
 export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
-  const storeMessageId = useAuthCardStore((s) => s.messageId);
-  const authUrl = useAuthCardStore((s) => s.authUrl);
-  const message = useAuthCardStore((s) => s.message);
-  const authComplete = useAuthCardStore((s) => s.authComplete);
-  const authFailed = useAuthCardStore((s) => s.authFailed);
+  const authCard = useAuthCardStore((s) =>
+    messageId ? s.cardsByMessageId[messageId] : s,
+  );
   const clearAuth = useAuthCardStore((s) => s.clearAuth);
 
   useEffect(() => {
@@ -43,13 +41,10 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
     return () => window.removeEventListener("message", handleMessage);
   }, []);
 
-  if (!authUrl) return null;
-  // If messageId is provided, we are rendering inside a specific message bubble.
-  // Only render if the store's messageId matches this component's prop.
-  if (messageId && messageId !== storeMessageId) return null;
+  if (!authCard?.authUrl) return null;
 
-  const isComplete = authComplete;
-  const isFailed = authFailed;
+  const isComplete = authCard.authComplete;
+  const isFailed = authCard.authFailed;
   const cardClass = isComplete
     ? "flex items-start gap-3 rounded-xl border border-green-200 bg-green-50 p-4 dark:border-green-800 dark:bg-green-950"
     : isFailed
@@ -76,7 +71,7 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
         ) : (
           <ShieldCheckIcon className="mt-0.5 size-5 shrink-0 text-blue-600 dark:text-blue-400" />
         )}
-        <p className={textClass}>{message}</p>
+        <p className={textClass}>{authCard.message}</p>
         <div className="flex shrink-0 items-center gap-2">
           {isComplete ? (
             <span className="inline-flex h-8 items-center rounded-md bg-green-600 px-3 text-sm font-medium text-white">
@@ -88,7 +83,7 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
             </span>
           ) : (
             <a
-              href={authUrl}
+              href={authCard.authUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex h-8 items-center rounded-md bg-blue-600 px-3 text-sm font-medium text-white transition-colors hover:bg-blue-700"
@@ -98,7 +93,7 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
           )}
           <button
             type="button"
-            onClick={clearAuth}
+            onClick={() => clearAuth(messageId)}
             className={closeClass}
             aria-label="关闭"
           >
