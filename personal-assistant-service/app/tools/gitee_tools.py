@@ -196,7 +196,7 @@ async def list_repositories(
     """List repositories visible to the current Gitee end user."""
     if not access_token:
         return _auth_required_response()
-
+    _push_auth_complete(get_gitee_provider_name())
     if repo_type and (visibility != "all" or affiliation):
         return {
             "ok": False,
@@ -217,7 +217,6 @@ async def list_repositories(
         "per_page": min(max(per_page, 1), 100),
     }
     try:
-        _push_auth_complete(get_gitee_provider_name())
         data = await _gitee_request(
             "GET", "/user/repos", params=params, access_token=access_token
         )
