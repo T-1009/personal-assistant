@@ -26,7 +26,7 @@ async def handle_auth_url(auth_url: str) -> None:
                 ),
                 "auth_url": auth_url,
                 "auth_required": True,
-                "provider": "m365-provider-common",
+                "provider": "m365-email-provider",
             }
         )
     except RuntimeError:
@@ -148,7 +148,7 @@ def _get_client() -> httpx.AsyncClient:
 # ── 1. list_emails ──
 
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -176,7 +176,7 @@ async def list_emails(
     logger.debug("list_emails access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     try:
         client = _get_client()
         resp = await client.get(
@@ -217,7 +217,7 @@ async def list_emails(
 # ── 2. get_email ──
 
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -243,7 +243,7 @@ async def get_email(
     logger.debug("get_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     try:
         client = _get_client()
         resp = await client.get(
@@ -292,7 +292,7 @@ async def get_email(
 # ── 3. search_emails ──
 
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -322,7 +322,7 @@ async def search_emails(
     logger.debug("search_emails access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     try:
         escaped_query = query.replace('"', '\\"')
         client = _get_client()
@@ -361,7 +361,7 @@ async def search_emails(
 # ── 4. send_email (Guard protected) ──
 
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -392,7 +392,7 @@ async def send_email(
     logger.debug("send_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     if not to:
         return {
             "sent": False,
@@ -453,7 +453,7 @@ async def send_email(
 # ── 5. reply_to_email ──
 
 @require_access_token(
-    provider_name="m365-provider-common",
+    provider_name="m365-email-provider",
     scopes=[
         "https://graph.microsoft.com/Mail.Read",
         "https://graph.microsoft.com/Mail.ReadWrite",
@@ -482,7 +482,7 @@ async def reply_to_email(
     logger.debug("reply_to_email access_token: %s", access_token)
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-provider-common")
+    _push_auth_complete("m365-email-provider")
     if not email_id or not email_id.strip():
         return {"sent": False, "error": "email_id is required for reply_to_email"}
     if not body or not body.strip():
