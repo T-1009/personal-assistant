@@ -327,6 +327,7 @@ async def invocations(request: Request):
 )
 async def complete_oauth2_auth(request: Request):
     """Complete AgentArts Resource Token Auth for Calendar OAuth2 callbacks."""
+    logger.info("Handling OAuth2 complete request")
     try:
         body = await request.json()
     except JSONDecodeError as e:

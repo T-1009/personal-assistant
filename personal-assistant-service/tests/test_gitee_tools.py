@@ -6,9 +6,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from app.identity import AuthorizationRequired
 from app.tools import gitee_tools as gt
-from app.tools.gitee_tools import list_repositories
+
 
 @pytest.fixture(autouse=True)
 def unwrap_gitee_tools(monkeypatch):
