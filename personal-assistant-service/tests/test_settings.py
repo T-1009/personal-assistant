@@ -24,6 +24,9 @@ def test_defaults():
     assert settings.llm_agent_bundle_ttl_seconds == 300.0
     assert settings.postgres_dsn is None
     assert settings.sqlite_db_path is None
+    assert str(settings.graph_base_url).rstrip("/") == (
+        "https://graph.microsoft.com/v1.0/me"
+    )
 
 
 def test_environment_overrides_defaults(monkeypatch):
@@ -77,6 +80,19 @@ def test_agent_bundle_ttl_can_be_overridden(monkeypatch):
     settings = Settings(_env_file=None)
 
     assert settings.llm_agent_bundle_ttl_seconds == 120.0
+
+
+def test_graph_base_url_can_be_overridden(monkeypatch):
+    monkeypatch.setenv(
+        "GRAPH_BASE_URL",
+        "https://graph.microsoft.com/v1.0/users/current",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert str(settings.graph_base_url).rstrip("/") == (
+        "https://graph.microsoft.com/v1.0/users/current"
+    )
 
 
 @pytest.mark.parametrize("ttl", [0, -1])

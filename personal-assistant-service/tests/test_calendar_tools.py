@@ -1,20 +1,23 @@
 """Unit tests for Microsoft 365 Calendar tools."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
 import app.tools.calendar_tools as ct
 
+_TOOL_NAMES = [
+    "list_calendar_events",
+    "get_calendar_event",
+    "search_calendar_events",
+]
+
 
 @pytest.fixture(autouse=True)
 def unwrap_calendar_tools():
     saved = {}
-    for name in [
-        "list_calendar_events",
-        "get_calendar_event",
-        "search_calendar_events",
-    ]:
+    for name in _TOOL_NAMES:
         wrapped = getattr(ct, name)
         saved[name] = wrapped
         raw = wrapped
@@ -149,24 +152,35 @@ async def test_search_calendar_events_with_time_window_filters_locally():
 
 
 @pytest.mark.asyncio
-async def test_calendar_tools_return_auth_required_when_sdk_injects_no_token():
-    def fake_require_access_token(**_kwargs):
-        def decorator(func):
-            async def wrapper(*args, **kwargs):
-                kwargs["access_token"] = None
-                return await func(*args, **kwargs)
-
-            return wrapper
-
-        return decorator
-
-    with patch(
-        "app.tools.calendar_tools.require_access_token",
-        fake_require_access_token,
-    ):
-        result = await ct.list_calendar_events(
-            "2026-06-22T00:00:00",
-            "2026-06-23T00:00:00",
-        )
+async def test_calendar_tools_return_auth_required_without_access_token():
+    result = await ct.list_calendar_events(
+        "2026-06-22T00:00:00",
+        "2026-06-23T00:00:00",
+    )
 
     assert result["auth_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_handle_auth_url_injects_signed_state_into_streamed_url():
+    writer_mock = MagicMock()
+    with (
+        patch("app.tools.calendar_tools.get_stream_writer", return_value=writer_mock),
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_user_id",
+            return_value="user-1",
+        ),
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_session_id",
+            return_value="session-1",
+        ),
+        patch(
+            "app.tools.calendar_tools.create_oauth2_state", return_value="signed-state"
+        ),
+    ):
+        await ct.handle_auth_url("https://auth.example.com/login?client_id=abc")
+
+    writer_mock.assert_called_once()
+    payload = writer_mock.call_args[0][0]
+    auth_url = payload["auth_url"]
+    assert parse_qs(urlsplit(auth_url).query)["state"] == ["signed-state"]

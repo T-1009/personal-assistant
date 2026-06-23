@@ -5,6 +5,8 @@ import httpx
 from agentarts.sdk import require_access_token
 from langgraph.config import get_stream_writer
 
+from app.settings import get_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +63,7 @@ def _push_auth_complete(provider: str) -> None:
         )
 
 
-GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0/me"
+GRAPH_BASE_URL = str(get_settings().graph_base_url).rstrip("/")
 
 
 def _extract_graph_error(resp: httpx.Response) -> str:

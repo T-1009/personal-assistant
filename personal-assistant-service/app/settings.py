@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     oauth2_calendar_callback_url: AnyHttpUrl | None = None
     oauth2_state_secret: str = "dev-only-calendar-oauth2-state-secret"
     oauth2_pending_auth_ttl_seconds: int = Field(default=600, gt=0)
+    graph_base_url: AnyHttpUrl = "https://graph.microsoft.com/v1.0/me"
     graph_request_timeout_seconds: float = Field(default=30.0, gt=0.0)
     graph_timezone: str = "Asia/Shanghai"
 
