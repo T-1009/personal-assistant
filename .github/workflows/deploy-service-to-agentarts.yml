@@ -95,6 +95,8 @@ jobs:
           cd personal-assistant-service
 
           for name in \
+            HUAWEICLOUD_SDK_AK \
+            HUAWEICLOUD_SDK_SK \
             LOG_LEVEL \
             LLM_PROVIDER \
             LLM_MODEL \
