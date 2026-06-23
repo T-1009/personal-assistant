@@ -1,11 +1,12 @@
 """Unit tests for Microsoft 365 Calendar tools."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from urllib.parse import parse_qs, urlsplit
 
 import pytest
+from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 
 import app.tools.calendar_tools as ct
+from app.settings import Settings
 
 _TOOL_NAMES = [
     "list_calendar_events",
@@ -82,9 +83,11 @@ async def test_list_calendar_events_formats_graph_request_and_response():
         patch("app.tools.calendar_tools._get_client", return_value=client),
         patch("app.tools.calendar_tools._push_auth_complete"),
     ):
-        result = await ct.list_calendar_events(
-            "2026-06-22T00:00:00",
-            "2026-06-23T00:00:00",
+        result = await ct._list_calendar_events_impl(
+            start_time="2026-06-22T00:00:00",
+            end_time="2026-06-23T00:00:00",
+            calendar_id="primary",
+            limit=20,
             access_token="token",
         )
 
@@ -110,8 +113,8 @@ async def test_get_calendar_event_uses_calendar_scoped_url_when_calendar_id_give
         patch("app.tools.calendar_tools._get_client", return_value=client),
         patch("app.tools.calendar_tools._push_auth_complete"),
     ):
-        result = await ct.get_calendar_event(
-            "event-1",
+        result = await ct._get_calendar_event_impl(
+            event_id="event-1",
             calendar_id="calendar-1",
             access_token="token",
         )
@@ -140,10 +143,12 @@ async def test_search_calendar_events_with_time_window_filters_locally():
         patch("app.tools.calendar_tools._get_client", return_value=client),
         patch("app.tools.calendar_tools._push_auth_complete"),
     ):
-        result = await ct.search_calendar_events(
-            "design",
+        result = await ct._search_calendar_events_impl(
+            query="design",
             start_time="2026-06-22T00:00:00",
             end_time="2026-06-23T00:00:00",
+            calendar_id="primary",
+            limit=20,
             access_token="token",
         )
 
@@ -153,34 +158,70 @@ async def test_search_calendar_events_with_time_window_filters_locally():
 
 @pytest.mark.asyncio
 async def test_calendar_tools_return_auth_required_without_access_token():
-    result = await ct.list_calendar_events(
-        "2026-06-22T00:00:00",
-        "2026-06-23T00:00:00",
+    result = await ct._list_calendar_events_impl(
+        start_time="2026-06-22T00:00:00",
+        end_time="2026-06-23T00:00:00",
+        calendar_id="primary",
+        limit=20,
+        access_token=None,
     )
 
     assert result["auth_required"] is True
 
 
 @pytest.mark.asyncio
-async def test_handle_auth_url_injects_signed_state_into_streamed_url():
+async def test_handle_auth_url_streams_sdk_authorization_url_unchanged():
     writer_mock = MagicMock()
-    with (
-        patch("app.tools.calendar_tools.get_stream_writer", return_value=writer_mock),
-        patch(
-            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_user_id",
-            return_value="user-1",
-        ),
-        patch(
-            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_session_id",
-            return_value="session-1",
-        ),
-        patch(
-            "app.tools.calendar_tools.create_oauth2_state", return_value="signed-state"
-        ),
-    ):
+    with patch("app.tools.calendar_tools.get_stream_writer", return_value=writer_mock):
         await ct.handle_auth_url("https://auth.example.com/login?client_id=abc")
 
     writer_mock.assert_called_once()
     payload = writer_mock.call_args[0][0]
-    auth_url = payload["auth_url"]
-    assert parse_qs(urlsplit(auth_url).query)["state"] == ["signed-state"]
+    assert payload["auth_url"] == "https://auth.example.com/login?client_id=abc"
+
+
+@pytest.mark.asyncio
+async def test_calendar_tool_sets_oauth2_context_for_inner_decorated_call():
+    settings = Settings(
+        oauth2_calendar_callback_url=(
+            "http://localhost:5173/auth/callback/m365-calendar"
+        ),
+        oauth2_state_secret="test-secret",
+    )
+
+    async def fake_inner(**kwargs):
+        assert (
+            AgentArtsRuntimeContext.get_oauth2_callback_url()
+            == "http://localhost:5173/auth/callback/m365-calendar"
+        )
+        assert AgentArtsRuntimeContext.get_oauth2_custom_state() == "signed-state"
+        return {"ok": True, "kwargs": kwargs}
+
+    AgentArtsRuntimeContext.set_user_id("user-1")
+    AgentArtsRuntimeContext.set_session_id("session-1")
+    AgentArtsRuntimeContext.set_oauth2_callback_url("previous-callback")
+    AgentArtsRuntimeContext.set_oauth2_custom_state("previous-state")
+    try:
+        with (
+            patch("app.tools.calendar_tools.get_settings", return_value=settings),
+            patch(
+                "app.tools.calendar_tools.create_oauth2_state",
+                return_value="signed-state",
+            ),
+            patch(
+                "app.tools.calendar_tools._list_calendar_events_with_token",
+                side_effect=fake_inner,
+            ),
+        ):
+            result = await ct.list_calendar_events(
+                "2026-06-22T00:00:00",
+                "2026-06-23T00:00:00",
+            )
+
+        assert AgentArtsRuntimeContext.get_oauth2_callback_url() == "previous-callback"
+        assert AgentArtsRuntimeContext.get_oauth2_custom_state() == "previous-state"
+    finally:
+        AgentArtsRuntimeContext.clear()
+
+    assert result["ok"] is True
+    assert result["kwargs"]["start_time"] == "2026-06-22T00:00:00"
