@@ -124,25 +124,6 @@ def _repo_item_to_dict(item: GiteeRepositoryItem) -> dict[str, Any]:
     return asdict(item)
 
 
-def require_gitee_access_token(func):
-    """Decorator to require Gitee OAuth access token."""
-
-    @functools.wraps(func)
-    async def wrapper(*args, **kwargs):
-        # We use a wrapper that dynamically resolves get_gitee_provider_name()
-        # when the decorator is evaluated.
-        decorator = require_access_token(
-            provider_name=get_gitee_provider_name(),
-            into="access_token",
-            scopes=list(DEFAULT_GITEE_SCOPES),
-            on_auth_url=handle_auth_url,
-            auth_flow="USER_FEDERATION",
-        )
-        return await decorator(func)(*args, **kwargs)
-
-    return wrapper
-
-
 def _auth_required_response() -> dict[str, Any]:
     """Return a tool result indicating authorization is pending."""
     return {
@@ -181,7 +162,13 @@ async def _gitee_request(
     return await _raw_gitee_request(access_token, method, path, params=params)
 
 
-@require_gitee_access_token
+@require_access_token(
+    provider_name=get_gitee_provider_name(),
+    into="access_token",
+    scopes=list(DEFAULT_GITEE_SCOPES),
+    on_auth_url=handle_auth_url,
+    auth_flow="USER_FEDERATION",
+)
 async def list_repositories(
     visibility: GiteeVisibility = "all",
     affiliation: str | None = None,
