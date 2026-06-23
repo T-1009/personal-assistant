@@ -128,7 +128,7 @@ def require_gitee_access_token(func):
     """Decorator to require Gitee OAuth access token."""
 
     @functools.wraps(func)
-    def wrapper(*args, **kwargs):
+    async def wrapper(*args, **kwargs):
         # We use a wrapper that dynamically resolves get_gitee_provider_name()
         # when the decorator is evaluated.
         decorator = require_access_token(
@@ -138,7 +138,7 @@ def require_gitee_access_token(func):
             on_auth_url=handle_auth_url,
             auth_flow="USER_FEDERATION",
         )
-        return decorator(func)(*args, **kwargs)
+        return await decorator(func)(*args, **kwargs)
 
     return wrapper
 
