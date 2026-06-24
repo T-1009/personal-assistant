@@ -137,6 +137,14 @@ def _parse_args() -> argparse.Namespace:
         action="store_true",
         help="Actually update the workload identity. Without this, dry-run only.",
     )
+    parser.add_argument(
+        "--list-current",
+        action="store_true",
+        help=(
+            "Print the current allowed return URLs and exit without comparing "
+            "or updating."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -148,7 +156,7 @@ def main() -> int:
         desired_urls.append(env_return_url.strip())
     desired_urls = _dedupe_urls([url for url in desired_urls if url])
 
-    if not desired_urls:
+    if not args.list_current and not desired_urls:
         print(
             "No return URL provided. Set OAUTH2_CALENDAR_CALLBACK_URL or pass "
             "--return-url.",
@@ -167,6 +175,9 @@ def main() -> int:
     print(f"Current allowed return URLs: {len(current_urls)}")
     for url in current_urls:
         print(f"  - {url}")
+
+    if args.list_current:
+        return 0
 
     print(f"Desired allowed return URLs: {len(desired_urls)}")
     for url in desired_urls:

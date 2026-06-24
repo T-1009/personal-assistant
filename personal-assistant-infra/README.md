@@ -32,6 +32,44 @@ Legacy `personal-assistant-web-chat` OBS static website 和
 - OBS backend credentials：`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
 - 与待管理资源匹配的最小 IAM permissions
 
+## 手动执行 Calendar OAuth helper
+
+`agent_identity.tf` 里的 `terraform_data + local-exec` 使用同一个脚本，
+可以手动查看或同步 Agent Identity 的 OAuth2 return URL allowlist。
+
+先进入目录并准备凭据：
+
+```bash
+cd personal-assistant-infra
+
+export HW_ACCESS_KEY="<your-access-key>"
+export HW_SECRET_KEY="<your-secret-key>"
+export AWS_ACCESS_KEY_ID="$HW_ACCESS_KEY"
+export AWS_SECRET_ACCESS_KEY="$HW_SECRET_KEY"
+```
+
+查看当前 allowlist：
+
+```bash
+uv run python scripts/configure_calendar_oauth_return_url.py \
+  --list-current \
+  --workload-identity-name agent-personal-assistant \
+  --region cn-southwest-2
+```
+
+同步 allowlist（只有加 `--apply` 才会写入云端）：
+
+```bash
+uv run python scripts/configure_calendar_oauth_return_url.py \
+  --workload-identity-name agent-personal-assistant \
+  --region cn-southwest-2 \
+  --return-url "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar" \
+  --apply
+```
+
+`--return-url` 可以重复传入；如果不传，脚本也会读取
+`OAUTH2_CALENDAR_CALLBACK_URL`。
+
 ## 本地验证
 
 ```bash
