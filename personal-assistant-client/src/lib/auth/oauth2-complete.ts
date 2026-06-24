@@ -3,13 +3,13 @@ import { buildHeaders, getRequestToken } from "@/lib/chat/chat-api-client";
 export interface OAuth2CompletePayload {
   provider: string;
   session_uri: string;
-  state: string;
+  state?: string | null;
   error?: string | null;
   error_description?: string | null;
 }
 
 export interface OAuth2CompleteResult {
-  status: "complete" | "already_complete";
+  status: "complete";
   provider: string;
   message: string;
 }

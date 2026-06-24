@@ -7,7 +7,6 @@ import pytest
 from agentarts.sdk.runtime.model import USER_ID_HEADER
 
 from app.main import app
-from app.oauth2_state import create_oauth2_state
 from app.settings import Settings
 
 
@@ -22,29 +21,17 @@ async def client():
 def calendar_settings():
     return Settings(
         m365_calendar_provider_name="m365-calendar-provider",
-        oauth2_state_secret="test-secret",
-    )
-
-
-def _state(settings: Settings, user_id: str = "user-1") -> str:
-    return create_oauth2_state(
-        settings=settings,
-        user_id=user_id,
-        session_id="sess-1",
-        provider=settings.m365_calendar_provider_name,
     )
 
 
 @pytest.mark.asyncio
 async def test_complete_requires_trusted_user_header(client, calendar_settings):
-    state = _state(calendar_settings)
     with patch("app.main.get_settings", return_value=calendar_settings):
         response = await client.post(
             "/invocations/auth/oauth2/complete",
             json={
                 "provider": "m365-calendar-provider",
                 "session_uri": "urn:uuid:test",
-                "state": state,
             },
         )
 
@@ -52,27 +39,23 @@ async def test_complete_requires_trusted_user_header(client, calendar_settings):
 
 
 @pytest.mark.asyncio
-async def test_complete_rejects_forged_user_id(client, calendar_settings):
-    state = _state(calendar_settings, user_id="real-user")
+async def test_complete_rejects_unsupported_provider(client, calendar_settings):
     with patch("app.main.get_settings", return_value=calendar_settings):
         response = await client.post(
             "/invocations/auth/oauth2/complete",
             json={
-                "provider": "m365-calendar-provider",
+                "provider": "other-provider",
                 "session_uri": "urn:uuid:test",
-                "state": state,
-                "user_id": "attacker",
             },
-            headers={USER_ID_HEADER: "attacker"},
+            headers={USER_ID_HEADER: "user-1"},
         )
 
-    assert response.status_code == 403
-    assert response.json()["detail"] == "invalid OAuth2 state"
+    assert response.status_code == 400
+    assert response.json()["detail"] == "unsupported OAuth2 provider"
 
 
 @pytest.mark.asyncio
 async def test_complete_calls_identity_client(client, calendar_settings):
-    state = _state(calendar_settings)
     identity_client = MagicMock()
 
     with (
@@ -84,7 +67,6 @@ async def test_complete_calls_identity_client(client, calendar_settings):
             json={
                 "provider": "m365-calendar-provider",
                 "session_uri": "urn:uuid:test",
-                "state": state,
             },
             headers={USER_ID_HEADER: "user-1"},
         )
@@ -99,14 +81,12 @@ async def test_complete_calls_identity_client(client, calendar_settings):
 
 @pytest.mark.asyncio
 async def test_complete_rejects_oauth_error(client, calendar_settings):
-    state = _state(calendar_settings)
     with patch("app.main.get_settings", return_value=calendar_settings):
         response = await client.post(
             "/invocations/auth/oauth2/complete",
             json={
                 "provider": "m365-calendar-provider",
                 "session_uri": "urn:uuid:test",
-                "state": state,
                 "error": "access_denied",
             },
             headers={USER_ID_HEADER: "user-1"},

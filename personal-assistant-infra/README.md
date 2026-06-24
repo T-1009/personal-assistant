@@ -12,6 +12,10 @@ Legacy `personal-assistant-web-chat` OBS static website 和
 ## 当前架构
 
 - AgentArts Runtime 使用 PUBLIC Mode，以保留 IAM、LLM 和外部 API Egress。
+- AgentArts Calendar OAuth2 return URL allowlist 暂通过 `terraform_data`
+  + `local-exec` 调用 infra SDK helper 管理；HuaweiCloud Provider 当前未暴露
+  Agent Identity Workload Identity 资源。OpenTofu 拥有该 allowlist 的完整
+  desired state，helper 会全量覆盖云端列表。
 - RDS 位于现有 VPC/Subnet，但通过独立 EIP 提供 Demo 公网连接。
 - RDS Security Group 仅开放 TCP 5432；当前 Demo 来源为 `0.0.0.0/0`。
 - 应用 DSN 必须使用 `sslmode=require` 和非管理员账号 `pa_app`。
@@ -23,6 +27,7 @@ Legacy `personal-assistant-web-chat` OBS static website 和
 ## 前置条件
 
 - OpenTofu CLI ≥ 1.9
+- uv（用于执行 `scripts/configure_calendar_oauth_return_url.py`）
 - Provider credentials：`HW_ACCESS_KEY` / `HW_SECRET_KEY`
 - OBS backend credentials：`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY`
 - 与待管理资源匹配的最小 IAM permissions
@@ -50,10 +55,14 @@ tofu plan
 ```text
 personal-assistant-infra/
 ├── main.tf                # OpenTofu、Provider 与 OBS backend
+├── agent_identity.tf      # Agent Identity OAuth2 return URL allowlist bridge
+├── scripts/               # Infra helper scripts
 ├── vpc.tf                 # Existing VPC/Subnet 与 RDS Security Group
 ├── rds.tf                 # PostgreSQL 17、应用账号与数据库
 ├── eip.tf                 # RDS EIP 与 Association
 ├── outputs.tf             # RDS Private/Public Endpoint metadata
+├── pyproject.toml         # Infra helper Python dependencies
+├── uv.lock                # Infra helper Python dependency lockfile
 ├── variables.tf           # 通用变量
 ├── .terraform.lock.hcl    # Provider 版本锁
 ├── .gitignore

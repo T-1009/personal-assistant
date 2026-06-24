@@ -27,12 +27,6 @@ from app.auth import (  # noqa: E402
     extract_gateway_user_id,
     extract_workload_access_token,
 )
-from app.oauth2_state import (  # noqa: E402
-    OAuth2StateError,
-    is_oauth2_state_completed,
-    mark_oauth2_state_completed,
-    verify_oauth2_state,
-)
 from app.settings import get_settings  # noqa: E402
 
 
@@ -63,7 +57,10 @@ class OAuth2CompleteRequest(BaseModel):
 
     provider: str = Field(description="AgentArts resource credential provider name.")
     session_uri: str = Field(description="AgentArts Resource Token Auth session URI.")
-    state: str = Field(description="Signed OAuth2 state returned by the callback.")
+    state: str | None = Field(
+        default=None,
+        description="OAuth2 state returned by the callback, if present.",
+    )
     error: str | None = Field(default=None, description="OAuth2 callback error code.")
     error_description: str | None = Field(
         default=None,
@@ -113,8 +110,6 @@ def _parse_oauth2_complete_request(body: object) -> OAuth2CompleteRequest:
         raise HTTPException(status_code=400, detail="provider is required")
     if not complete_request.session_uri.strip():
         raise HTTPException(status_code=400, detail="session_uri is required")
-    if not complete_request.state.strip():
-        raise HTTPException(status_code=400, detail="state is required")
     return complete_request
 
 
@@ -352,24 +347,6 @@ async def complete_oauth2_auth(request: Request):
         raise HTTPException(status_code=400, detail="unsupported OAuth2 provider")
 
     try:
-        claims = verify_oauth2_state(
-            complete_request.state,
-            settings=settings,
-            expected_user_id=user_id,
-            expected_provider=settings.m365_calendar_provider_name,
-        )
-    except OAuth2StateError as e:
-        logger.warning("Calendar OAuth2 state rejected: %s", e)
-        raise HTTPException(status_code=403, detail="invalid OAuth2 state") from e
-
-    if is_oauth2_state_completed(claims):
-        return OAuth2CompleteResponse(
-            status="already_complete",
-            provider=complete_request.provider,
-            message="Calendar authorization was already completed.",
-        )
-
-    try:
         client = IdentityClient(region=get_region())
         client.complete_resource_token_auth(
             session_uri=complete_request.session_uri,
@@ -388,7 +365,6 @@ async def complete_oauth2_auth(request: Request):
             detail="Calendar authorization could not be completed.",
         ) from e
 
-    mark_oauth2_state_completed(claims)
     logger.info(
         "Calendar OAuth2 complete succeeded provider=%s user_id=%s",
         complete_request.provider,

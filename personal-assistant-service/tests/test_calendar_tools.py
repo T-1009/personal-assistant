@@ -3,10 +3,8 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 
 import app.tools.calendar_tools as ct
-from app.settings import Settings
 
 _TOOL_NAMES = [
     "list_calendar_events",
@@ -181,47 +179,20 @@ async def test_handle_auth_url_streams_sdk_authorization_url_unchanged():
 
 
 @pytest.mark.asyncio
-async def test_calendar_tool_sets_oauth2_context_for_inner_decorated_call():
-    settings = Settings(
-        oauth2_calendar_callback_url=(
-            "http://localhost:5173/auth/callback/m365-calendar"
-        ),
-        oauth2_state_secret="test-secret",
-    )
-
-    async def fake_inner(**kwargs):
-        assert (
-            AgentArtsRuntimeContext.get_oauth2_callback_url()
-            == "http://localhost:5173/auth/callback/m365-calendar"
-        )
-        assert AgentArtsRuntimeContext.get_oauth2_custom_state() == "signed-state"
+async def test_calendar_tool_forwards_injected_access_token_to_impl():
+    async def fake_impl(**kwargs):
         return {"ok": True, "kwargs": kwargs}
 
-    AgentArtsRuntimeContext.set_user_id("user-1")
-    AgentArtsRuntimeContext.set_session_id("session-1")
-    AgentArtsRuntimeContext.set_oauth2_callback_url("previous-callback")
-    AgentArtsRuntimeContext.set_oauth2_custom_state("previous-state")
-    try:
-        with (
-            patch("app.tools.calendar_tools.get_settings", return_value=settings),
-            patch(
-                "app.tools.calendar_tools.create_oauth2_state",
-                return_value="signed-state",
-            ),
-            patch(
-                "app.tools.calendar_tools._list_calendar_events_with_token",
-                side_effect=fake_inner,
-            ),
-        ):
-            result = await ct.list_calendar_events(
-                "2026-06-22T00:00:00",
-                "2026-06-23T00:00:00",
-            )
-
-        assert AgentArtsRuntimeContext.get_oauth2_callback_url() == "previous-callback"
-        assert AgentArtsRuntimeContext.get_oauth2_custom_state() == "previous-state"
-    finally:
-        AgentArtsRuntimeContext.clear()
+    with patch(
+        "app.tools.calendar_tools._list_calendar_events_impl",
+        side_effect=fake_impl,
+    ):
+        result = await ct.list_calendar_events(
+            "2026-06-22T00:00:00",
+            "2026-06-23T00:00:00",
+            access_token="token",
+        )
 
     assert result["ok"] is True
     assert result["kwargs"]["start_time"] == "2026-06-22T00:00:00"
+    assert result["kwargs"]["access_token"] == "token"

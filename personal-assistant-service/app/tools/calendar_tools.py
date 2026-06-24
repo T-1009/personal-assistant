@@ -1,22 +1,25 @@
 """Microsoft 365 Calendar read-only tools backed by AgentArts OAuth2."""
 
 import logging
-from contextlib import contextmanager
 from typing import Any
 
 import httpx
 from agentarts.sdk import require_access_token
-from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 from langgraph.config import get_stream_writer
 
-from app.oauth2_state import create_oauth2_state
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-GRAPH_BASE_URL = str(get_settings().graph_base_url).rstrip("/")
-CALENDAR_PROVIDER = get_settings().m365_calendar_provider_name
-CALENDAR_SCOPES = get_settings().m365_calendar_scope_list
+_SETTINGS = get_settings()
+GRAPH_BASE_URL = str(_SETTINGS.graph_base_url).rstrip("/")
+CALENDAR_PROVIDER = _SETTINGS.m365_calendar_provider_name
+CALENDAR_SCOPES = _SETTINGS.m365_calendar_scope_list
+CALENDAR_CALLBACK_URL = (
+    str(_SETTINGS.oauth2_calendar_callback_url)
+    if _SETTINGS.oauth2_calendar_callback_url
+    else None
+)
 
 
 async def handle_auth_url(auth_url: str) -> None:
@@ -35,47 +38,6 @@ async def handle_auth_url(auth_url: str) -> None:
         )
     except RuntimeError:
         logger.warning("Calendar auth URL not streamed outside graph context.")
-
-
-@contextmanager
-def _calendar_oauth2_context():
-    """Set Calendar-only OAuth2 callback context for one tool invocation."""
-    previous_callback_url = AgentArtsRuntimeContext.get_oauth2_callback_url()
-    previous_custom_state = AgentArtsRuntimeContext.get_oauth2_custom_state()
-    settings = get_settings()
-
-    callback_url = (
-        str(settings.oauth2_calendar_callback_url)
-        if settings.oauth2_calendar_callback_url
-        else None
-    )
-    custom_state = _create_calendar_oauth2_state(settings) if callback_url else None
-    if not callback_url:
-        logger.warning("Calendar OAuth2 callback URL is not configured.")
-
-    AgentArtsRuntimeContext.set_oauth2_callback_url(callback_url)
-    AgentArtsRuntimeContext.set_oauth2_custom_state(custom_state)
-    try:
-        yield
-    finally:
-        AgentArtsRuntimeContext.set_oauth2_callback_url(previous_callback_url)
-        AgentArtsRuntimeContext.set_oauth2_custom_state(previous_custom_state)
-
-
-def _create_calendar_oauth2_state(settings) -> str | None:
-    """Create request-scoped OAuth2 state for Calendar full OAuth2 flow."""
-    user_id = AgentArtsRuntimeContext.get_user_id()
-    session_id = AgentArtsRuntimeContext.get_session_id()
-    if not user_id or not session_id:
-        logger.warning("Calendar OAuth2 state not added: missing user/session context.")
-        return None
-
-    return create_oauth2_state(
-        settings=settings,
-        user_id=user_id,
-        session_id=session_id,
-        provider=CALENDAR_PROVIDER,
-    )
 
 
 def _push_auth_complete() -> None:
@@ -183,36 +145,21 @@ def _format_event(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-async def list_calendar_events(
-    start_time: str,
-    end_time: str,
-    calendar_id: str = "primary",
-    limit: int = 20,
-) -> dict[str, Any]:
-    """列出指定时间范围内的 Microsoft 365 日历事件。"""
-    with _calendar_oauth2_context():
-        return await _list_calendar_events_with_token(
-            start_time=start_time,
-            end_time=end_time,
-            calendar_id=calendar_id,
-            limit=limit,
-        )
-
-
 @require_access_token(
     provider_name=CALENDAR_PROVIDER,
     scopes=CALENDAR_SCOPES,
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
+    callback_url=CALENDAR_CALLBACK_URL,
 )
-async def _list_calendar_events_with_token(
-    *,
+async def list_calendar_events(
     start_time: str,
     end_time: str,
-    calendar_id: str,
-    limit: int,
+    calendar_id: str = "primary",
+    limit: int = 20,
     access_token: str | None = None,
 ) -> dict[str, Any]:
+    """列出指定时间范围内的 Microsoft 365 日历事件。"""
     return await _list_calendar_events_impl(
         start_time=start_time,
         end_time=end_time,
@@ -264,30 +211,19 @@ async def _list_calendar_events_impl(
         return _format_tool_error(e, "list_calendar_events")
 
 
-async def get_calendar_event(
-    event_id: str,
-    calendar_id: str = "primary",
-) -> dict[str, Any]:
-    """获取单个 Microsoft 365 日历事件详情。"""
-    with _calendar_oauth2_context():
-        return await _get_calendar_event_with_token(
-            event_id=event_id,
-            calendar_id=calendar_id,
-        )
-
-
 @require_access_token(
     provider_name=CALENDAR_PROVIDER,
     scopes=CALENDAR_SCOPES,
     auth_flow="USER_FEDERATION",
     on_auth_url=handle_auth_url,
+    callback_url=CALENDAR_CALLBACK_URL,
 )
-async def _get_calendar_event_with_token(
-    *,
+async def get_calendar_event(
     event_id: str,
-    calendar_id: str,
+    calendar_id: str = "primary",
     access_token: str | None = None,
 ) -> dict[str, Any]:
+    """获取单个 Microsoft 365 日历事件详情。"""
     return await _get_calendar_event_impl(
         event_id=event_id,
         calendar_id=calendar_id,
@@ -322,39 +258,22 @@ async def _get_calendar_event_impl(
         return _format_tool_error(e, "get_calendar_event")
 
 
+@require_access_token(
+    provider_name=CALENDAR_PROVIDER,
+    scopes=CALENDAR_SCOPES,
+    auth_flow="USER_FEDERATION",
+    on_auth_url=handle_auth_url,
+    callback_url=CALENDAR_CALLBACK_URL,
+)
 async def search_calendar_events(
     query: str,
     start_time: str | None = None,
     end_time: str | None = None,
     calendar_id: str = "primary",
     limit: int = 20,
-) -> dict[str, Any]:
-    """按关键词搜索 Microsoft 365 日历事件。"""
-    with _calendar_oauth2_context():
-        return await _search_calendar_events_with_token(
-            query=query,
-            start_time=start_time,
-            end_time=end_time,
-            calendar_id=calendar_id,
-            limit=limit,
-        )
-
-
-@require_access_token(
-    provider_name=CALENDAR_PROVIDER,
-    scopes=CALENDAR_SCOPES,
-    auth_flow="USER_FEDERATION",
-    on_auth_url=handle_auth_url,
-)
-async def _search_calendar_events_with_token(
-    *,
-    query: str,
-    start_time: str | None,
-    end_time: str | None,
-    calendar_id: str,
-    limit: int,
     access_token: str | None = None,
 ) -> dict[str, Any]:
+    """按关键词搜索 Microsoft 365 日历事件。"""
     return await _search_calendar_events_impl(
         query=query,
         start_time=start_time,

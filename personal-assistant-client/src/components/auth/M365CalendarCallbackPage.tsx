@@ -49,7 +49,7 @@ export default function M365CalendarCallbackPage() {
         return;
       }
 
-      if (!sessionUri || !state) {
+      if (!sessionUri) {
         const failedMessage = "授权回调缺少必要参数，请重新发起日历授权。";
         if (!cancelled) {
           setStatus("failed");
