@@ -15,7 +15,9 @@ def clear_settings_cache():
     get_settings.cache_clear()
 
 
-def test_defaults():
+def test_defaults(monkeypatch):
+    monkeypatch.delenv("LOG_LEVEL", raising=False)
+
     settings = Settings(_env_file=None)
 
     assert settings.log_level == "INFO"
@@ -92,6 +94,19 @@ def test_graph_base_url_can_be_overridden(monkeypatch):
 
     assert str(settings.graph_base_url).rstrip("/") == (
         "https://graph.microsoft.com/v1.0/users/current"
+    )
+
+
+def test_calendar_callback_url_can_be_overridden(monkeypatch):
+    monkeypatch.setenv(
+        "OAUTH2_CALENDAR_CALLBACK_URL",
+        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar",
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert str(settings.oauth2_calendar_callback_url).rstrip("/") == (
+        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar"
     )
 
 

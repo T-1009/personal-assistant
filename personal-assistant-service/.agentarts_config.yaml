@@ -62,6 +62,8 @@ agents:
         value: ${LLM_CREDENTIAL_PROVIDER}
       - key: POSTGRES_DSN
         value: ${POSTGRES_DSN}
+      - key: OAUTH2_CALENDAR_CALLBACK_URL
+        value: ${OAUTH2_CALENDAR_CALLBACK_URL}
       tags:
       - key: app
         value: personal-assistant
