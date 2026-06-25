@@ -37,7 +37,7 @@ export default function M365CalendarCallbackPage() {
       const error = params.get("error");
       const errorDescription = params.get("error_description");
       const sessionUri = params.get("session_uri");
-      const state = params.get("state");
+      const state = params.get("state") ?? params.get("custom_state");
 
       if (error) {
         const failedMessage = errorDescription || "日历授权失败，请重新发起授权。";
