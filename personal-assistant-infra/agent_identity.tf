@@ -9,6 +9,7 @@ locals {
   calendar_oauth2_workload_identity_name = "agent-personal-assistant"
   calendar_oauth2_return_urls = [
     "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar",
+    "http://localhost:5173/auth/callback/m365-calendar",
   ]
 }
 

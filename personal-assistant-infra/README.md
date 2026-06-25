@@ -64,6 +64,7 @@ uv run python scripts/configure_calendar_oauth_return_url.py \
   --workload-identity-name agent-personal-assistant \
   --region cn-southwest-2 \
   --return-url "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar" \
+  --return-url "http://localhost:5173/auth/callback/m365-calendar" \
   --apply
 ```
 
