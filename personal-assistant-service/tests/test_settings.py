@@ -26,6 +26,9 @@ def test_defaults(monkeypatch):
     assert settings.llm_agent_bundle_ttl_seconds == 300.0
     assert settings.postgres_dsn is None
     assert settings.sqlite_db_path is None
+    assert str(settings.oauth2_calendar_callback_url).rstrip("/") == (
+        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar"
+    )
     assert str(settings.graph_base_url).rstrip("/") == (
         "https://graph.microsoft.com/v1.0/me"
     )
@@ -100,13 +103,13 @@ def test_graph_base_url_can_be_overridden(monkeypatch):
 def test_calendar_callback_url_can_be_overridden(monkeypatch):
     monkeypatch.setenv(
         "OAUTH2_CALENDAR_CALLBACK_URL",
-        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar",
+        "http://localhost:5173/auth/callback/m365-calendar",
     )
 
     settings = Settings(_env_file=None)
 
     assert str(settings.oauth2_calendar_callback_url).rstrip("/") == (
-        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar"
+        "http://localhost:5173/auth/callback/m365-calendar"
     )
 
 
@@ -123,12 +126,14 @@ def test_empty_optional_values_are_unset():
         postgres_dsn="",
         sqlite_db_path="",
         iam_users_endpoint="",
+        oauth2_calendar_callback_url="",
     )
 
     assert settings.llm_base_url is None
     assert settings.postgres_dsn is None
     assert settings.sqlite_db_path is None
     assert settings.iam_users_endpoint is None
+    assert settings.oauth2_calendar_callback_url is None
 
 
 def test_settings_are_frozen():

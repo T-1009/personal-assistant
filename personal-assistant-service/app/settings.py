@@ -45,7 +45,9 @@ class Settings(BaseSettings):
 
     m365_calendar_provider_name: str = "m365-calendar-provider"
     m365_calendar_scopes: str = "https://graph.microsoft.com/Calendars.Read"
-    oauth2_calendar_callback_url: AnyHttpUrl | None = None
+    oauth2_calendar_callback_url: AnyHttpUrl | None = (
+        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar"
+    )
     oauth2_state_secret: str = "dev-only-calendar-oauth2-state-secret"
     oauth2_pending_auth_ttl_seconds: int = Field(default=600, gt=0)
     graph_base_url: AnyHttpUrl = "https://graph.microsoft.com/v1.0/me"
