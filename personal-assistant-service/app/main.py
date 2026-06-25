@@ -10,6 +10,7 @@ from app.logging_config import RequestLoggingMiddleware
 logger = logging.getLogger("app")
 
 from agentarts.sdk import IdentityClient  # noqa: E402
+from agentarts.sdk.runtime.context import AgentArtsRuntimeContext  # noqa: E402
 from agentarts.sdk.utils.constant import get_region  # noqa: E402
 from chainlit.utils import mount_chainlit  # noqa: E402
 from fastapi import FastAPI, HTTPException, Request  # noqa: E402
@@ -26,6 +27,11 @@ from app.auth import (  # noqa: E402
     extract_gateway_session_id,
     extract_gateway_user_id,
     extract_workload_access_token,
+)
+from app.oauth2_state import (  # noqa: E402
+    OAuth2StateError,
+    create_oauth2_state,
+    verify_oauth2_state,
 )
 from app.settings import get_settings  # noqa: E402
 
@@ -237,6 +243,15 @@ async def invocations(request: Request):
     user_id = extract_gateway_user_id(request)
     session_id = extract_gateway_session_id(request)
     extract_workload_access_token(request)
+    settings = get_settings()
+    AgentArtsRuntimeContext.set_oauth2_custom_state(
+        create_oauth2_state(
+            settings=settings,
+            user_id=user_id,
+            session_id=session_id,
+            provider=settings.m365_calendar_provider_name,
+        )
+    )
 
     mode = "stream" if stream else "sync"
     response_media_type = "text/event-stream" if stream else "application/json"
@@ -345,6 +360,25 @@ async def complete_oauth2_auth(request: Request):
 
     if complete_request.provider != settings.m365_calendar_provider_name:
         raise HTTPException(status_code=400, detail="unsupported OAuth2 provider")
+
+    if not complete_request.state or not complete_request.state.strip():
+        raise HTTPException(status_code=400, detail="state is required")
+
+    try:
+        verify_oauth2_state(
+            complete_request.state,
+            settings=settings,
+            expected_user_id=user_id,
+            expected_provider=complete_request.provider,
+        )
+    except OAuth2StateError as e:
+        logger.warning(
+            "Calendar OAuth2 state rejected provider=%s user_id=%s: %s",
+            complete_request.provider,
+            user_id,
+            e,
+        )
+        raise HTTPException(status_code=403, detail="invalid OAuth2 state") from e
 
     try:
         client = IdentityClient(region=get_region())
