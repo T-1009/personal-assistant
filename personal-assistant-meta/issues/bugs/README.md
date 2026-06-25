@@ -14,6 +14,7 @@
 | [15](bug-15-auth-url-custom-event-not-delivered/issue.md) | adispatch_custom_event 无法将 Auth URL 推送到 SSE Stream | — | todo |
 | [16](bug-16-auth-card-system-message-duplicated-in-chat/issue.md) | Auth Card system_message 重复出现在聊天气泡中 | feature-1.2-auth-url-redirect | backlog |
 | [18](bug-18-expired-login-token-not-logging-out/issue.md) | 前端登录 token 过期后未自动登出并继续发送旧 token | feature-4-inbound-identity | todo |
+| [20](bug-20-oauth2-state-replay-protection-not-enforced/issue.md) | OAuth2 callback state nonce 未消费，replay protection 未生效 | feature-15-calendar-agentarts-full-oauth2 | todo |
 
 ## 已解决 Bug
 
