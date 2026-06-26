@@ -1,26 +1,17 @@
-import { completeOAuth2Auth } from "@/lib/auth/oauth2-complete";
+import {
+  CALENDAR_OAUTH_FAILED_MESSAGE,
+  CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE,
+  CALENDAR_OAUTH_PENDING_MESSAGE,
+  CALENDAR_OAUTH_PROVIDER,
+  CALENDAR_OAUTH_TIMEOUT_MS,
+  CALENDAR_OAUTH_UNAVAILABLE_MESSAGE,
+  createCalendarOAuthRequest,
+  isCalendarOAuthResponse,
+  openCalendarOAuthChannel,
+} from "@/lib/auth/calendar-oauth-bridge";
 import { useEffect, useMemo, useState } from "react";
 
-const PROVIDER = "m365-calendar-provider";
-
 type CallbackStatus = "loading" | "complete" | "failed";
-
-interface CallbackMessage {
-  type: "m365-calendar-auth";
-  status: "complete" | "failed";
-  provider: string;
-  message: string;
-}
-
-function notifyOpener(status: "complete" | "failed", message: string) {
-  const payload: CallbackMessage = {
-    type: "m365-calendar-auth",
-    status,
-    provider: PROVIDER,
-    message,
-  };
-  window.opener?.postMessage(payload, window.location.origin);
-}
 
 export default function M365CalendarCallbackPage() {
   const params = useMemo(
@@ -28,10 +19,20 @@ export default function M365CalendarCallbackPage() {
     [],
   );
   const [status, setStatus] = useState<CallbackStatus>("loading");
-  const [message, setMessage] = useState("正在完成日历授权，请稍候…");
+  const [message, setMessage] = useState(CALENDAR_OAUTH_PENDING_MESSAGE);
 
   useEffect(() => {
     let cancelled = false;
+    let timeoutId: number | undefined;
+    let channel: BroadcastChannel | null = null;
+
+    function fail(message: string) {
+      if (!cancelled) {
+        setStatus("failed");
+        setMessage(message);
+      }
+      channel?.close();
+    }
 
     async function complete() {
       const error = params.get("error");
@@ -41,50 +42,60 @@ export default function M365CalendarCallbackPage() {
 
       if (error) {
         const failedMessage = errorDescription || "日历授权失败，请重新发起授权。";
-        if (!cancelled) {
-          setStatus("failed");
-          setMessage(failedMessage);
-        }
-        notifyOpener("failed", failedMessage);
+        fail(failedMessage);
         return;
       }
 
-      if (!sessionUri) {
-        const failedMessage = "授权回调缺少必要参数，请重新发起日历授权。";
-        if (!cancelled) {
-          setStatus("failed");
-          setMessage(failedMessage);
-        }
-        notifyOpener("failed", failedMessage);
+      if (!sessionUri || !state) {
+        fail(CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE);
         return;
       }
 
-      try {
-        await completeOAuth2Auth({
-          provider: PROVIDER,
-          session_uri: sessionUri,
-          state,
-        });
-        const successMessage = "日历授权已完成，可以关闭此窗口并重试刚才的问题。";
-        if (!cancelled) {
-          setStatus("complete");
-          setMessage(successMessage);
-        }
-        notifyOpener("complete", successMessage);
-      } catch (e) {
-        const failedMessage =
-          e instanceof Error ? e.message : "日历授权完成失败，请重新发起授权。";
-        if (!cancelled) {
-          setStatus("failed");
-          setMessage(failedMessage);
-        }
-        notifyOpener("failed", failedMessage);
+      channel = openCalendarOAuthChannel();
+      if (!channel) {
+        fail(CALENDAR_OAUTH_UNAVAILABLE_MESSAGE);
+        return;
       }
+
+      const request = createCalendarOAuthRequest({
+        provider: CALENDAR_OAUTH_PROVIDER,
+        sessionUri,
+        state,
+      });
+
+      channel.onmessage = (event) => {
+        if (!isCalendarOAuthResponse(event.data)) return;
+        if (
+          event.data.provider !== CALENDAR_OAUTH_PROVIDER ||
+          event.data.requestId !== request.requestId
+        ) {
+          return;
+        }
+
+        if (timeoutId !== undefined) {
+          window.clearTimeout(timeoutId);
+        }
+        if (!cancelled) {
+          setStatus(event.data.status);
+          setMessage(event.data.message);
+        }
+        channel?.close();
+      };
+
+      timeoutId = window.setTimeout(() => {
+        fail(CALENDAR_OAUTH_FAILED_MESSAGE);
+      }, CALENDAR_OAUTH_TIMEOUT_MS);
+
+      channel.postMessage(request);
     }
 
     void complete();
     return () => {
       cancelled = true;
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+      channel?.close();
     };
   }, [params]);
 
