@@ -49,7 +49,7 @@ agents:
         logs:
           enabled: true
       artifact_source:
-        url: swr.cn-southwest-2.myhuaweicloud.com/personal-assistant-org/agent_personal_assistant:latest
+        url: ${AGENTARTS_IMAGE_URL}
         commands: []
       environment_variables:
       - key: LOG_LEVEL
