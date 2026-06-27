@@ -326,7 +326,7 @@ async def invocations(request: Request):
 
 
 @app.post(
-    "/invocations/auth/oauth2/complete",
+    "/auth/oauth2/complete",
     response_model=OAuth2CompleteResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid callback payload."},

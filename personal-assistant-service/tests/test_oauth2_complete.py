@@ -38,7 +38,7 @@ def _state(settings: Settings, user_id: str = "user-1") -> str:
 async def test_complete_requires_trusted_user_header(client, calendar_settings):
     with patch("app.main.get_settings", return_value=calendar_settings):
         response = await client.post(
-            "/invocations/auth/oauth2/complete",
+            "/auth/oauth2/complete",
             json={
                 "provider": "m365-calendar-provider",
                 "session_uri": "urn:uuid:test",
@@ -52,7 +52,7 @@ async def test_complete_requires_trusted_user_header(client, calendar_settings):
 async def test_complete_rejects_unsupported_provider(client, calendar_settings):
     with patch("app.main.get_settings", return_value=calendar_settings):
         response = await client.post(
-            "/invocations/auth/oauth2/complete",
+            "/auth/oauth2/complete",
             json={
                 "provider": "other-provider",
                 "session_uri": "urn:uuid:test",
@@ -74,7 +74,7 @@ async def test_complete_calls_identity_client(client, calendar_settings):
         patch("app.main.IdentityClient", return_value=identity_client),
     ):
         response = await client.post(
-            "/invocations/auth/oauth2/complete",
+            "/auth/oauth2/complete",
             json={
                 "provider": "m365-calendar-provider",
                 "session_uri": "urn:uuid:test",
@@ -100,7 +100,7 @@ async def test_complete_requires_state(client, calendar_settings):
         patch("app.main.IdentityClient", return_value=identity_client),
     ):
         response = await client.post(
-            "/invocations/auth/oauth2/complete",
+            "/auth/oauth2/complete",
             json={
                 "provider": "m365-calendar-provider",
                 "session_uri": "urn:uuid:test",
@@ -122,7 +122,7 @@ async def test_complete_rejects_invalid_state(client, calendar_settings):
         patch("app.main.IdentityClient", return_value=identity_client),
     ):
         response = await client.post(
-            "/invocations/auth/oauth2/complete",
+            "/auth/oauth2/complete",
             json={
                 "provider": "m365-calendar-provider",
                 "session_uri": "urn:uuid:test",
@@ -140,7 +140,7 @@ async def test_complete_rejects_invalid_state(client, calendar_settings):
 async def test_complete_rejects_oauth_error(client, calendar_settings):
     with patch("app.main.get_settings", return_value=calendar_settings):
         response = await client.post(
-            "/invocations/auth/oauth2/complete",
+            "/auth/oauth2/complete",
             json={
                 "provider": "m365-calendar-provider",
                 "session_uri": "urn:uuid:test",
