@@ -30,8 +30,15 @@ export async function completeOAuth2Auth(
   if (!response.ok) {
     let detail = `OAuth2 complete failed: ${response.status}`;
     try {
-      const body = (await response.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
+      const body = (await response.json()) as {
+        detail?: string;
+        message?: string;
+      };
+      if (body.detail) {
+        detail = body.detail;
+      } else if (body.message) {
+        detail = body.message;
+      }
     } catch {
       // Keep the safe generic message.
     }

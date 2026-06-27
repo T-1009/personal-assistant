@@ -129,5 +129,19 @@ export function formatCalendarOAuthError(error: unknown): string {
     return "请保持原聊天窗口处于登录状态后，再重新完成日历授权。";
   }
 
+  if (
+    message.includes("completeResourceTokenAuth") ||
+    message.includes("Calendar authorization service is not configured correctly")
+  ) {
+    return "日历授权服务权限尚未配置完成，请联系管理员检查 AgentArts Identity 权限。";
+  }
+
+  if (
+    message.includes("OAuth2 complete failed: 502") ||
+    message.includes("AgentArts Gateway is unavailable")
+  ) {
+    return "日历授权服务暂时不可用，请稍后重试。";
+  }
+
   return message;
 }

@@ -34,6 +34,18 @@ def _state(settings: Settings, user_id: str = "user-1") -> str:
     )
 
 
+class _IdentityPermissionError(Exception):
+    status_code = 403
+
+    def __str__(self) -> str:
+        return (
+            "ClientRequestException - {status_code:403,"
+            "error_code:AgentIdentityTokenVault.1007,"
+            "error_msg:not authorized to perform: "
+            "agentIdentity::completeResourceTokenAuth}"
+        )
+
+
 @pytest.mark.asyncio
 async def test_complete_requires_trusted_user_header(client, calendar_settings):
     with patch("app.main.get_settings", return_value=calendar_settings):
@@ -153,4 +165,35 @@ async def test_complete_rejects_oauth_error(client, calendar_settings):
     assert (
         response.json()["detail"]
         == "Calendar authorization failed. Please try again."
+    )
+
+
+@pytest.mark.asyncio
+async def test_complete_reports_identity_permission_error(client, calendar_settings):
+    identity_client = MagicMock()
+    identity_client.complete_resource_token_auth.side_effect = (
+        _IdentityPermissionError()
+    )
+    state = _state(calendar_settings)
+
+    with (
+        patch("app.main.get_settings", return_value=calendar_settings),
+        patch("app.main.IdentityClient", return_value=identity_client),
+    ):
+        response = await client.post(
+            "/auth/oauth2/complete",
+            json={
+                "provider": "m365-calendar-provider",
+                "session_uri": "urn:uuid:test",
+                "state": state,
+            },
+            headers={USER_ID_HEADER: "user-1"},
+        )
+
+    assert response.status_code == 502
+    assert (
+        response.json()["detail"]
+        == "Calendar authorization service is not configured correctly. "
+        "Please contact the administrator to grant AgentArts Identity "
+        "completeResourceTokenAuth permission."
     )

@@ -158,6 +158,20 @@ def _redacted_prefix(value: str | None, *, length: int = 32) -> str | None:
     return value[:length]
 
 
+def _is_identity_permission_error(error: Exception) -> bool:
+    """Return whether AgentArts Identity rejected the runtime agency permissions."""
+    status_code = getattr(error, "status_code", None)
+    text = str(error)
+    return (
+        status_code == 403
+        and "completeResourceTokenAuth" in text
+        and (
+            "AgentIdentityTokenVault.1007" in text
+            or "not authorized to perform" in text
+        )
+    )
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle for the FastAPI application."""
@@ -251,13 +265,21 @@ async def invocations(request: Request):
     session_id = extract_gateway_session_id(request)
     extract_workload_access_token(request)
     settings = get_settings()
-    AgentArtsRuntimeContext.set_oauth2_custom_state(
-        create_oauth2_state(
-            settings=settings,
-            user_id=user_id,
-            session_id=session_id,
-            provider=settings.m365_calendar_provider_name,
-        )
+    oauth2_state = create_oauth2_state(
+        settings=settings,
+        user_id=user_id,
+        session_id=session_id,
+        provider=settings.m365_calendar_provider_name,
+    )
+    AgentArtsRuntimeContext.set_oauth2_custom_state(oauth2_state)
+    logger.info(
+        "OAuth2 authorization context prepared provider=%s user_id=%s "
+        "gateway_session_id=%s runtime_context_user_id=%s state_prefix=%s",
+        settings.m365_calendar_provider_name,
+        user_id,
+        session_id,
+        AgentArtsRuntimeContext.get_user_id(),
+        _redacted_prefix(oauth2_state),
     )
 
     mode = "stream" if stream else "sync"
@@ -355,10 +377,10 @@ async def complete_oauth2_auth(request: Request):
     settings = get_settings()
     logger.info(
         "OAuth2 complete payload parsed provider=%s has_session_uri=%s "
-        "session_uri_prefix=%s has_state=%s state_prefix=%s has_error=%s",
+        "session_uri=%s has_state=%s state_prefix=%s has_error=%s",
         complete_request.provider,
         bool(complete_request.session_uri),
-        _redacted_prefix(complete_request.session_uri),
+        complete_request.session_uri,
         bool(complete_request.state),
         _redacted_prefix(complete_request.state),
         bool(complete_request.error),
@@ -397,16 +419,22 @@ async def complete_oauth2_auth(request: Request):
             complete_request.provider,
             user_id,
         )
-        verify_oauth2_state(
+        state_claims = verify_oauth2_state(
             complete_request.state,
             settings=settings,
             expected_user_id=user_id,
             expected_provider=complete_request.provider,
         )
         logger.info(
-            "OAuth2 complete state verification succeeded provider=%s user_id=%s",
+            "OAuth2 complete state verification succeeded provider=%s "
+            "user_id=%s state_user_id=%s state_session_id=%s state_provider=%s "
+            "runtime_context_user_id=%s",
             complete_request.provider,
             user_id,
+            state_claims.user_id,
+            state_claims.session_id,
+            state_claims.provider,
+            AgentArtsRuntimeContext.get_user_id(),
         )
     except OAuth2StateError as e:
         logger.warning(
@@ -420,10 +448,11 @@ async def complete_oauth2_auth(request: Request):
     try:
         logger.info(
             "Calling Identity complete_resource_token_auth provider=%s "
-            "user_id=%s session_uri_prefix=%s",
+            "user_id=%s runtime_context_user_id=%s session_uri=%s",
             complete_request.provider,
             user_id,
-            _redacted_prefix(complete_request.session_uri),
+            AgentArtsRuntimeContext.get_user_id(),
+            complete_request.session_uri,
         )
         client = IdentityClient(region=get_region())
         client.complete_resource_token_auth(
@@ -440,6 +469,15 @@ async def complete_oauth2_auth(request: Request):
             e,
             exc_info=True,
         )
+        if _is_identity_permission_error(e):
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Calendar authorization service is not configured correctly. "
+                    "Please contact the administrator to grant AgentArts Identity "
+                    "completeResourceTokenAuth permission."
+                ),
+            ) from e
         raise HTTPException(
             status_code=502,
             detail="Calendar authorization could not be completed.",
