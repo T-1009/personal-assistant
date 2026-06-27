@@ -151,6 +151,13 @@ def _accepts_media_type(accept: str | None, media_type: str) -> bool:
     return False
 
 
+def _redacted_prefix(value: str | None, *, length: int = 32) -> str | None:
+    """Return a short non-secret prefix for correlation logs."""
+    if not value:
+        return None
+    return value[:length]
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle for the FastAPI application."""
@@ -346,6 +353,16 @@ async def complete_oauth2_auth(request: Request):
     complete_request = _parse_oauth2_complete_request(body)
     user_id = extract_gateway_user_id(request)
     settings = get_settings()
+    logger.info(
+        "OAuth2 complete payload parsed provider=%s has_session_uri=%s "
+        "session_uri_prefix=%s has_state=%s state_prefix=%s has_error=%s",
+        complete_request.provider,
+        bool(complete_request.session_uri),
+        _redacted_prefix(complete_request.session_uri),
+        bool(complete_request.state),
+        _redacted_prefix(complete_request.state),
+        bool(complete_request.error),
+    )
 
     if complete_request.error:
         logger.warning(
@@ -359,17 +376,37 @@ async def complete_oauth2_auth(request: Request):
         )
 
     if complete_request.provider != settings.m365_calendar_provider_name:
+        logger.warning(
+            "OAuth2 complete unsupported provider provider=%s expected_provider=%s",
+            complete_request.provider,
+            settings.m365_calendar_provider_name,
+        )
         raise HTTPException(status_code=400, detail="unsupported OAuth2 provider")
 
     if not complete_request.state or not complete_request.state.strip():
+        logger.warning(
+            "OAuth2 complete missing state provider=%s user_id=%s",
+            complete_request.provider,
+            user_id,
+        )
         raise HTTPException(status_code=400, detail="state is required")
 
     try:
+        logger.info(
+            "OAuth2 complete state verification start provider=%s user_id=%s",
+            complete_request.provider,
+            user_id,
+        )
         verify_oauth2_state(
             complete_request.state,
             settings=settings,
             expected_user_id=user_id,
             expected_provider=complete_request.provider,
+        )
+        logger.info(
+            "OAuth2 complete state verification succeeded provider=%s user_id=%s",
+            complete_request.provider,
+            user_id,
         )
     except OAuth2StateError as e:
         logger.warning(
@@ -381,6 +418,13 @@ async def complete_oauth2_auth(request: Request):
         raise HTTPException(status_code=403, detail="invalid OAuth2 state") from e
 
     try:
+        logger.info(
+            "Calling Identity complete_resource_token_auth provider=%s "
+            "user_id=%s session_uri_prefix=%s",
+            complete_request.provider,
+            user_id,
+            _redacted_prefix(complete_request.session_uri),
+        )
         client = IdentityClient(region=get_region())
         client.complete_resource_token_auth(
             session_uri=complete_request.session_uri,
@@ -388,9 +432,11 @@ async def complete_oauth2_auth(request: Request):
         )
     except Exception as e:
         logger.warning(
-            "Calendar OAuth2 complete failed provider=%s user_id=%s: %s",
+            "Calendar OAuth2 complete failed provider=%s user_id=%s "
+            "error_type=%s error=%s",
             complete_request.provider,
             user_id,
+            type(e).__name__,
             e,
             exc_info=True,
         )
