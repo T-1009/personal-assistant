@@ -26,6 +26,14 @@ User Federation 授权：
 SDK 仍可通过内置 polling / callback 机制完成授权；但项目目前所有工具都没有覆盖
 这个完整路径，缺少一个可运行、可观察、可测试的示范实现。
 
+**生产校正**：这份 issue 早期曾尝试让 callback popup 自己调用
+`complete_resource_token_auth`。但生产环境里，AuthCard 通过
+`target="_blank" rel="noopener noreferrer"` 打开授权页，popup 既拿不到稳定的
+`window.opener`，也不共享主聊天窗口的 MSAL `sessionStorage`。本地 dev proxy 又会注入
+`X-HW-AgentGateway-User-Id: dev-user`，很容易掩盖这个差异；线上则会表现为浏览器页已关闭，
+后台 Identity 仍持续 polling。最终设计必须让主聊天窗口完成
+`/invocations/auth/oauth2/complete`，popup 只负责把 callback envelope 送到主窗口。
+
 本 Feature 不修改既有 Email Tool，而是新增 Microsoft 365 Calendar Tool，专门用于
 展示 AgentArts OAuth2 完整流程。Calendar Tool 读取用户 Microsoft 账号中的日历与
 日程内容，例如“今天有哪些会议”“下周的日程安排”“查看某个会议详情”。它只读取日历，
@@ -59,13 +67,14 @@ sequenceDiagram
     Agent-->>UI: SSE system_message(AuthCard)
     User->>MS: 在浏览器完成 Microsoft 授权
     MS-->>CB: redirect callback(code/state/session_uri)
-    CB->>Agent: POST /invocations/auth/oauth2/complete
+    CB-->>UI: BroadcastChannel callback envelope<br/>(state, session_uri, error)
+    UI->>Agent: POST /invocations/auth/oauth2/complete
     Agent->>Store: 验证 signed state + pending auth record
     Agent->>IdSvc: complete_resource_token_auth(server-bound user, session_uri)
     IdSvc->>MS: 使用授权码换取 Microsoft Graph access token
     IdSvc->>IdSvc: 保存用户 Calendar Resource Token
-    Agent-->>CB: binding complete
-    CB-->>UI: 可选 UI 同步
+    Agent-->>UI: auth_complete + green AuthCard
+    CB-->>UI: complete ack 后关闭窗口
     UI->>Agent: 重试或继续原日历请求
     Agent->>SDK: 再次调用 Calendar Tool
     SDK->>IdSvc: get_resource_oauth2_token(provider=m365-calendar-provider)
@@ -78,13 +87,15 @@ sequenceDiagram
 
 ## Callback URL 约定
 
-本 Feature 采用“双 URL”模型，区分 OAuth2 浏览器 redirect 与后端 session binding：
+本 Feature 采用“双 URL”模型，区分 OAuth2 浏览器 redirect 与后端 session binding。
+浏览器 redirect page 只负责承接 Microsoft / AgentArts callback，真正的
+`complete_resource_token_auth` 由主聊天窗口 coordinator 发起：
 
 ```text
 # 用户浏览器可见，配置到 Microsoft Entra App 与 AgentArts Allowed Resource OAuth2 Return URL
 GET https://<frontend-domain>/auth/callback/m365-calendar
 
-# 前端 callback page 调用，实际完成 AgentArts Resource Token Auth session binding
+# 主聊天窗口 coordinator 调用，实际完成 AgentArts Resource Token Auth session binding
 POST https://<frontend-domain>/invocations/auth/oauth2/complete
 ```
 
@@ -116,10 +127,11 @@ FastAPI:
 GET /auth/callback/m365-calendar?code=...&state=...&session_uri=...
 ```
 
-前端 callback page 只负责读取浏览器 callback 参数、展示授权状态，并调用后端 complete
-API；授权判断的信任锚始终在服务端保存的 signed state + pending auth record。
-callback page 只是把浏览器参数带回服务端，必要时可发出 UI 同步消息，但它们都不参与
-授权判定。
+前端 callback page 只负责读取浏览器 callback 参数，并通过同源
+`BroadcastChannel` 将 callback envelope 投递给主聊天窗口；如果浏览器仍保留
+`window.opener`，也可以额外发送 `postMessage` 作为兼容，但它们都不参与授权判定。
+真正调用后端 complete API 的是主聊天窗口 coordinator，授权判断的信任锚始终在服务端
+保存的 signed state + pending auth record。
 
 `AgentArtsRuntimeContext.set_oauth2_callback_url(...)` 必须设置为前端 callback URL：
 
@@ -170,7 +182,9 @@ callback 参数后主动调用的后端 complete API；第三方 OAuth2 provider
   - 对授权完成、失败、重复 callback、session 过期等场景输出结构化日志。
 - **Client**
   - AuthCard / callback 页面支持 Calendar 授权完成状态；
-  - 授权完成后可在可用时通知主聊天窗口重试或继续原请求；
+  - callback page 只做 callback envelope relay，不直接持有或提交可用登录态；
+  - 主聊天窗口接收 callback envelope 后，使用自己的登录态完成
+    `/invocations/auth/oauth2/complete`，并在成功后更新 AuthCard；
   - 不在浏览器中保存 Microsoft access token、Workload Access Token 或平台管理凭据。
 - **Meta / Architecture**
   - 更新 AgentArts OAuth2 架构说明，明确 `complete_resource_token_auth` 在本项目中
@@ -240,10 +254,11 @@ callback endpoint 只负责完成 OAuth2 session binding，不直接读取日历
 Calendar Tool 首版只读，避免“误改会议”这类高影响风险。后续如需创建/修改事件，应另起
 feature issue，并引入 Guard / confirmation 机制。
 
-### 6. 浏览器通信只做 UI 同步
+### 6. 浏览器通信只做中继与 UI 同步
 
-popup / callback page 与主聊天窗口之间的通信只用于 UI 同步，不参与授权判定。
-即使没有任何跨窗通信能力，`complete_resource_token_auth` 也必须可以在服务端独立完成。
+popup / callback page 与主聊天窗口之间的通信用于 callback envelope 传递与 UI 同步，
+不参与授权判定。生产主路径应采用同源 `BroadcastChannel`；`window.opener.postMessage`
+仅作为兼容性补充，不应成为授权成功的唯一依赖。
 
 ## 验收标准
 
@@ -263,8 +278,10 @@ popup / callback page 与主聊天窗口之间的通信只用于 UI 同步，不
   `session_uri`；
 - [ ] 用户完成 Microsoft 授权后，前端 callback page 可从 redirect query parameter
   读取 `session_uri`、`state` 等必要参数；
-- [ ] 后端 complete endpoint 可从前端 complete request 中解析 `session_uri`，并基于
-  `state` / pending auth record 完成校验；
+- [ ] callback page 通过同源 BroadcastChannel 向主聊天窗口投递 callback envelope，
+  并可选通过 `postMessage` 做兼容性同步；
+- [ ] 主聊天窗口可从 callback envelope 中提取 `session_uri`，并基于 `state` /
+  pending auth record 触发 complete request；
 - [ ] Service 使用服务端保存的 user binding 调用
   `complete_resource_token_auth(session_uri=...)`；
 - [ ] complete 成功后，AgentArts Identity Service 保存 Calendar Resource Token；
@@ -283,7 +300,8 @@ popup / callback page 与主聊天窗口之间的通信只用于 UI 同步，不
 ### AC4：用户体验
 
 - [ ] AuthCard 能区分 `auth_required`、`auth_complete`、`auth_failed`；
-- [ ] popup / callback 页面授权完成后能在可用时通知主聊天窗口；
+- [ ] popup / callback 页面授权完成后能通知主聊天窗口，主窗口完成服务端 binding 后
+  更新绿卡；
 - [ ] 用户无需复制粘贴 callback 参数；
 - [ ] 授权完成后可自动或半自动重试原日历请求；
 - [ ] 授权失败时用户可重新发起日历请求并获得新的授权入口。
@@ -304,7 +322,8 @@ popup / callback page 与主聊天窗口之间的通信只用于 UI 同步，不
 | AgentArts SDK 当前版本的 `complete_resource_token_auth` 参数名或 client 入口与文档不一致 | High | Implementation Plan 阶段先用官方 SDK / API 文档 spike，锁定真实方法签名后再编码 |
 | Microsoft OAuth callback 与 AgentArts callback URL 白名单不匹配 | High | 在 AgentArts Credential Provider 与 Microsoft Entra App 中同步配置 return URL，并纳入部署 runbook |
 | Calendar provider 是否应复用现有 `m365-provider-common` 不明确 | Medium | Implementation Plan 阶段比较独立 provider 与统一 provider 的 scope、consent UX、token cache 影响 |
-| callback 与原聊天请求之间状态关联不稳 | Medium | 使用 signed `state`、短 TTL server-side pending auth record；UI 通知只做可选同步 |
+| popup 直连 complete 会因 `noopener` / `sessionStorage` / 缺少主窗口登录态而在生产失败 | High | 让主聊天窗口完成 `/invocations/auth/oauth2/complete`，popup 只投递 callback envelope |
+| callback 与原聊天请求之间状态关联不稳 | Medium | 使用 signed `state`、短 TTL server-side pending auth record；BroadcastChannel 只做传递，不承担授权判定 |
 | 重复 callback 导致用户看到失败 | Medium | complete endpoint 做幂等处理：已完成视为成功或返回可恢复状态 |
 | 日历内容包含敏感隐私 | High | 只读最小权限、日志脱敏、LLM prompt 不包含 token 或 callback 参数；按用户请求范围读取 |
 
@@ -312,10 +331,10 @@ popup / callback page 与主聊天窗口之间的通信只用于 UI 同步，不
 
 | Question | Answer | 说明 |
 |----------|:------:|------|
-| Is it best practice? | **Yes** | OAuth callback 与 token binding 在可信服务端完成，浏览器只转发参数；Calendar MVP 只读，符合 least privilege 与 separation of concerns。 |
-| Is it industry standard? | **Yes** | 三方 OAuth2 的 authorization code callback、state 校验、server-side token exchange / binding 是标准生产模式；AgentArts 的 `complete_resource_token_auth` 对应平台侧 session binding。 |
-| Is it conventional? | **Yes** | 日历读取是 Personal Assistant 的核心常见能力，以 Calendar Tool 作为 User Federation 示例清晰直观。 |
-| Is it modern? | **Yes** | 使用带外 AuthCard、server-side pending auth record、structured observability 和 E2E 授权验证，符合现代 Agent application 的 UX 与安全实践。 |
+| Is it best practice? | **Yes** | OAuth callback page 只做 relay，真正的 token binding 在可信主窗口与服务端完成；signed state + pending auth record + least privilege 符合 Separation of Concerns 与 Defense in Depth。 |
+| Is it industry standard? | **Yes** | Popup OAuth + same-origin callback relay + server-side authorization code / session binding 是主流生产模式；BroadcastChannel 属于现代浏览器推荐的同源跨窗通信手段。 |
+| Is it conventional? | **Yes** | 新成员会自然预期“主应用完成授权、popup 只做回调载体”；这种 BFF 式授权收口比让 popup 直连后端更常见。 |
+| Is it modern? | **Yes** | BroadcastChannel、typed settings、structured logging、server-side replay guard 和 E2E/staging OAuth 验证都属于当前 web / agent 应用的现代实践。 |
 
 ## 依赖
 
