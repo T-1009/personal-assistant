@@ -707,7 +707,7 @@ flowchart TB
 - Docker 版本需 **≥18.06**。
 - SWR 不支持 OCI 镜像（Docker 27+ 需设置 `export BUILDKIT_USE_OCI_MEDIA_TYPES=0`）。
 - **Runtime 架构**：`runtime.arch` 默认值为 `x86_64`。部署 ARM64 镜像必须显式设为 `arm64`，否则容器调度到 x86 节点会静默失败（`stdout="" stderr=""`，无任何日志输出）。
-- **Gateway 路由**：AgentArts API Gateway 默认 `url_match_type: ACCURATE_MATCH`，仅转发 `/invocations`。需显式设为 `PREFIX_MATCH` 才能转发 `/invocations/*` 子路径。Gateway 不支持自定义路由表或 wildcard。
+- **Gateway 路由**：AgentArts API Gateway 默认 `url_match_type: ACCURATE_MATCH`，仅转发 `/invocations`。需显式设为 `PREFIX_MATCH` 才能匹配 `/invocations/*` 子路径。Gateway 不支持自定义路由表或 wildcard。`PREFIX_MATCH` 只是 Gateway policy 匹配规则，不等同于普通 reverse proxy；外部 Runtime path 与容器内 ASGI path 的映射必须通过 smoke test 验证，详见 §11.7。
 - Memory Space 创建后 API Key 仅返回一次，务必保存。
 - 记忆生成有延迟（文档示例中使用 30s 等待）。
 - 使用 IAM 子账号时需确保有 SWR FullAccess 权限。
@@ -877,6 +877,25 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 ```
 
 例如：`/runtimes/personal-assistant/invocations`。直接访问 `/invocations` 会返回 `{"code":404,"message":"No matching policy found"}`。
+
+#### 11.7.1 `PREFIX_MATCH` path 映射结论（2026-06-27 实测）
+
+结论：`/invocations` 是 AgentArts Gateway policy 前缀。带 suffix 时，Gateway 去掉 `/runtimes/{runtime_name}/invocations`，把 suffix 作为容器内 path。
+
+| Gateway 外部 path | FastAPI 容器内 path |
+|-------------------|---------------------|
+| `/runtimes/{runtime_name}/invocations` | `/invocations` |
+| `/runtimes/{runtime_name}/invocations/<suffix>` | `/<suffix>` |
+| `/runtimes/personal-assistant/invocations/auth/oauth2/complete` | `/auth/oauth2/complete` |
+
+`/auth/oauth2/complete` 只是 suffix 映射的一个业务例子，不是特殊规则。
+
+#### 11.7.2 404 判别
+
+- `{"code":404,"data":null,"message":"No matching policy found"}`：没有命中 AgentArts Gateway policy。
+- `{"detail":"Not Found"}`：请求已进入容器，但 FastAPI 没有匹配到容器内 path。
+- 需要确认当前镜像注册了哪些 route 时，请访问：
+  `/runtimes/personal-assistant/invocations/openapi.json`。
 
 ### 11.8 完整排障流程图
 

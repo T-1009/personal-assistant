@@ -51,19 +51,21 @@ flowchart TB
 
 ### 2.1 AgentArts Gateway 路由约束
 
-AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。生产环境当前配置为 `PREFIX_MATCH`，Gateway 转发 `/invocations` 及其所有子路径。
+AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。生产环境当前配置为 `PREFIX_MATCH`，Gateway 匹配 `/invocations` 及其所有子路径。
 
 ```
 浏览器/客户端 ──→ Gateway (defaultgw-xxx...) ──→ 容器 :8080
                        │
-                   PREFIX_MATCH: /invocations → ✅ 转发
-                   /invocations/* 子路径 → ✅ 转发
+                   PREFIX_MATCH: /invocations → ✅ 命中 policy
+                   /invocations/* 子路径 → ✅ 命中 policy
 ```
 
 **关键约束**：
 - `/ping` 是平台内部健康检查端点，**不走 Gateway**，AgentArts 控制面直接调容器。必须保留在根路径。
 - `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**，也是浏览器 Web Chat 的生产流式入口。
 - Web Chat 对话调用收敛到 `POST /invocations` 单一路径，通过 JSON body 字段区分同步或流式模式。
+- `PREFIX_MATCH` 子路径映射规则：`/runtimes/{runtime_name}/invocations/<suffix>` 映射到容器内 `/<suffix>`。
+- OAuth2 complete 只是该规则的一个例子：Gateway `POST /runtimes/personal-assistant/invocations/auth/oauth2/complete` 映射到 FastAPI `POST /auth/oauth2/complete`。
 - `/invocations/playground` 可通过 Gateway 的完整 Runtime 子路径访问，但 Cloudflare Pages Function 当前不代理该路径。
 
 > **Inbound authentication**：Gateway 使用 `authorizer_type: CUSTOM_JWT`。
@@ -137,15 +139,23 @@ async def feishu_webhook(request: Request):
     await send_feishu_reply(body, reply)
     return {"code": 0}
 
-# ── Web Chat OAuth（当前不通过 AgentArts Gateway 暴露）──
+# ── Web Chat OAuth callback（浏览器 redirect page 承接，不通过 Gateway 暴露）──
 
 @app.get("/auth/callback")
 async def oauth_callback(code: str):
-    """OAuth 回调 — 用 code 换 JWT，设置 Cookie"""
+    """OAuth redirect page，本地调试示例；生产由前端 callback page 承接"""
     token = await exchange_oauth_code(code)
     response = RedirectResponse(url="/chat")
     response.set_cookie("session", token["id_token"])
     return response
+
+# ── Web Chat OAuth complete（通过 Gateway /invocations/* policy 进入容器）──
+
+@app.post("/auth/oauth2/complete")
+async def complete_oauth2_auth(request: Request):
+    """完成 AgentArts Resource Token Auth session binding"""
+    payload = await request.json()
+    ...
 
 # Chainlit 调试 UI（PREFIX_MATCH Gateway 可转发该子路径）
 mount_chainlit(app=app, target=..., path="/invocations/playground")
@@ -155,9 +165,10 @@ mount_chainlit(app=app, target=..., path="/invocations/playground")
 |------|------|--------|------|-------------|
 | `/ping` | GET | AgentArts 平台（控制面） | 健康检查 | ❌ 平台内部 |
 | `/invocations` | POST | AgentArts SDK / OfficeClaw / 浏览器 | `stream: false` 或未传返回 JSON；`stream: true` 返回 SSE | ✅（PREFIX_MATCH） |
+| `/auth/oauth2/complete` | POST | Web Chat OAuth coordinator | 完成 AgentArts Resource Token Auth session binding | ✅ 通过完整 Runtime path：`/runtimes/personal-assistant/invocations/auth/oauth2/complete` |
 | `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅ 通过完整 Runtime path；Cloudflare Function 不代理 |
 
-> **注意**：`/feishu/webhook`、`/auth/callback` 等需要独立 URL 的路由无法通过 Gateway 暴露。这些路由对应的功能需要通过 AgentArts 平台侧 MCP Gateway 或 Identity 组件实现，或由 Web Chat 前端在浏览器侧直接处理 OAuth 流程并将结果回传。
+> **注意**：`/feishu/webhook`、`/auth/callback` 等需要独立公网 URL 的路由无法直接通过 Gateway root path 暴露。`/auth/oauth2/complete` 是例外适配：外部仍走 `/runtimes/personal-assistant/invocations/auth/oauth2/complete` 命中 Gateway policy，容器内 route 保持 Auth 语义路径。
 
 ### 2.3 AgentArts Gateway Header 注入
 
@@ -598,7 +609,8 @@ personal-assistant/
 
 AgentArts 平台只看容器 `:8080` 上有没有 `/ping` 和 `/invocations`，不关心 HTTP Server 用什么框架启动。
 
-> **关键限制**：AgentArts Gateway 生产环境使用 `PREFIX_MATCH`，因此仅
-> `/invocations` 及其子路径可对外转发；其他 root-level FastAPI route 不会
-> 自动暴露。外部 URL 仍必须使用完整
-> `/runtimes/personal-assistant/invocations...` Runtime path。
+> **关键限制**：AgentArts Gateway 生产环境使用 `PREFIX_MATCH`，因此只有
+> `/runtimes/personal-assistant/invocations...` 形式的外部 Runtime path 会命中
+> policy；容器内 root-level FastAPI route 是否可达取决于 Gateway 的 path
+> rewrite。新增 root-level route 时必须增加 smoke test，并用 Runtime 日志确认
+> ASGI `scope["path"]`。
