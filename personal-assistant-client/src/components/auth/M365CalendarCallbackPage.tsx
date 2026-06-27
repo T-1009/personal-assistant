@@ -1,25 +1,35 @@
 import { completeOAuth2Auth } from "@/lib/auth/oauth2-complete";
 import { useEffect, useMemo, useState } from "react";
 
-const PROVIDER = "m365-calendar-provider";
+const CALENDAR_OAUTH_PROVIDER = "m365-calendar-provider";
+
+const CALENDAR_OAUTH_PENDING_MESSAGE = "正在完成日历授权，请稍候…";
+
+const CALENDAR_OAUTH_SUCCESS_MESSAGE =
+  "日历授权已完成，可以关闭此窗口并重试刚才的问题。";
+
+const CALENDAR_OAUTH_FAILED_MESSAGE =
+  "日历授权完成失败，请重新发起授权。";
+
+const CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE =
+  "授权回调缺少必要参数，请重新发起日历授权。";
 
 type CallbackStatus = "loading" | "complete" | "failed";
 
-interface CallbackMessage {
-  type: "m365-calendar-auth";
-  status: "complete" | "failed";
-  provider: string;
-  message: string;
-}
+function formatCalendarOAuthError(error: unknown): string {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (!message) {
+    return CALENDAR_OAUTH_FAILED_MESSAGE;
+  }
 
-function notifyOpener(status: "complete" | "failed", message: string) {
-  const payload: CallbackMessage = {
-    type: "m365-calendar-auth",
-    status,
-    provider: PROVIDER,
-    message,
-  };
-  window.opener?.postMessage(payload, window.location.origin);
+  if (
+    message.includes("Missing X-HW-AgentGateway-User-Id header") ||
+    message.includes("Authentication required")
+  ) {
+    return "请保持原聊天窗口处于登录状态后，再重新完成日历授权。";
+  }
+
+  return message;
 }
 
 export default function M365CalendarCallbackPage() {
@@ -28,10 +38,33 @@ export default function M365CalendarCallbackPage() {
     [],
   );
   const [status, setStatus] = useState<CallbackStatus>("loading");
-  const [message, setMessage] = useState("正在完成日历授权，请稍候…");
+  const [message, setMessage] = useState(CALENDAR_OAUTH_PENDING_MESSAGE);
 
   useEffect(() => {
     let cancelled = false;
+
+    function notifyParent(
+      nextStatus: Exclude<CallbackStatus, "loading">,
+      nextMessage: string,
+    ) {
+      window.opener?.postMessage(
+        {
+          type: "m365-calendar-auth",
+          status: nextStatus,
+          provider: CALENDAR_OAUTH_PROVIDER,
+          message: nextMessage,
+        },
+        window.location.origin,
+      );
+    }
+
+    function finish(nextStatus: Exclude<CallbackStatus, "loading">, nextMessage: string) {
+      if (cancelled) return;
+      setStatus(nextStatus);
+      setMessage(nextMessage);
+      notifyParent(nextStatus, nextMessage);
+      window.setTimeout(() => window.close(), 1000);
+    }
 
     async function complete() {
       const error = params.get("error");
@@ -40,45 +73,24 @@ export default function M365CalendarCallbackPage() {
       const state = params.get("state") ?? params.get("custom_state");
 
       if (error) {
-        const failedMessage = errorDescription || "日历授权失败，请重新发起授权。";
-        if (!cancelled) {
-          setStatus("failed");
-          setMessage(failedMessage);
-        }
-        notifyOpener("failed", failedMessage);
+        finish("failed", errorDescription || "日历授权失败，请重新发起授权。");
         return;
       }
 
-      if (!sessionUri) {
-        const failedMessage = "授权回调缺少必要参数，请重新发起日历授权。";
-        if (!cancelled) {
-          setStatus("failed");
-          setMessage(failedMessage);
-        }
-        notifyOpener("failed", failedMessage);
+      if (!sessionUri || !state) {
+        finish("failed", CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE);
         return;
       }
 
       try {
-        await completeOAuth2Auth({
-          provider: PROVIDER,
+        const body = await completeOAuth2Auth({
+          provider: CALENDAR_OAUTH_PROVIDER,
           session_uri: sessionUri,
           state,
         });
-        const successMessage = "日历授权已完成，可以关闭此窗口并重试刚才的问题。";
-        if (!cancelled) {
-          setStatus("complete");
-          setMessage(successMessage);
-        }
-        notifyOpener("complete", successMessage);
-      } catch (e) {
-        const failedMessage =
-          e instanceof Error ? e.message : "日历授权完成失败，请重新发起授权。";
-        if (!cancelled) {
-          setStatus("failed");
-          setMessage(failedMessage);
-        }
-        notifyOpener("failed", failedMessage);
+        finish("complete", body.message || CALENDAR_OAUTH_SUCCESS_MESSAGE);
+      } catch (error) {
+        finish("failed", formatCalendarOAuthError(error));
       }
     }
 

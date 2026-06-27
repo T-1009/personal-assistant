@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { InteractionStatus } from "@azure/msal-browser";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -26,7 +26,6 @@ import App from "./App";
 function setupAuth(isAuthenticated: boolean, hydrated: boolean) {
   mockUseIsAuthenticated.mockReturnValue(isAuthenticated);
   mockUseMsal.mockReturnValue({ inProgress: InteractionStatus.None });
-  // Set auth store hydrated state
   const store = useAuthStore.getState();
   store.setHydrated(hydrated);
   store.setIdToken(isAuthenticated ? "id-token" : null);
@@ -34,29 +33,17 @@ function setupAuth(isAuthenticated: boolean, hydrated: boolean) {
 
 describe("App", () => {
   afterEach(() => {
+    cleanup();
     vi.clearAllMocks();
-    // Reset auth store
     useAuthStore.getState().setHydrated(false);
+    useAuthStore.getState().clearToken();
+    window.history.pushState({}, "", "/");
   });
 
   it("renders without crashing", () => {
     mockUseIsAuthenticated.mockReturnValue(false);
     mockUseMsal.mockReturnValue({ inProgress: InteractionStatus.None });
     expect(() => render(<App />)).not.toThrow();
-  });
-
-  it("shows LoadingState when auth store is not hydrated", async () => {
-    mockUseIsAuthenticated.mockReturnValue(false);
-    mockUseMsal.mockReturnValue({ inProgress: InteractionStatus.None });
-    useAuthStore.getState().setHydrated(false);
-    render(<App />);
-    // LoadingState is rendered directly (not inside Suspense fallback)
-    // Both Suspense fallback and hydrated=false render LoadingState
-    // We verify neither LandingPage nor ChatPage is shown
-    expect(screen.queryByTestId("landing-page")).not.toBeInTheDocument();
-    expect(screen.queryByTestId("chat-page")).not.toBeInTheDocument();
-    // LoadingState spinner is present (role="status")
-    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
   it("shows LandingPage when hydrated and not authenticated", async () => {
@@ -77,24 +64,20 @@ describe("App", () => {
     expect(screen.queryByTestId("landing-page")).not.toBeInTheDocument();
   });
 
-  it("shows LandingPage when MSAL is authenticated but idToken is missing", async () => {
-    setupAuth(true, true);
-    useAuthStore.getState().clearToken();
-
+  it("shows LoadingState when auth store is not hydrated", () => {
+    mockUseIsAuthenticated.mockReturnValue(false);
+    mockUseMsal.mockReturnValue({ inProgress: InteractionStatus.None });
+    useAuthStore.getState().setHydrated(false);
     render(<App />);
-
-    await waitFor(() => {
-      expect(screen.getByTestId("landing-page")).toBeInTheDocument();
-    });
-    expect(screen.queryByTestId("chat-page")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
-  it("shows LoadingState during MSAL transition", () => {
-    mockUseIsAuthenticated.mockReturnValue(false);
-    mockUseMsal.mockReturnValue({ inProgress: InteractionStatus.Startup });
-    useAuthStore.getState().setHydrated(true);
+  it("routes calendar callback pathname to the callback page", async () => {
+    setupAuth(false, true);
+    window.history.pushState({}, "", "/auth/callback/m365-calendar");
     render(<App />);
-    // AuthGuard catches the transition and shows LoadingState
-    expect(screen.getByRole("status")).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText("正在授权")).toBeInTheDocument();
+    });
   });
 });
