@@ -310,7 +310,7 @@ if (window.location.pathname === "/auth/callback/m365-calendar") {
 - 如果缺少 `session_uri` 或 `state`，展示可理解错误，不调用后端。
 - 调用 `/invocations/auth/oauth2/complete`。
 - complete 成功后展示“授权完成，可以关闭窗口”，并可发出 UI 同步消息；
-- 如果浏览器环境支持跨窗通信，可选实现 `postMessage` / `BroadcastChannel`，但不作为授权依赖。
+- 如果浏览器环境支持跨窗通信，可选实现 `postMessage`，但不作为授权依赖。
 
 - 不写入 localStorage/sessionStorage access token。
 - 不展示 raw token/code/session_uri；debug 信息只在开发日志中脱敏输出。

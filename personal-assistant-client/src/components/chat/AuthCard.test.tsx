@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import { AuthCard } from "./AuthCard";
@@ -30,5 +30,38 @@ describe("AuthCard", () => {
       "href",
       "https://auth-1.example.com",
     );
+  });
+
+  it("updates the latest card when a same-origin opener message arrives", async () => {
+    const authStore = useAuthCardStore.getState();
+    authStore.setAuth(
+      "auth-message-1",
+      "m365-calendar-provider",
+      "https://auth.example.com",
+      "请先完成日历授权",
+    );
+
+    render(<AuthCard />);
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: window.location.origin,
+          data: {
+            type: "m365-calendar-auth",
+            status: "complete",
+            provider: "m365-calendar-provider",
+            message: "日历授权已完成，可以关闭此窗口并重试刚才的问题。",
+          },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("日历授权已完成，可以关闭此窗口并重试刚才的问题。"),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByText("授权完成")).toBeInTheDocument();
   });
 });

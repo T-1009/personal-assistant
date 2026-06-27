@@ -1,17 +1,36 @@
-import {
-  CALENDAR_OAUTH_FAILED_MESSAGE,
-  CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE,
-  CALENDAR_OAUTH_PENDING_MESSAGE,
-  CALENDAR_OAUTH_PROVIDER,
-  CALENDAR_OAUTH_TIMEOUT_MS,
-  CALENDAR_OAUTH_UNAVAILABLE_MESSAGE,
-  createCalendarOAuthRequest,
-  isCalendarOAuthResponse,
-  openCalendarOAuthChannel,
-} from "@/lib/auth/calendar-oauth-bridge";
+import { completeOAuth2Auth } from "@/lib/auth/oauth2-complete";
 import { useEffect, useMemo, useState } from "react";
 
+const CALENDAR_OAUTH_PROVIDER = "m365-calendar-provider";
+
+const CALENDAR_OAUTH_PENDING_MESSAGE = "正在完成日历授权，请稍候…";
+
+const CALENDAR_OAUTH_SUCCESS_MESSAGE =
+  "日历授权已完成，可以关闭此窗口并重试刚才的问题。";
+
+const CALENDAR_OAUTH_FAILED_MESSAGE =
+  "日历授权完成失败，请重新发起授权。";
+
+const CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE =
+  "授权回调缺少必要参数，请重新发起日历授权。";
+
 type CallbackStatus = "loading" | "complete" | "failed";
+
+function formatCalendarOAuthError(error: unknown): string {
+  const message = error instanceof Error ? error.message.trim() : "";
+  if (!message) {
+    return CALENDAR_OAUTH_FAILED_MESSAGE;
+  }
+
+  if (
+    message.includes("Missing X-HW-AgentGateway-User-Id header") ||
+    message.includes("Authentication required")
+  ) {
+    return "请保持原聊天窗口处于登录状态后，再重新完成日历授权。";
+  }
+
+  return message;
+}
 
 export default function M365CalendarCallbackPage() {
   const params = useMemo(
@@ -23,15 +42,28 @@ export default function M365CalendarCallbackPage() {
 
   useEffect(() => {
     let cancelled = false;
-    let timeoutId: number | undefined;
-    let channel: BroadcastChannel | null = null;
 
-    function fail(message: string) {
-      if (!cancelled) {
-        setStatus("failed");
-        setMessage(message);
-      }
-      channel?.close();
+    function notifyParent(
+      nextStatus: Exclude<CallbackStatus, "loading">,
+      nextMessage: string,
+    ) {
+      window.opener?.postMessage(
+        {
+          type: "m365-calendar-auth",
+          status: nextStatus,
+          provider: CALENDAR_OAUTH_PROVIDER,
+          message: nextMessage,
+        },
+        window.location.origin,
+      );
+    }
+
+    function finish(nextStatus: Exclude<CallbackStatus, "loading">, nextMessage: string) {
+      if (cancelled) return;
+      setStatus(nextStatus);
+      setMessage(nextMessage);
+      notifyParent(nextStatus, nextMessage);
+      window.setTimeout(() => window.close(), 1000);
     }
 
     async function complete() {
@@ -41,61 +73,30 @@ export default function M365CalendarCallbackPage() {
       const state = params.get("state") ?? params.get("custom_state");
 
       if (error) {
-        const failedMessage = errorDescription || "日历授权失败，请重新发起授权。";
-        fail(failedMessage);
+        finish("failed", errorDescription || "日历授权失败，请重新发起授权。");
         return;
       }
 
       if (!sessionUri || !state) {
-        fail(CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE);
+        finish("failed", CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE);
         return;
       }
 
-      channel = openCalendarOAuthChannel();
-      if (!channel) {
-        fail(CALENDAR_OAUTH_UNAVAILABLE_MESSAGE);
-        return;
+      try {
+        const body = await completeOAuth2Auth({
+          provider: CALENDAR_OAUTH_PROVIDER,
+          session_uri: sessionUri,
+          state,
+        });
+        finish("complete", body.message || CALENDAR_OAUTH_SUCCESS_MESSAGE);
+      } catch (error) {
+        finish("failed", formatCalendarOAuthError(error));
       }
-
-      const request = createCalendarOAuthRequest({
-        provider: CALENDAR_OAUTH_PROVIDER,
-        sessionUri,
-        state,
-      });
-
-      channel.onmessage = (event) => {
-        if (!isCalendarOAuthResponse(event.data)) return;
-        if (
-          event.data.provider !== CALENDAR_OAUTH_PROVIDER ||
-          event.data.requestId !== request.requestId
-        ) {
-          return;
-        }
-
-        if (timeoutId !== undefined) {
-          window.clearTimeout(timeoutId);
-        }
-        if (!cancelled) {
-          setStatus(event.data.status);
-          setMessage(event.data.message);
-        }
-        channel?.close();
-      };
-
-      timeoutId = window.setTimeout(() => {
-        fail(CALENDAR_OAUTH_FAILED_MESSAGE);
-      }, CALENDAR_OAUTH_TIMEOUT_MS);
-
-      channel.postMessage(request);
     }
 
     void complete();
     return () => {
       cancelled = true;
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-      }
-      channel?.close();
     };
   }, [params]);
 
