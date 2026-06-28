@@ -143,7 +143,7 @@ describe("App", () => {
     useAuthCardStore.getState().setAuth(
       "auth-message-1",
       "m365-calendar-provider",
-      "https://login.example.com",
+      "https://login.example.com?custom_state=signed-state",
       "请完成日历授权",
     );
     mockCompleteOAuth2Auth.mockResolvedValue({
@@ -190,6 +190,48 @@ describe("App", () => {
       useAuthCardStore.getState().cardsByMessageId["auth-message-1"],
     ).toMatchObject({
       authComplete: true,
+      authFailed: false,
+    });
+  });
+
+  it("ignores calendar OAuth requests that belong to another chat tab", async () => {
+    setupAuth(true, true);
+    useAuthCardStore.getState().setAuth(
+      "auth-message-1",
+      "m365-calendar-provider",
+      "https://login.example.com?custom_state=other-signed-state",
+      "请完成日历授权",
+    );
+    mockCompleteOAuth2Auth.mockResolvedValue({
+      status: "complete",
+      provider: "m365-calendar-provider",
+      message: "日历授权已完成，可以关闭此窗口并重试刚才的问题。",
+    });
+
+    render(<App />);
+
+    const popupChannel = new BroadcastChannel("m365-calendar-auth");
+    const responses: unknown[] = [];
+    popupChannel.onmessage = (event) => {
+      responses.push(event.data);
+    };
+
+    popupChannel.postMessage({
+      type: "m365-calendar-auth-request",
+      requestId: "request-1",
+      provider: "m365-calendar-provider",
+      session_uri: "urn:ietf:params:oauth:request_uri:test",
+      state: "signed-state",
+    });
+
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+
+    expect(mockCompleteOAuth2Auth).not.toHaveBeenCalled();
+    expect(responses).toEqual([]);
+    expect(
+      useAuthCardStore.getState().cardsByMessageId["auth-message-1"],
+    ).toMatchObject({
+      authComplete: false,
       authFailed: false,
     });
   });

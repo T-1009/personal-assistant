@@ -47,21 +47,48 @@ error=ClientRequestException - {
 
 ## 复现线索
 
+该 bug 的关键复现条件：浏览器中必须同时打开多个 Web Chat tab。单 tab 情况下，
+callback envelope 只会被原聊天页处理，暂未观察到同类 identity mismatch。
+
 1. 在 Web Chat 中发送日历查询，例如“查看今日 calendar”。
-2. 点击 Calendar AuthCard 进入 Microsoft / AgentArts OAuth2 授权页。
-3. 完成授权后，callback 页面显示授权成功。
-4. 回到主聊天窗口，观察 AuthCard / system message 是否出现
+2. 保持至少另一个 Web Chat tab 打开，且该 tab 也会监听 calendar OAuth
+   `BroadcastChannel`。
+3. 点击 Calendar AuthCard 进入 Microsoft / AgentArts OAuth2 授权页。
+4. 完成授权后，callback 页面显示授权成功。
+5. 回到主聊天窗口，观察 AuthCard / system message 是否出现
    `Authorization session failed...`。
-5. 检查 Service 日志是否存在
+6. 检查 Service 日志是否存在
    `AgentIdentityTokenVault.1002` 与
    `The identity in the request does not match the session identity information`。
+
+## 已确认排查发现
+
+- Calendar callback 与聊天页之间使用全局 `BroadcastChannel`
+  `m365-calendar-auth` 通信；所有同源 Web Chat tab 都会收到同一条
+  `m365-calendar-auth-request`。
+- `personal-assistant-client/src/App.tsx` 中每个非 callback tab 都会监听该 channel，
+  收到 request 后调用 `completeOAuth2Auth()`，因此一次 callback 可能触发多个 chat tab
+  同时 POST `/invocations/auth/oauth2/complete`。
+- `personal-assistant-service/app/oauth2_state.py` 的 state 绑定了 `user_id`、
+  `session_id`、provider 和 nonce；complete endpoint 当前验证了 `user_id` 与
+  provider，但客户端 cross-tab 分发仍可能让非发起授权的 tab 使用自己的当前
+  id token / session context 发起 complete。
+- 这解释了偶发现象：正确 tab 或 callback 页面可能已经得到 success，但另一个 tab
+  抢先或重复处理同一 callback，并在 AgentArts Identity
+  `complete_resource_token_auth` 阶段触发
+  `AgentIdentityTokenVault.1002`。
+- 初步客户端修复方向：聊天页在处理 BroadcastChannel request 前，必须确认本 tab
+  当前 pending AuthCard 的 authorization URL 中 `state` / `custom_state` 与 request
+  state 完全一致；不匹配的 tab 应静默忽略，不能调用 complete endpoint，也不能污染
+  AuthCard 状态。
 
 ## 当前行为
 
 ```mermaid
 sequenceDiagram
     actor User as 用户
-    participant UI as Web Chat 主窗口
+    participant UI as Web Chat 原主窗口
+    participant OtherUI as 其他 Web Chat tab
     participant CB as Callback Page
     participant API as Service complete endpoint
     participant IdSvc as AgentArts Identity Service
@@ -70,12 +97,14 @@ sequenceDiagram
     UI-->>User: 展示 Calendar AuthCard
     User->>CB: 完成 Microsoft OAuth2 授权
     CB-->>User: 显示“授权已完成”
-    CB->>UI: callback envelope(state, session_uri)
+    CB->>UI: BroadcastChannel callback envelope(state, session_uri)
+    CB->>OtherUI: 同一 BroadcastChannel envelope
     UI->>API: POST /invocations/auth/oauth2/complete
+    OtherUI->>API: 也可能 POST /invocations/auth/oauth2/complete
     API->>IdSvc: complete_resource_token_auth(user_id, session_uri)
-    IdSvc-->>API: 400 AgentIdentityTokenVault.1002<br/>request identity != session identity
-    API-->>UI: auth session failed
-    UI-->>User: 显示 Authorization session failed
+    IdSvc-->>API: 可能返回 400 AgentIdentityTokenVault.1002<br/>request identity != session identity
+    API-->>OtherUI: auth session failed
+    OtherUI-->>User: 错误 tab / stale AuthCard 显示 Authorization session failed
 ```
 
 ## 初步怀疑方向
@@ -89,6 +118,8 @@ sequenceDiagram
   reset session 后错配。
 - 主聊天窗口 callback coordinator 是否可能处理旧的 callback envelope、重复 callback
   或 stale AuthCard。
+- 多个 Web Chat tab 是否因共享 `m365-calendar-auth` BroadcastChannel 而同时处理同一个
+  callback envelope；非发起授权的 tab 是否缺少 state/AuthCard ownership 校验。
 - callback 页面是否过早展示“授权完成”，没有等待主窗口 complete API 的真实结果。
 - AgentArts Gateway / Cloudflare Pages proxy 是否在 complete request 上丢失或替换了
   inbound identity 相关 header。
@@ -103,6 +134,8 @@ sequenceDiagram
   不应误导为用户拒绝授权或普通 session 过期。
 - 重复 callback、旧 callback、跨 tab callback 应被识别并返回受控结果，不应污染当前
   AuthCard 状态。
+- 非发起授权的 Web Chat tab 即使收到 BroadcastChannel request，也必须因 state 与本
+  tab pending AuthCard 不匹配而忽略，不能调用 complete endpoint。
 
 ## 修复范围
 
@@ -119,6 +152,8 @@ sequenceDiagram
   - complete result。
 - 增加 Service / Client / E2E regression tests，覆盖 identity mismatch、stale callback
   和 duplicate callback 的用户可见状态。
+- 增加 Client regression test，覆盖多 chat tab 共享 BroadcastChannel 时，state 不匹配
+  的 tab 不会调用 `completeOAuth2Auth()`。
 
 ### Out of Scope
 
@@ -134,6 +169,8 @@ sequenceDiagram
       `AgentIdentityTokenVault.1002`。
 - [ ] 真实 `AgentIdentityTokenVault.1002` 场景有明确日志与用户可恢复提示。
 - [ ] stale / duplicate callback 不会把当前 AuthCard 标记为失败。
+- [ ] 多 Web Chat tab 场景中，只有持有匹配 `state` / `custom_state` AuthCard 的 tab
+      会执行 complete；其他 tab 不发请求、不改 UI 状态。
 - [ ] 相关 Service tests、Client tests 和 E2E regression 通过。
 
 ## Affected Specs / Architecture Docs
