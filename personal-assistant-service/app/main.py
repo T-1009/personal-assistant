@@ -449,8 +449,8 @@ async def complete_oauth2_auth(request: Request):
     user_token = extract_authorization_user_token(request)
     try:
         logger.info(
-            "Calling Identity complete_resource_token_auth provider=%s "
-            "user_id=%s runtime_context_user_id=%s session_uri=%s",
+            "Calling Identity complete_resource_token_auth with user_token. provider=%s"
+            " user_id=%s runtime_context_user_id=%s session_uri=%s",
             complete_request.provider,
             user_id,
             AgentArtsRuntimeContext.get_user_id(),
