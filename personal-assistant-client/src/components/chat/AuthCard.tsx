@@ -1,5 +1,9 @@
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import {
+  CALENDAR_OAUTH_PROVIDER,
+  getCalendarOAuthWindowTarget,
+} from "@/lib/auth/calendar-oauth-bridge";
+import {
   AlertCircleIcon,
   CheckCircleIcon,
   ShieldCheckIcon,
@@ -82,9 +86,15 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
               授权失败
             </span>
           ) : (
+            // Calendar callbacks broadcast to all chat tabs; the named target
+            // lets the callback identify the tab that opened OAuth.
             <a
               href={authCard.authUrl}
-              target="_blank"
+              target={
+                authCard.provider === CALENDAR_OAUTH_PROVIDER
+                  ? getCalendarOAuthWindowTarget()
+                  : "_blank"
+              }
               rel="noopener noreferrer"
               className="inline-flex h-8 items-center rounded-md bg-blue-600 px-3 text-sm font-medium text-white transition-colors hover:bg-blue-700"
             >

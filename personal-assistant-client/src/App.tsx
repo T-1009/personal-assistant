@@ -8,6 +8,7 @@ import {
   type CalendarOAuthRequest,
   createCalendarOAuthResponse,
   formatCalendarOAuthError,
+  getCalendarOAuthOwnerId,
   isCalendarOAuthRequest,
   openCalendarOAuthChannel,
 } from "@/lib/auth/calendar-oauth-bridge";
@@ -21,31 +22,14 @@ const M365CalendarCallbackPage = React.lazy(
   () => import("./components/auth/M365CalendarCallbackPage"),
 );
 
-function getCalendarAuthUrlState(authUrl: string): string | null {
-  try {
-    const url = new URL(authUrl, window.location.origin);
-    return url.searchParams.get("state") ?? url.searchParams.get("custom_state");
-  } catch {
-    return null;
+function isCalendarOAuthRequestForThisTab(request: CalendarOAuthRequest): boolean {
+  if (!request.ownerId) {
+    return true;
   }
-}
 
-function hasMatchingCalendarAuthCard(request: CalendarOAuthRequest): boolean {
-  const { cardsByMessageId } = useAuthCardStore.getState();
-  return Object.values(cardsByMessageId).some((card) => {
-    if (
-      card.provider !== request.provider ||
-      !card.authUrl ||
-      card.authComplete ||
-      card.authFailed
-    ) {
-      return false;
-    }
-
-    // BroadcastChannel delivers OAuth callbacks to every open chat tab. Only
-    // the tab that owns the matching AuthCard state may complete the session.
-    return getCalendarAuthUrlState(card.authUrl) === request.state;
-  });
+  // BroadcastChannel delivers OAuth callbacks to every open chat tab. The
+  // callback window carries the target name of the tab that opened AuthCard.
+  return request.ownerId === getCalendarOAuthOwnerId();
 }
 
 function App() {
@@ -63,7 +47,7 @@ function App() {
   const completeCalendarOAuthRequest = useCallback(
     async (request: CalendarOAuthRequest, channel: BroadcastChannel) => {
       const authState = useAuthStore.getState();
-      if (!hasMatchingCalendarAuthCard(request)) {
+      if (!isCalendarOAuthRequestForThisTab(request)) {
         return;
       }
 

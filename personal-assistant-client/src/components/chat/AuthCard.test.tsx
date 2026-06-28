@@ -6,6 +6,7 @@ import { AuthCard } from "./AuthCard";
 describe("AuthCard", () => {
   afterEach(() => {
     useAuthCardStore.getState().clearAuth();
+    sessionStorage.clear();
   });
 
   it("keeps rendering a historical message card after a newer Auth Card arrives", () => {
@@ -63,5 +64,23 @@ describe("AuthCard", () => {
       ).toBeInTheDocument();
     });
     expect(screen.getByText("授权完成")).toBeInTheDocument();
+  });
+
+  it("opens calendar OAuth in a tab-owned target window", () => {
+    sessionStorage.setItem("m365-calendar-auth-owner-id", "owner-1");
+    const authStore = useAuthCardStore.getState();
+    authStore.setAuth(
+      "auth-message-1",
+      "m365-calendar-provider",
+      "https://auth.example.com",
+      "请先完成日历授权",
+    );
+
+    render(<AuthCard />);
+
+    expect(screen.getByRole("link", { name: "点击授权" })).toHaveAttribute(
+      "target",
+      "m365-calendar-auth-owner-1",
+    );
   });
 });

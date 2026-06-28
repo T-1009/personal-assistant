@@ -45,6 +45,7 @@ describe("M365CalendarCallbackPage", () => {
     globalThis.BroadcastChannel =
       MockBroadcastChannel as unknown as typeof BroadcastChannel;
     window.close = vi.fn();
+    window.name = "";
     window.history.pushState({}, "", "/");
   });
 
@@ -52,6 +53,7 @@ describe("M365CalendarCallbackPage", () => {
     window.close = originalClose;
     MockBroadcastChannel.reset();
     globalThis.BroadcastChannel = originalBroadcastChannel;
+    window.name = "";
     window.history.pushState({}, "", "/");
     vi.restoreAllMocks();
   });
@@ -81,6 +83,7 @@ describe("M365CalendarCallbackPage", () => {
       "",
       "/auth/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
     );
+    window.name = "m365-calendar-auth-owner-1";
 
     render(<M365CalendarCallbackPage />);
 
@@ -96,6 +99,7 @@ describe("M365CalendarCallbackPage", () => {
       provider: "m365-calendar-provider",
       session_uri: "urn:session:test",
       state: "signed-state",
+      ownerId: "owner-1",
     });
   });
 

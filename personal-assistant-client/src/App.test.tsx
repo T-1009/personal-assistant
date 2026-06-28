@@ -81,6 +81,7 @@ describe("App", () => {
     globalThis.BroadcastChannel =
       MockBroadcastChannel as unknown as typeof BroadcastChannel;
     mockCompleteOAuth2Auth.mockReset();
+    sessionStorage.setItem("m365-calendar-auth-owner-id", "owner-1");
     window.history.pushState({}, "", "/");
   });
 
@@ -92,6 +93,7 @@ describe("App", () => {
     useAuthStore.getState().setHydrated(false);
     useAuthStore.getState().clearToken();
     useAuthCardStore.getState().clearAuth();
+    sessionStorage.clear();
     window.history.pushState({}, "", "/");
   });
 
@@ -166,6 +168,7 @@ describe("App", () => {
       provider: "m365-calendar-provider",
       session_uri: "urn:ietf:params:oauth:request_uri:test",
       state: "signed-state",
+      ownerId: "owner-1",
     });
 
     await waitFor(() => {
@@ -222,6 +225,7 @@ describe("App", () => {
       provider: "m365-calendar-provider",
       session_uri: "urn:ietf:params:oauth:request_uri:test",
       state: "signed-state",
+      ownerId: "owner-2",
     });
 
     await new Promise((resolve) => window.setTimeout(resolve, 0));

@@ -6,6 +6,7 @@ import {
   CALENDAR_OAUTH_TIMEOUT_MS,
   CALENDAR_OAUTH_UNAVAILABLE_MESSAGE,
   createCalendarOAuthRequest,
+  getCalendarOAuthOwnerIdFromWindowName,
   isCalendarOAuthResponse,
   openCalendarOAuthChannel,
 } from "@/lib/auth/calendar-oauth-bridge";
@@ -75,6 +76,7 @@ export default function M365CalendarCallbackPage() {
         provider: CALENDAR_OAUTH_PROVIDER,
         sessionUri,
         state,
+        ownerId: getCalendarOAuthOwnerIdFromWindowName(),
       });
 
       channel.onmessage = (event) => {

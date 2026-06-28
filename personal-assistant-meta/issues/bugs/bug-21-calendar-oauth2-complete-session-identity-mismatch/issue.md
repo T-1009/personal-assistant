@@ -77,10 +77,12 @@ callback envelope 只会被原聊天页处理，暂未观察到同类 identity m
   抢先或重复处理同一 callback，并在 AgentArts Identity
   `complete_resource_token_auth` 阶段触发
   `AgentIdentityTokenVault.1002`。
-- 初步客户端修复方向：聊天页在处理 BroadcastChannel request 前，必须确认本 tab
-  当前 pending AuthCard 的 authorization URL 中 `state` / `custom_state` 与 request
-  state 完全一致；不匹配的 tab 应静默忽略，不能调用 complete endpoint，也不能污染
-  AuthCard 状态。
+- 初步客户端修复方向：由于 SDK 下发的 `auth_url` 不保证携带可供前端反查的
+  `state` / `custom_state`，不能依赖解析 AuthCard URL 做 ownership 校验。应由前端
+  给打开授权窗口的 chat tab 生成 per-tab owner id，将 Calendar AuthCard 的
+  `target` 设置为带 owner id 的命名窗口；callback page 通过 `window.name` 取回
+  owner id，并随 BroadcastChannel request 一起发送。不匹配 owner id 的 tab 应静默
+  忽略，不能调用 complete endpoint，也不能污染 AuthCard 状态。
 
 ## 当前行为
 
@@ -134,8 +136,8 @@ sequenceDiagram
   不应误导为用户拒绝授权或普通 session 过期。
 - 重复 callback、旧 callback、跨 tab callback 应被识别并返回受控结果，不应污染当前
   AuthCard 状态。
-- 非发起授权的 Web Chat tab 即使收到 BroadcastChannel request，也必须因 state 与本
-  tab pending AuthCard 不匹配而忽略，不能调用 complete endpoint。
+- 非发起授权的 Web Chat tab 即使收到 BroadcastChannel request，也必须因 owner id
+  与本 tab 不匹配而忽略，不能调用 complete endpoint。
 
 ## 修复范围
 
@@ -152,8 +154,8 @@ sequenceDiagram
   - complete result。
 - 增加 Service / Client / E2E regression tests，覆盖 identity mismatch、stale callback
   和 duplicate callback 的用户可见状态。
-- 增加 Client regression test，覆盖多 chat tab 共享 BroadcastChannel 时，state 不匹配
-  的 tab 不会调用 `completeOAuth2Auth()`。
+- 增加 Client regression test，覆盖多 chat tab 共享 BroadcastChannel 时，owner id
+  不匹配的 tab 不会调用 `completeOAuth2Auth()`。
 
 ### Out of Scope
 
@@ -169,8 +171,8 @@ sequenceDiagram
       `AgentIdentityTokenVault.1002`。
 - [ ] 真实 `AgentIdentityTokenVault.1002` 场景有明确日志与用户可恢复提示。
 - [ ] stale / duplicate callback 不会把当前 AuthCard 标记为失败。
-- [ ] 多 Web Chat tab 场景中，只有持有匹配 `state` / `custom_state` AuthCard 的 tab
-      会执行 complete；其他 tab 不发请求、不改 UI 状态。
+- [ ] 多 Web Chat tab 场景中，只有 owner id 匹配 callback window 的 tab 会执行
+      complete；其他 tab 不发请求、不改 UI 状态。
 - [ ] 相关 Service tests、Client tests 和 E2E regression 通过。
 
 ## Affected Specs / Architecture Docs
