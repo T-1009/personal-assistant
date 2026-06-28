@@ -1,7 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { onRequestPost as onRequestPostRoot } from "./invocations.js";
-import { onRequestPost as onRequestPostNested } from "./invocations/[[path]].js";
+import {
+  onRequestGet as onRequestGetNested,
+  onRequestPost as onRequestPostNested,
+} from "./invocations/[[path]].js";
 
 describe("Cloudflare Pages invocations proxy", () => {
   const originalFetch = globalThis.fetch;
@@ -117,7 +120,7 @@ describe("Cloudflare Pages invocations proxy", () => {
     globalThis.fetch = mockFetch;
 
     const request = new Request(
-      "https://agentarts-personal-assistant.pages.dev/invocations/auth/oauth2/complete",
+      "https://agentarts-personal-assistant.pages.dev/invocations/tools/example",
       {
         method: "POST",
         headers: {
@@ -125,8 +128,7 @@ describe("Cloudflare Pages invocations proxy", () => {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          provider: "m365-calendar-provider",
-          session_uri: "urn:uuid:test",
+          ok: true,
         }),
       },
     );
@@ -135,16 +137,48 @@ describe("Cloudflare Pages invocations proxy", () => {
     const forwardedRequest = mockFetch.mock.calls[0][0];
 
     expect(forwardedRequest.url).toBe(
-      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/complete",
+      "https://runtime.example.com/runtimes/personal-assistant/invocations/tools/example",
     );
     expect(forwardedRequest.headers.get("Authorization")).toBe(
       "Bearer test-jwt",
     );
     expect(await forwardedRequest.json()).toEqual({
-      provider: "m365-calendar-provider",
-      session_uri: "urn:uuid:test",
+      ok: true,
     });
     expect(response.status).toBe(200);
     expect(await response.text()).toBe("ok");
+  });
+
+  it("forwards authenticated OAuth callback GET requests to matching runtime subpaths", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response("<html>done</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    globalThis.fetch = mockFetch;
+
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer test-jwt",
+        },
+      },
+    );
+
+    const response = await onRequestGetNested({ request, env });
+    const forwardedRequest = mockFetch.mock.calls[0][0];
+
+    expect(forwardedRequest.url).toBe(
+      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+    );
+    expect(forwardedRequest.method).toBe("GET");
+    expect(forwardedRequest.headers.get("Authorization")).toBe(
+      "Bearer test-jwt",
+    );
+    expect(response.headers.get("Content-Type")).toContain("text/html");
+    expect(await response.text()).toBe("<html>done</html>");
   });
 });

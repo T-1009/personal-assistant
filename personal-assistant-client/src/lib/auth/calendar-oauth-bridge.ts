@@ -2,11 +2,6 @@ export const CALENDAR_OAUTH_PROVIDER = "m365-calendar-provider";
 
 export const CALENDAR_OAUTH_CHANNEL_NAME = "m365-calendar-auth";
 
-export const CALENDAR_OAUTH_OWNER_ID_STORAGE_KEY =
-  "m365-calendar-auth-owner-id";
-
-export const CALENDAR_OAUTH_WINDOW_TARGET_PREFIX = "m365-calendar-auth-";
-
 export const CALENDAR_OAUTH_PENDING_MESSAGE = "正在完成日历授权，请稍候…";
 
 export const CALENDAR_OAUTH_SUCCESS_MESSAGE =
@@ -28,15 +23,15 @@ export interface CalendarOAuthRequest {
   provider: string;
   session_uri: string;
   state: string;
-  ownerId?: string;
 }
 
 export interface CalendarOAuthResponse {
   type: "m365-calendar-auth";
   requestId: string;
   provider: string;
-  status: "complete" | "failed";
+  status: "complete" | "failed" | "pending";
   message: string;
+  state?: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -45,46 +40,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
-}
-
-function createFallbackOwnerId(): string {
-  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
-    return crypto.randomUUID();
-  }
-
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
-
-export function getCalendarOAuthOwnerId(): string | null {
-  if (typeof window === "undefined") {
-    return null;
-  }
-
-  try {
-    const existing = sessionStorage.getItem(CALENDAR_OAUTH_OWNER_ID_STORAGE_KEY);
-    if (existing) return existing;
-
-    const ownerId = createFallbackOwnerId();
-    sessionStorage.setItem(CALENDAR_OAUTH_OWNER_ID_STORAGE_KEY, ownerId);
-    return ownerId;
-  } catch {
-    return createFallbackOwnerId();
-  }
-}
-
-export function getCalendarOAuthWindowTarget(): string {
-  return `${CALENDAR_OAUTH_WINDOW_TARGET_PREFIX}${getCalendarOAuthOwnerId() ?? "unknown"}`;
-}
-
-export function getCalendarOAuthOwnerIdFromWindowName(
-  name = typeof window === "undefined" ? "" : window.name,
-): string | null {
-  if (!name.startsWith(CALENDAR_OAUTH_WINDOW_TARGET_PREFIX)) {
-    return null;
-  }
-
-  const ownerId = name.slice(CALENDAR_OAUTH_WINDOW_TARGET_PREFIX.length);
-  return ownerId || null;
 }
 
 export function openCalendarOAuthChannel(): BroadcastChannel | null {
@@ -107,7 +62,6 @@ export function createCalendarOAuthRequest(input: {
   requestId?: string;
   sessionUri: string;
   state: string;
-  ownerId?: string | null;
 }): CalendarOAuthRequest {
   return {
     type: "m365-calendar-auth-request",
@@ -115,15 +69,15 @@ export function createCalendarOAuthRequest(input: {
     provider: input.provider ?? CALENDAR_OAUTH_PROVIDER,
     session_uri: input.sessionUri,
     state: input.state,
-    ...(input.ownerId ? { ownerId: input.ownerId } : {}),
   };
 }
 
 export function createCalendarOAuthResponse(input: {
   provider: string;
   requestId: string;
-  status: "complete" | "failed";
+  status: "complete" | "failed" | "pending";
   message: string;
+  state?: string | null;
 }): CalendarOAuthResponse {
   return {
     type: "m365-calendar-auth",
@@ -131,6 +85,7 @@ export function createCalendarOAuthResponse(input: {
     provider: input.provider,
     status: input.status,
     message: input.message,
+    ...(input.state ? { state: input.state } : {}),
   };
 }
 
@@ -145,8 +100,7 @@ export function isCalendarOAuthRequest(
     isString(value.requestId) &&
     isString(value.provider) &&
     isString(value.session_uri) &&
-    isString(value.state) &&
-    (value.ownerId === undefined || isString(value.ownerId))
+    isString(value.state)
   );
 }
 
@@ -160,8 +114,11 @@ export function isCalendarOAuthResponse(
   return (
     isString(value.requestId) &&
     isString(value.provider) &&
-    (value.status === "complete" || value.status === "failed") &&
-    isString(value.message)
+    (value.status === "complete" ||
+      value.status === "failed" ||
+      value.status === "pending") &&
+    isString(value.message) &&
+    (value.state === undefined || value.state === null || isString(value.state))
   );
 }
 

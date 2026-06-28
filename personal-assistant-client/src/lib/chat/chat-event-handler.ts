@@ -46,19 +46,28 @@ export function handleChatEvent(
       event.provider,
       event.auth_url,
       systemMessage,
+      event.oauth2_state,
     );
   }
 
   if (event.auth_complete && event.provider) {
     useAuthCardStore
       .getState()
-      .setAuthComplete(event.provider, systemMessage || undefined);
+      .setAuthComplete(
+        event.provider,
+        systemMessage || undefined,
+        event.oauth2_state,
+      );
   }
 
   if (event.auth_failed && event.provider) {
     useAuthCardStore
       .getState()
-      .setAuthFailed(event.provider, systemMessage || undefined);
+      .setAuthFailed(
+        event.provider,
+        systemMessage || undefined,
+        event.oauth2_state,
+      );
   }
 
   if (!isAuthEvent && systemMessage.trim()) {

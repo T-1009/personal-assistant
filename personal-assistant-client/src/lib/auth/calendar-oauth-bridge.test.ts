@@ -1,21 +1,15 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
-  CALENDAR_OAUTH_OWNER_ID_STORAGE_KEY,
   CALENDAR_OAUTH_FAILED_MESSAGE,
   createCalendarOAuthRequest,
+  createCalendarOAuthResponse,
   formatCalendarOAuthError,
-  getCalendarOAuthOwnerId,
-  getCalendarOAuthOwnerIdFromWindowName,
-  getCalendarOAuthWindowTarget,
   isCalendarOAuthRequest,
+  isCalendarOAuthResponse,
 } from "@/lib/auth/calendar-oauth-bridge";
 
 describe("formatCalendarOAuthError", () => {
-  afterEach(() => {
-    sessionStorage.clear();
-  });
-
   it("returns a safe fallback for unknown errors", () => {
     expect(formatCalendarOAuthError(null)).toBe(CALENDAR_OAUTH_FAILED_MESSAGE);
   });
@@ -47,35 +41,31 @@ describe("formatCalendarOAuthError", () => {
   });
 });
 
-describe("calendar OAuth tab ownership", () => {
-  afterEach(() => {
-    sessionStorage.clear();
-  });
-
-  it("keeps a stable owner id per browser tab", () => {
-    sessionStorage.setItem(CALENDAR_OAUTH_OWNER_ID_STORAGE_KEY, "owner-1");
-
-    expect(getCalendarOAuthOwnerId()).toBe("owner-1");
-    expect(getCalendarOAuthWindowTarget()).toBe("m365-calendar-auth-owner-1");
-  });
-
-  it("extracts the owner id from the callback window name", () => {
-    expect(getCalendarOAuthOwnerIdFromWindowName("m365-calendar-auth-owner-1")).toBe(
-      "owner-1",
-    );
-    expect(getCalendarOAuthOwnerIdFromWindowName("unrelated-window")).toBeNull();
-  });
-
-  it("allows request envelopes to carry the owning chat tab id", () => {
+describe("calendar OAuth channel envelopes", () => {
+  it("validates callback request envelopes", () => {
     const request = createCalendarOAuthRequest({
       sessionUri: "urn:session:test",
       state: "signed-state",
-      ownerId: "owner-1",
     });
 
     expect(isCalendarOAuthRequest(request)).toBe(true);
     expect(request).toMatchObject({
-      ownerId: "owner-1",
+      state: "signed-state",
+    });
+  });
+
+  it("allows backend callback status envelopes to carry OAuth state", () => {
+    const response = createCalendarOAuthResponse({
+      provider: "m365-calendar-provider",
+      requestId: "signed-state",
+      status: "complete",
+      message: "done",
+      state: "signed-state",
+    });
+
+    expect(isCalendarOAuthResponse(response)).toBe(true);
+    expect(response).toMatchObject({
+      state: "signed-state",
     });
   });
 });

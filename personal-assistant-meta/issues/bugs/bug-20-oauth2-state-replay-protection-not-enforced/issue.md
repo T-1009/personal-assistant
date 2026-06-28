@@ -107,7 +107,7 @@ sequenceDiagram
 - [ ] 重复 callback 返回受控结果（idempotent success 或安全错误），不会形成惊吓式失败。
 - [ ] 既有 invalid signature、expired state、user mismatch、provider mismatch 的
       403 行为保持不变。
-- [ ] `uv run pytest tests/test_oauth2_complete.py tests/test_main.py` 通过。
+- [ ] `uv run pytest tests/test_oauth2_callback.py tests/test_main.py` 通过。
 
 ## Affected Specs / Architecture Docs
 
@@ -122,6 +122,6 @@ sequenceDiagram
 |------|--------|
 | `personal-assistant-service/app/oauth2_state.py` | `verify_oauth2_state`、`is_oauth2_state_completed`、`mark_oauth2_state_completed` |
 | `personal-assistant-service/app/main.py` | `/invocations/auth/oauth2/complete` callback complete flow |
-| `personal-assistant-service/tests/test_oauth2_complete.py` | replay regression tests |
+| `personal-assistant-service/tests/test_oauth2_callback.py` | replay regression tests |
 | `personal-assistant-meta/issues/features/feature-15-calendar-agentarts-full-oauth2/issue.md` | AC3: `state` / `session_uri` 做 CSRF 与 replay 防护 |
 | `personal-assistant-meta/issues/features/feature-15-calendar-agentarts-full-oauth2/plan.md` | 已承诺 in-memory used-nonce store 与 duplicate callback 语义 |

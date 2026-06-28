@@ -1,115 +1,126 @@
 import {
-  CALENDAR_OAUTH_FAILED_MESSAGE,
-  CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE,
   CALENDAR_OAUTH_PENDING_MESSAGE,
   CALENDAR_OAUTH_PROVIDER,
-  CALENDAR_OAUTH_TIMEOUT_MS,
-  CALENDAR_OAUTH_UNAVAILABLE_MESSAGE,
-  createCalendarOAuthRequest,
-  getCalendarOAuthOwnerIdFromWindowName,
+  formatCalendarOAuthError,
   isCalendarOAuthResponse,
   openCalendarOAuthChannel,
+  type CalendarOAuthResponse,
 } from "@/lib/auth/calendar-oauth-bridge";
-import { useEffect, useMemo, useState } from "react";
+import { acquireIdTokenSilently } from "@/lib/auth";
+import { buildHeaders } from "@/lib/chat/chat-api-client";
+import { useAuthStore } from "@/stores/auth-store";
+import { useEffect, useRef, useState } from "react";
 
-type CallbackStatus = "loading" | "complete" | "failed";
+export function buildBackendCalendarCallbackUrl(
+  origin = window.location.origin,
+  search = window.location.search,
+): URL {
+  const target = new URL(
+    "/invocations/auth/oauth2/callback/m365-calendar",
+    origin,
+  );
+  target.search = search;
+  return target;
+}
+
+async function getCalendarCallbackToken(): Promise<string | null> {
+  return useAuthStore.getState().idToken ?? (await acquireIdTokenSilently());
+}
+
+async function completeCalendarOAuthCallback(
+  search = window.location.search,
+): Promise<CalendarOAuthResponse> {
+  // Microsoft lands on this React route, but AgentArts Gateway still expects
+  // the same Web Chat ID token used by normal /invocations calls. The shell
+  // only transports the signed callback params; backend state decides ownership.
+  const idToken = await getCalendarCallbackToken();
+  if (!idToken) {
+    throw new Error("Authentication required");
+  }
+
+  const headers = buildHeaders(idToken);
+  headers.Accept = "application/json";
+  delete headers["Content-Type"];
+
+  const response = await fetch(
+    buildBackendCalendarCallbackUrl(window.location.origin, search),
+    {
+      method: "GET",
+      headers,
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`OAuth2 callback failed: ${response.status}`);
+  }
+
+  const data = (await response.json()) as unknown;
+  if (!isCalendarOAuthResponse(data)) {
+    throw new Error("Invalid OAuth2 callback response");
+  }
+  return data;
+}
+
+function broadcastCalendarOAuthStatus(response: CalendarOAuthResponse) {
+  // Broadcast only backend-returned UI status. Completion already happened on
+  // the service, so other tabs cannot race to finish the same OAuth2 session.
+  try {
+    const channel = openCalendarOAuthChannel();
+    channel?.postMessage(response);
+    window.setTimeout(() => channel?.close(), 1000);
+  } catch {}
+  try {
+    window.opener?.postMessage(response, window.location.origin);
+  } catch {}
+}
 
 export default function M365CalendarCallbackPage() {
-  const params = useMemo(
-    () => new URLSearchParams(window.location.search),
-    [],
+  const startedRef = useRef(false);
+  const [status, setStatus] = useState<"pending" | "complete" | "failed">(
+    "pending",
   );
-  const [status, setStatus] = useState<CallbackStatus>("loading");
   const [message, setMessage] = useState(CALENDAR_OAUTH_PENDING_MESSAGE);
 
   useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+
     let cancelled = false;
-    let timeoutId: number | undefined;
-    let channel: BroadcastChannel | null = null;
-
-    function notifyParent(nextStatus: Exclude<CallbackStatus, "loading">, nextMessage: string) {
-      window.opener?.postMessage(
-        {
-          type: "m365-calendar-auth",
-          status: nextStatus,
-          provider: CALENDAR_OAUTH_PROVIDER,
-          message: nextMessage,
-        },
-        window.location.origin,
-      );
-    }
-
-    function finish(nextStatus: Exclude<CallbackStatus, "loading">, nextMessage: string) {
-      if (cancelled) return;
-      setStatus(nextStatus);
-      setMessage(nextMessage);
-      notifyParent(nextStatus, nextMessage);
-      channel?.close();
-      if (nextStatus === "complete") {
-        window.setTimeout(() => window.close(), 1000);
-      }
-    }
-
     async function complete() {
-      const error = params.get("error");
-      const errorDescription = params.get("error_description");
-      const sessionUri = params.get("session_uri");
-      const state = params.get("state") ?? params.get("custom_state");
-
-      if (error) {
-        finish("failed", errorDescription || "日历授权失败，请重新发起授权。");
-        return;
-      }
-
-      if (!sessionUri || !state) {
-        finish("failed", CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE);
-        return;
-      }
-
-      channel = openCalendarOAuthChannel();
-      if (!channel) {
-        finish("failed", CALENDAR_OAUTH_UNAVAILABLE_MESSAGE);
-        return;
-      }
-
-      const request = createCalendarOAuthRequest({
-        provider: CALENDAR_OAUTH_PROVIDER,
-        sessionUri,
-        state,
-        ownerId: getCalendarOAuthOwnerIdFromWindowName(),
-      });
-
-      channel.onmessage = (event) => {
-        if (!isCalendarOAuthResponse(event.data)) return;
-        if (
-          event.data.provider !== CALENDAR_OAUTH_PROVIDER ||
-          event.data.requestId !== request.requestId
-        ) {
-          return;
+      try {
+        const response = await completeCalendarOAuthCallback();
+        if (cancelled) return;
+        if (response.status === "complete" || response.status === "failed") {
+          setStatus(response.status);
+          setMessage(response.message);
+          broadcastCalendarOAuthStatus(response);
+          if (response.status === "complete") {
+            window.setTimeout(() => window.close(), 1200);
+          }
+        } else {
+          setStatus("pending");
+          setMessage(response.message);
         }
-
-        if (timeoutId !== undefined) {
-          window.clearTimeout(timeoutId);
-        }
-        finish(event.data.status, event.data.message);
-      };
-
-      timeoutId = window.setTimeout(() => {
-        finish("failed", CALENDAR_OAUTH_FAILED_MESSAGE);
-      }, CALENDAR_OAUTH_TIMEOUT_MS);
-
-      channel.postMessage(request);
+      } catch (error) {
+        if (cancelled) return;
+        const message = formatCalendarOAuthError(error);
+        setStatus("failed");
+        setMessage(message);
+        broadcastCalendarOAuthStatus({
+          type: "m365-calendar-auth",
+          requestId: "",
+          provider: CALENDAR_OAUTH_PROVIDER,
+          status: "failed",
+          message,
+          state: null,
+        });
+      }
     }
 
     void complete();
     return () => {
       cancelled = true;
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-      }
-      channel?.close();
     };
-  }, [params]);
+  }, []);
 
   const isComplete = status === "complete";
   const isFailed = status === "failed";
@@ -126,7 +137,7 @@ export default function M365CalendarCallbackPage() {
                 : "mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-blue-100 text-blue-700"
           }
         >
-          {isComplete ? "✓" : isFailed ? "!" : "…"}
+          {isComplete ? "✓" : isFailed ? "!" : "..."}
         </div>
         <h1 className="text-lg font-semibold">
           {isComplete ? "授权完成" : isFailed ? "授权失败" : "正在授权"}

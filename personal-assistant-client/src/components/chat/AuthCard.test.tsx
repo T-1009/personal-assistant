@@ -6,7 +6,6 @@ import { AuthCard } from "./AuthCard";
 describe("AuthCard", () => {
   afterEach(() => {
     useAuthCardStore.getState().clearAuth();
-    sessionStorage.clear();
   });
 
   it("keeps rendering a historical message card after a newer Auth Card arrives", () => {
@@ -40,6 +39,7 @@ describe("AuthCard", () => {
       "m365-calendar-provider",
       "https://auth.example.com",
       "请先完成日历授权",
+      "signed-state",
     );
 
     render(<AuthCard />);
@@ -53,6 +53,7 @@ describe("AuthCard", () => {
             status: "complete",
             provider: "m365-calendar-provider",
             message: "日历授权已完成，可以关闭此窗口并重试刚才的问题。",
+            state: "signed-state",
           },
         }),
       );
@@ -66,21 +67,68 @@ describe("AuthCard", () => {
     expect(screen.getByText("授权完成")).toBeInTheDocument();
   });
 
-  it("opens calendar OAuth in a tab-owned target window", () => {
-    sessionStorage.setItem("m365-calendar-auth-owner-id", "owner-1");
+  it("ignores callback status for another OAuth state", async () => {
     const authStore = useAuthCardStore.getState();
     authStore.setAuth(
       "auth-message-1",
       "m365-calendar-provider",
       "https://auth.example.com",
       "请先完成日历授权",
+      "current-state",
     );
 
     render(<AuthCard />);
 
-    expect(screen.getByRole("link", { name: "点击授权" })).toHaveAttribute(
-      "target",
-      "m365-calendar-auth-owner-1",
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: window.location.origin,
+          data: {
+            type: "m365-calendar-auth",
+            status: "complete",
+            provider: "m365-calendar-provider",
+            message: "另一个授权已完成",
+            state: "other-state",
+          },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("请先完成日历授权")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("另一个授权已完成")).not.toBeInTheDocument();
+  });
+
+  it("ignores calendar callback status without OAuth state", async () => {
+    const authStore = useAuthCardStore.getState();
+    authStore.setAuth(
+      "auth-message-1",
+      "m365-calendar-provider",
+      "https://auth.example.com",
+      "请先完成日历授权",
+      "current-state",
     );
+
+    render(<AuthCard />);
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent("message", {
+          origin: window.location.origin,
+          data: {
+            type: "m365-calendar-auth",
+            status: "failed",
+            provider: "m365-calendar-provider",
+            message: "缺少 state 的失败状态",
+          },
+        }),
+      );
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("请先完成日历授权")).toBeInTheDocument();
+    });
+    expect(screen.queryByText("缺少 state 的失败状态")).not.toBeInTheDocument();
   });
 });

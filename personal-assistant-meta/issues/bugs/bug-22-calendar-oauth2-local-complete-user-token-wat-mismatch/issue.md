@@ -1,9 +1,15 @@
 ---
-status: todo
+status: superseded
 related: ["feature-15-calendar-agentarts-full-oauth2", "bug-21-calendar-oauth2-complete-session-identity-mismatch"]
 ---
 
 # Bug 22: Calendar OAuth2 本地 complete 使用 user_token 与 WAT identity 不匹配
+
+> Superseded by Bug 21 architectural fix: Calendar OAuth2 主流程已迁移为
+> Service-owned callback `/invocations/auth/oauth2/callback/m365-calendar`。
+> Web Chat 不再调用 `POST /invocations/auth/oauth2/complete`，该 legacy complete
+> endpoint 已移除。因此本 issue 描述的 local `user_token` complete mismatch 不再是
+> 当前架构下的独立修复入口。
 
 ## 现象
 
@@ -39,7 +45,7 @@ complete 无法稳定完成。该问题和 Bug 21 的生产偶发 identity misma
 
 1. 在本地启动 Service 与 Client。
 2. 使用本地 dev header / local identity 配置触发 Calendar OAuth2 授权。
-3. 完成浏览器授权并让主聊天窗口调用
+3. 旧架构中，完成浏览器授权后会让主聊天窗口调用
    `POST /invocations/auth/oauth2/complete`。
 4. 观察 complete API 调用是否使用：
 
@@ -121,7 +127,7 @@ Feature 15 架构文档已经强调 `UserIdentifier` 的 `user_id` 与 `user_tok
 - [ ] Production Gateway JWT 路径继续使用安全的 server-bound user identity，不回退为
       浏览器可伪造的 user id。
 - [ ] Service 日志包含 identity strategy 与 AgentArts request_id，但不泄露 token。
-- [ ] `uv run pytest tests/test_oauth2_complete.py tests/test_main.py` 通过。
+- [ ] `uv run pytest tests/test_oauth2_callback.py tests/test_main.py` 通过。
 
 ## Affected Specs / Architecture Docs
 
@@ -135,7 +141,7 @@ Feature 15 架构文档已经强调 `UserIdentifier` 的 `user_id` 与 `user_tok
 
 | 路径 | 关联点 |
 |------|--------|
-| `personal-assistant-service/app/main.py` | `/invocations/auth/oauth2/complete` 中 `UserIdentifier(user_token=...)` 调用 |
+| `personal-assistant-service/app/main.py` | 旧 `/invocations/auth/oauth2/complete` 已移除；当前使用 Service-owned callback |
 | `personal-assistant-service/app/auth.py` | `extract_authorization_user_token`、`extract_gateway_user_id`、`extract_workload_access_token` |
-| `personal-assistant-service/tests/test_oauth2_complete.py` | complete endpoint 当前断言 user_token path |
+| `personal-assistant-service/tests/test_oauth2_callback.py` | Service-owned callback 当前断言 signed-state user_id path |
 | `personal-assistant-meta/architecture/auth/feature-15-calendar-oauth2-architecture.md` | `UserIdentifier` 参数约束和 production path 说明 |

@@ -104,6 +104,19 @@ USER_FEDERATION 模式需要用户完成一次 OAuth 授权：
 3. 用户在浏览器中完成授权
 4. 后续调用自动使用刷新后的 token
 
+Calendar OAuth2 本地 Web Chat 测试需要把 callback URL 配成 React callback shell
+路径：
+
+```bash
+OAUTH2_CALENDAR_CALLBACK_URL=http://localhost:5173/auth/callback/m365-calendar
+```
+
+该 URL 会先进入本地 React callback shell；shell 通过 MSAL shared `localStorage`
+cache 静默取得当前 Web Chat ID Token 后调用
+`/invocations/auth/oauth2/callback/m365-calendar`，再由 Vite proxy 到 FastAPI
+`/auth/oauth2/callback/m365-calendar`。Frontend 只负责 authenticated transport 和 UI
+展示，completion 业务决策仍在 Service。
+
 > 开发阶段可用 API Key（`key_auth`）方式绕过 OAuth，直接在 `agentarts_config.yaml` 中配置。
 
 ---

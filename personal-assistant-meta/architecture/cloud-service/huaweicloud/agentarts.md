@@ -829,7 +829,7 @@ if (isTokenExpiringSoon(idToken)) {
 
 `acquireTokenSilent` 优先从缓存读取，缓存过期时自动用 refresh token 换新（无用户交互）。
 
-**页面刷新后的 token 恢复**：非登录跳转的普通页面加载时，`handleRedirectPromise()` 返回 null。需额外调用 `acquireIdTokenSilently()` 从 sessionStorage 加载已有 token：
+**页面刷新 / callback tab 后的 token 恢复**：非登录跳转的普通页面加载时，`handleRedirectPromise()` 返回 null。需额外调用 `acquireIdTokenSilently()` 从 MSAL cache 加载已有 token。当前 Web Chat 使用 `localStorage` cache，以便 `noopener` OAuth callback tab 可在 same-origin 下静默取得 ID Token：
 
 ```typescript
 msalInstance.handleRedirectPromise().then(async (response) => {
@@ -886,9 +886,9 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 |-------------------|---------------------|
 | `/runtimes/{runtime_name}/invocations` | `/invocations` |
 | `/runtimes/{runtime_name}/invocations/<suffix>` | `/<suffix>` |
-| `/runtimes/personal-assistant/invocations/auth/oauth2/complete` | `/auth/oauth2/complete` |
+| `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `/auth/oauth2/callback/m365-calendar` |
 
-`/auth/oauth2/complete` 只是 suffix 映射的一个业务例子，不是特殊规则。
+`/auth/oauth2/callback/m365-calendar` 只是 suffix 映射的一个业务例子，不是特殊规则。
 
 #### 11.7.2 404 判别
 

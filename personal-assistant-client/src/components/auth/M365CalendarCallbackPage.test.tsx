@@ -1,126 +1,127 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { buildBackendCalendarCallbackUrl } from "./M365CalendarCallbackPage";
 import M365CalendarCallbackPage from "./M365CalendarCallbackPage";
+import { acquireIdTokenSilently } from "@/lib/auth";
+import { useAuthStore } from "@/stores/auth-store";
 
-class MockBroadcastChannel {
-  static channels = new Map<string, Set<MockBroadcastChannel>>();
+vi.mock("@/lib/auth", () => ({
+  acquireIdTokenSilently: vi.fn(),
+}));
 
-  name: string;
-  onmessage: ((event: MessageEvent) => void) | null = null;
-  private closed = false;
-
-  constructor(name: string) {
-    this.name = name;
-    const channels = MockBroadcastChannel.channels.get(name) ?? new Set();
-    channels.add(this);
-    MockBroadcastChannel.channels.set(name, channels);
-  }
-
-  postMessage(data: unknown) {
-    const channels = MockBroadcastChannel.channels.get(this.name);
-    if (!channels) return;
-
-    for (const channel of channels) {
-      if (channel === this || channel.closed) continue;
-      channel.onmessage?.({ data } as MessageEvent);
-    }
-  }
-
-  close() {
-    this.closed = true;
-    MockBroadcastChannel.channels.get(this.name)?.delete(this);
-  }
-
-  static reset() {
-    MockBroadcastChannel.channels.clear();
-  }
+function makeTestJwt() {
+  const payload = btoa(JSON.stringify({ sub: "callback-user" }));
+  return `header.${payload}.signature`;
 }
 
+const acquireIdTokenSilentlyMock = vi.mocked(acquireIdTokenSilently);
+
 describe("M365CalendarCallbackPage", () => {
-  const originalClose = window.close;
-  const originalBroadcastChannel = globalThis.BroadcastChannel;
-
-  beforeEach(() => {
-    globalThis.BroadcastChannel =
-      MockBroadcastChannel as unknown as typeof BroadcastChannel;
-    window.close = vi.fn();
-    window.name = "";
-    window.history.pushState({}, "", "/");
-  });
-
   afterEach(() => {
-    window.close = originalClose;
-    MockBroadcastChannel.reset();
-    globalThis.BroadcastChannel = originalBroadcastChannel;
-    window.name = "";
-    window.history.pushState({}, "", "/");
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    acquireIdTokenSilentlyMock.mockReset();
+    useAuthStore.getState().clearToken();
+    window.history.pushState({}, "", "/");
   });
 
-  it("shows a success state after the main window completes OAuth", async () => {
-    const requests: unknown[] = [];
-    const mainWindowChannel = new BroadcastChannel("m365-calendar-auth");
-    mainWindowChannel.onmessage = (event) => {
-      requests.push(event.data);
-      if (
-        event.data &&
-        typeof event.data === "object" &&
-        "requestId" in event.data
-      ) {
-        mainWindowChannel.postMessage({
+  it("builds an authenticated backend callback URL for the React shell", () => {
+    expect(
+      buildBackendCalendarCallbackUrl(
+        "http://localhost:5173",
+        "?session_uri=urn:session:test&state=signed-state",
+      ).toString(),
+    ).toBe(
+      "http://localhost:5173/invocations/auth/oauth2/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
+    );
+  });
+
+  it("calls backend completion once with Authorization and shows result", async () => {
+    useAuthStore.getState().setIdToken(makeTestJwt());
+    acquireIdTokenSilentlyMock.mockResolvedValue(null);
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
           type: "m365-calendar-auth",
-          requestId: (event.data as { requestId: string }).requestId,
+          requestId: "signed-state",
           provider: "m365-calendar-provider",
           status: "complete",
           message: "日历授权已完成，可以关闭此窗口并重试刚才的问题。",
-        });
-      }
-    };
-
+          state: "signed-state",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
     window.history.pushState(
       {},
       "",
       "/auth/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
     );
-    window.name = "m365-calendar-auth-owner-1";
 
     render(<M365CalendarCallbackPage />);
 
     await waitFor(() => {
       expect(screen.getByText("授权完成")).toBeInTheDocument();
     });
-    expect(
-      screen.getByText("日历授权已完成，可以关闭此窗口并重试刚才的问题。"),
-    ).toBeInTheDocument();
-    expect(requests).toContainEqual({
-      type: "m365-calendar-auth-request",
-      requestId: "signed-state",
-      provider: "m365-calendar-provider",
-      session_uri: "urn:session:test",
-      state: "signed-state",
-      ownerId: "owner-1",
-    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url.toString()).toBe(
+      "http://localhost:3000/invocations/auth/oauth2/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
+    );
+    expect(init.headers.Authorization).toBe(`Bearer ${makeTestJwt()}`);
+    expect(init.headers.Accept).toBe("application/json");
+    expect(acquireIdTokenSilentlyMock).not.toHaveBeenCalled();
   });
 
-  it("shows a failed state when the callback is missing params", async () => {
-    window.history.pushState({}, "", "/auth/callback/m365-calendar");
+  it("uses a silent MSAL token when the callback tab has no in-memory token", async () => {
+    acquireIdTokenSilentlyMock.mockResolvedValue(makeTestJwt());
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          type: "m365-calendar-auth",
+          requestId: "signed-state",
+          provider: "m365-calendar-provider",
+          status: "complete",
+          message: "日历授权已完成，可以关闭此窗口并重试刚才的问题。",
+          state: "signed-state",
+        }),
+        {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    window.history.pushState(
+      {},
+      "",
+      "/auth/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
+    );
 
     render(<M365CalendarCallbackPage />);
 
     await waitFor(() => {
-      expect(screen.getByText("授权失败")).toBeInTheDocument();
+      expect(screen.getByText("授权完成")).toBeInTheDocument();
     });
-    expect(
-      screen.getByText("授权回调缺少必要参数，请重新发起日历授权。"),
-    ).toBeInTheDocument();
+    expect(acquireIdTokenSilentlyMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0];
+    expect(init.headers.Authorization).toBe(`Bearer ${makeTestJwt()}`);
   });
 
-  it("shows a failed state when the OAuth provider returns an error", async () => {
+  it("does not call backend completion when the callback tab cannot get a token", async () => {
+    acquireIdTokenSilentlyMock.mockResolvedValue(null);
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
     window.history.pushState(
       {},
       "",
-      "/auth/callback/m365-calendar?error=access_denied&error_description=用户取消授权",
+      "/auth/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
     );
 
     render(<M365CalendarCallbackPage />);
@@ -128,6 +129,9 @@ describe("M365CalendarCallbackPage", () => {
     await waitFor(() => {
       expect(screen.getByText("授权失败")).toBeInTheDocument();
     });
-    expect(screen.getByText("用户取消授权")).toBeInTheDocument();
+    expect(
+      screen.getByText("请保持原聊天窗口处于登录状态后，再重新完成日历授权。"),
+    ).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

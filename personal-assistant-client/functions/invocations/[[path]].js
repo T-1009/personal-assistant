@@ -19,37 +19,58 @@ function getInvocationsUrl(env) {
   return url;
 }
 
-function buildUpstreamUrl(env, requestUrl) {
+export function buildUpstreamUrl(
+  env,
+  requestUrl,
+  { publicPrefix = "/invocations", upstreamPrefix = "" } = {},
+) {
   const invocationsUrl = getInvocationsUrl(env);
   const incomingUrl = new URL(requestUrl);
-  const prefix = "/invocations";
   const incomingPath = incomingUrl.pathname;
-  if (incomingPath !== prefix && !incomingPath.startsWith(`${prefix}/`)) {
+  if (
+    incomingPath !== publicPrefix &&
+    !incomingPath.startsWith(`${publicPrefix}/`)
+  ) {
     throw new Error("Unsupported invocations proxy path");
   }
 
   const basePath = invocationsUrl.pathname.replace(/\/$/, "");
-  const suffix = incomingPath.slice(prefix.length);
-  invocationsUrl.pathname = `${basePath}${suffix}`;
+  const normalizedUpstreamPrefix = upstreamPrefix
+    ? `/${upstreamPrefix.replace(/^\/|\/$/g, "")}`
+    : "";
+  const suffix = incomingPath.slice(publicPrefix.length);
+  invocationsUrl.pathname = `${basePath}${normalizedUpstreamPrefix}${suffix}`;
   invocationsUrl.search = incomingUrl.search;
   return invocationsUrl;
 }
 
-export async function onRequestPost({ request, env }) {
+export async function proxyInvocationsRequest({
+  request,
+  env,
+  publicPrefix,
+  upstreamPrefix,
+}) {
   try {
-    const upstreamUrl = buildUpstreamUrl(env, request.url);
+    const upstreamUrl = buildUpstreamUrl(env, request.url, {
+      publicPrefix,
+      upstreamPrefix,
+    });
     const headers = new Headers();
     for (const name of FORWARDED_HEADERS) {
       const value = request.headers.get(name);
       if (value) headers.set(name, value);
     }
 
-    const upstreamRequest = new Request(upstreamUrl, {
+    const init = {
       method: request.method,
       headers,
-      body: await request.arrayBuffer(),
       redirect: "manual",
-    });
+    };
+    if (request.method !== "GET" && request.method !== "HEAD") {
+      init.body = await request.arrayBuffer();
+    }
+
+    const upstreamRequest = new Request(upstreamUrl, init);
     const upstreamResponse = await fetch(upstreamRequest);
     const responseHeaders = new Headers(upstreamResponse.headers);
 
@@ -71,9 +92,26 @@ export async function onRequestPost({ request, env }) {
         { status: 500 },
       );
     }
+    if (
+      error instanceof Error &&
+      error.message.startsWith("Unsupported invocations proxy path")
+    ) {
+      return Response.json(
+        { message: "Unsupported proxy path" },
+        { status: 404 },
+      );
+    }
     return Response.json(
       { message: "AgentArts Gateway is unavailable" },
       { status: 502 },
     );
   }
+}
+
+export async function onRequestPost({ request, env }) {
+  return proxyInvocationsRequest({ request, env });
+}
+
+export async function onRequestGet({ request, env }) {
+  return proxyInvocationsRequest({ request, env });
 }

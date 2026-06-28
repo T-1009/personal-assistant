@@ -65,7 +65,10 @@ AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。�
 - `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**，也是浏览器 Web Chat 的生产流式入口。
 - Web Chat 对话调用收敛到 `POST /invocations` 单一路径，通过 JSON body 字段区分同步或流式模式。
 - `PREFIX_MATCH` 子路径映射规则：`/runtimes/{runtime_name}/invocations/<suffix>` 映射到容器内 `/<suffix>`。
-- OAuth2 complete 只是该规则的一个例子：Gateway `POST /runtimes/personal-assistant/invocations/auth/oauth2/complete` 映射到 FastAPI `POST /auth/oauth2/complete`。
+- Calendar OAuth2 callback 的公网 URL 是 React callback shell
+  `GET /auth/callback/m365-calendar`；该 shell 携带 Web Chat Authorization header 调用
+  `/invocations/auth/oauth2/callback/m365-calendar`，再通过 Gateway 映射到 FastAPI
+  `GET /auth/oauth2/callback/m365-calendar`。
 - `/invocations/playground` 可通过 Gateway 的完整 Runtime 子路径访问，但 Cloudflare Pages Function 当前不代理该路径。
 
 > **Inbound authentication**：Gateway 使用 `authorizer_type: CUSTOM_JWT`。
@@ -149,12 +152,11 @@ async def oauth_callback(code: str):
     response.set_cookie("session", token["id_token"])
     return response
 
-# ── Web Chat OAuth complete（通过 Gateway /invocations/* policy 进入容器）──
+# ── Calendar OAuth callback（通过 Gateway /invocations/* policy 进入容器）──
 
-@app.post("/auth/oauth2/complete")
-async def complete_oauth2_auth(request: Request):
-    """完成 AgentArts Resource Token Auth session binding"""
-    payload = await request.json()
+@app.get("/auth/oauth2/callback/m365-calendar")
+async def calendar_oauth2_callback(request: Request):
+    """完成 Calendar Resource Token Auth session binding 并返回 result page"""
     ...
 
 # Chainlit 调试 UI（PREFIX_MATCH Gateway 可转发该子路径）
@@ -165,10 +167,10 @@ mount_chainlit(app=app, target=..., path="/invocations/playground")
 |------|------|--------|------|-------------|
 | `/ping` | GET | AgentArts 平台（控制面） | 健康检查 | ❌ 平台内部 |
 | `/invocations` | POST | AgentArts SDK / OfficeClaw / 浏览器 | `stream: false` 或未传返回 JSON；`stream: true` 返回 SSE | ✅（PREFIX_MATCH） |
-| `/auth/oauth2/complete` | POST | Web Chat OAuth coordinator | 完成 AgentArts Resource Token Auth session binding | ✅ 通过完整 Runtime path：`/runtimes/personal-assistant/invocations/auth/oauth2/complete` |
+| `/auth/oauth2/callback/m365-calendar` | GET | React callback shell authenticated request | 完成 Calendar Resource Token Auth session binding，并返回 result | ✅ 由 React shell 通过 `/invocations/auth/oauth2/callback/m365-calendar` 进入 Gateway |
 | `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅ 通过完整 Runtime path；Cloudflare Function 不代理 |
 
-> **注意**：`/feishu/webhook`、`/auth/callback` 等需要独立公网 URL 的路由无法直接通过 Gateway root path 暴露。`/auth/oauth2/complete` 是例外适配：外部仍走 `/runtimes/personal-assistant/invocations/auth/oauth2/complete` 命中 Gateway policy，容器内 route 保持 Auth 语义路径。
+> **注意**：`/feishu/webhook` 等需要独立公网 URL 的路由无法直接通过 Gateway root path 暴露。Calendar OAuth2 的公网入口由 React callback shell 提供，内部 authenticated fetch 通过 `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` 命中 Gateway policy，容器内 route 保持 Auth 语义路径。
 
 ### 2.3 AgentArts Gateway Header 注入
 

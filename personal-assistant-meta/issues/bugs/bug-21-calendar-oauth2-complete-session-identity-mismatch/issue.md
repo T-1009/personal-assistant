@@ -1,9 +1,17 @@
 ---
-status: todo
+status: implemented
 related: ["feature-15-calendar-agentarts-full-oauth2"]
 ---
 
 # Bug 21: Calendar OAuth2 complete 偶发 session identity mismatch
+
+> 2026-06-28 implementation note：已采用 architectural fix。Calendar OAuth2
+> completion 从多个 Web Chat tab 迁移到 Service-owned callback。OAuth provider
+> 先落到 React callback shell `/auth/callback/m365-calendar`，shell 只负责携带
+> Authorization 调用后端 callback API；Web Chat 只接收
+> state-scoped UI status，不再调用 legacy `POST /invocations/auth/oauth2/complete`。
+> callback shell 使用 MSAL shared `localStorage` cache 静默取得 ID Token；不通过
+> opener、BroadcastChannel 或 URL 传递 bearer token。
 
 ## 现象
 
@@ -77,14 +85,13 @@ callback envelope 只会被原聊天页处理，暂未观察到同类 identity m
   抢先或重复处理同一 callback，并在 AgentArts Identity
   `complete_resource_token_auth` 阶段触发
   `AgentIdentityTokenVault.1002`。
-- 初步客户端修复方向：由于 SDK 下发的 `auth_url` 不保证携带可供前端反查的
-  `state` / `custom_state`，不能依赖解析 AuthCard URL 做 ownership 校验。应由前端
-  给打开授权窗口的 chat tab 生成 per-tab owner id，将 Calendar AuthCard 的
-  `target` 设置为带 owner id 的命名窗口；callback page 通过 `window.name` 取回
-  owner id，并随 BroadcastChannel request 一起发送。不匹配 owner id 的 tab 应静默
-  忽略，不能调用 complete endpoint，也不能污染 AuthCard 状态。
+- 架构修复方向：不应让 Web Chat tab 执行 OAuth2 complete。Calendar OAuth2 callback
+  应直接 redirect 到 Service-owned callback endpoint，由后端验证 signed state、调用
+  `complete_resource_token_auth`、记录 replay 状态，然后返回 callback result page。
+  Web Chat 只接收 result page 通过 BroadcastChannel 发出的 UI status，并按
+  `oauth2_state` 更新匹配 AuthCard。
 
-## 当前行为
+## 旧行为（已移除）
 
 ```mermaid
 sequenceDiagram
@@ -92,7 +99,7 @@ sequenceDiagram
     participant UI as Web Chat 原主窗口
     participant OtherUI as 其他 Web Chat tab
     participant CB as Callback Page
-    participant API as Service complete endpoint
+    participant API as legacy Service complete endpoint
     participant IdSvc as AgentArts Identity Service
 
     User->>UI: 请求查看日历
@@ -109,6 +116,28 @@ sequenceDiagram
     OtherUI-->>User: 错误 tab / stale AuthCard 显示 Authorization session failed
 ```
 
+## 目标行为
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant UI as Web Chat
+    participant CB as React Callback Shell
+    participant Agent as Service callback endpoint
+    participant IdSvc as AgentArts Identity Service
+
+    User->>UI: 点击 Calendar AuthCard
+    UI-->>User: 打开 auth_url
+    User->>CB: Microsoft redirect<br/>GET /auth/callback/m365-calendar
+    CB->>Agent: GET /invocations/auth/oauth2/callback/m365-calendar<br/>Authorization: Bearer Web Chat ID Token
+    Agent->>Agent: 验证 signed state<br/>user_id / session_id / provider / nonce
+    Agent->>IdSvc: complete_resource_token_auth(session_uri, state.user_id)
+    IdSvc-->>Agent: success / controlled failure
+    Agent-->>CB: 返回 callback result JSON
+    CB-->>UI: BroadcastChannel UI status<br/>provider + oauth2_state + complete|failed
+    UI->>UI: 只更新匹配 oauth2_state 的 AuthCard
+```
+
 ## 初步怀疑方向
 
 本 bug 先记录生产现象，不在 issue 阶段锁死根因。Implementation 阶段需重点排查：
@@ -118,26 +147,29 @@ sequenceDiagram
 - `state` / pending auth record 中绑定的 user identity、provider、session 与
   complete request 中的 server-bound user 是否可能跨浏览器窗口、跨 tab、跨登录态或
   reset session 后错配。
-- 主聊天窗口 callback coordinator 是否可能处理旧的 callback envelope、重复 callback
-  或 stale AuthCard。
-- 多个 Web Chat tab 是否因共享 `m365-calendar-auth` BroadcastChannel 而同时处理同一个
-  callback envelope；非发起授权的 tab 是否缺少 state/AuthCard ownership 校验。
-- callback 页面是否过早展示“授权完成”，没有等待主窗口 complete API 的真实结果。
+- 主聊天窗口 callback coordinator 不应继续承担 complete 业务逻辑；应删除或降级为
+  UI status observer。
+- 多个 Web Chat tab 可共享 `m365-calendar-auth` BroadcastChannel，但 channel 上只能
+  传播 complete 后的 UI status，不能传播需要任一 tab 执行业务 complete 的 envelope。
+- React callback shell 所需的 Web Chat ID Token 来自 MSAL same-origin shared cache；
+  `noopener` OAuth tab 不依赖主窗口内存状态，也不接收 bearer token handoff。
+- callback 页面只有在后端 complete 已完成 / 失败后，才展示最终状态。
 - AgentArts Gateway / Cloudflare Pages proxy 是否在 complete request 上丢失或替换了
   inbound identity 相关 header。
 - 与 Bug 20 的 replay / duplicate callback 场景是否互相放大。
 
 ## 预期行为
 
-- callback 页面只有在主窗口 complete API 真正成功后，才展示最终“授权完成”状态。
-- Service 调用 `complete_resource_token_auth` 时使用的 identity 必须与创建
-  AgentArts OAuth2 session 的 identity 一致。
+- callback result page 只有在 Service callback endpoint 完成真实 complete 后，才展示
+  最终“授权完成”状态。
+- Service 调用 `complete_resource_token_auth` 时使用 signed state 绑定的 trusted
+  `user_id`，必须与创建 AgentArts OAuth2 session 的 identity 一致。
 - 如果 AgentArts 返回 `AgentIdentityTokenVault.1002`，前端应展示准确、可恢复的错误，
   不应误导为用户拒绝授权或普通 session 过期。
 - 重复 callback、旧 callback、跨 tab callback 应被识别并返回受控结果，不应污染当前
   AuthCard 状态。
-- 非发起授权的 Web Chat tab 即使收到 BroadcastChannel request，也必须因 owner id
-  与本 tab 不匹配而忽略，不能调用 complete endpoint。
+- Web Chat tab 不调用 complete endpoint；非匹配 `oauth2_state` 的 AuthCard 即使收到
+  BroadcastChannel status，也不能被更新。
 
 ## 修复范围
 
@@ -145,6 +177,10 @@ sequenceDiagram
 
 - 排查并修复 Calendar OAuth2 complete flow 中 identity / session binding 偶发错配。
 - 对 callback 页面与主窗口 AuthCard 的成功/失败状态建立一致语义。
+- 将 Calendar OAuth2 主流程迁移为 Service-owned callback：
+  `/auth/callback/m365-calendar` + authenticated backend callback API。
+- AuthCard 事件携带 `oauth2_state`；callback result status 也携带同一 state，前端只做
+  UI 状态匹配。
 - 增加结构化日志，至少能关联：
   - provider；
   - server-bound user_id；
@@ -154,8 +190,8 @@ sequenceDiagram
   - complete result。
 - 增加 Service / Client / E2E regression tests，覆盖 identity mismatch、stale callback
   和 duplicate callback 的用户可见状态。
-- 增加 Client regression test，覆盖多 chat tab 共享 BroadcastChannel 时，owner id
-  不匹配的 tab 不会调用 `completeOAuth2Auth()`。
+- 增加 Client regression test，覆盖 state 不匹配的 callback status 不会污染当前
+  AuthCard。
 
 ### Out of Scope
 
@@ -166,29 +202,33 @@ sequenceDiagram
 
 ## 验收标准
 
-- [ ] Calendar OAuth2 callback 成功时，callback 页面与 Web Chat 主窗口状态一致。
-- [ ] `complete_resource_token_auth` 不再因项目侧 identity/session 错配偶发返回
+- [x] Calendar OAuth2 callback 成功时，callback 页面与 Web Chat 主窗口状态一致。
+- [x] `complete_resource_token_auth` 不再因项目侧 identity/session 错配偶发返回
       `AgentIdentityTokenVault.1002`。
-- [ ] 真实 `AgentIdentityTokenVault.1002` 场景有明确日志与用户可恢复提示。
-- [ ] stale / duplicate callback 不会把当前 AuthCard 标记为失败。
-- [ ] 多 Web Chat tab 场景中，只有 owner id 匹配 callback window 的 tab 会执行
-      complete；其他 tab 不发请求、不改 UI 状态。
-- [ ] 相关 Service tests、Client tests 和 E2E regression 通过。
+- [x] 真实 `AgentIdentityTokenVault.1002` 场景有明确日志与用户可恢复提示。
+- [x] stale / duplicate callback 不会把当前 AuthCard 标记为失败。
+- [x] 多 Web Chat tab 场景中，没有 tab 会执行 complete；只有 `oauth2_state` 匹配的
+      AuthCard 会更新 UI 状态。
+- [x] 相关 Service tests、Client tests 通过。
+- [ ] E2E regression 通过。
 
 ## Affected Specs / Architecture Docs
 
 | 文档 | 影响 |
 |------|------|
-| `personal-assistant-meta/issues/features/feature-15-calendar-agentarts-full-oauth2/issue.md` | 对齐 callback page 与主窗口 complete API 的成功语义 |
-| `personal-assistant-meta/issues/features/feature-15-calendar-agentarts-full-oauth2/plan.md` | 补充 identity/session mismatch 排查与回归验证 |
-| `personal-assistant-meta/architecture/backend_architecture.md` | 如修复改变 OAuth2 complete endpoint 语义，需要同步 |
+| `personal-assistant-meta/issues/features/feature-15-calendar-agentarts-full-oauth2/issue.md` | 历史设计记录；当前 Bug 21 覆盖 Service-owned callback 修正 |
+| `personal-assistant-meta/issues/features/feature-15-calendar-agentarts-full-oauth2/plan.md` | 历史实施计划；legacy complete API 已被本 bug supersede |
+| `personal-assistant-meta/architecture/auth/feature-15-calendar-oauth2-architecture.md` | 从 frontend relay 更新为 Service-owned callback |
+| `personal-assistant-meta/architecture/backend_architecture.md` | 同步 Service-owned callback route 与 backend completion 语义 |
+| `personal-assistant-infra/agent_identity.tf` | Agent Identity OAuth2 return URL allowlist 必须指向 Service-owned callback |
 
 ## 参考实现 / 排查入口
 
 | 路径 | 关联点 |
 |------|--------|
-| `personal-assistant-service/app/main.py` | `/invocations/auth/oauth2/complete` complete endpoint |
+| `personal-assistant-service/app/main.py` | `/auth/oauth2/callback/m365-calendar` Service-owned callback endpoint |
 | `personal-assistant-service/app/oauth2_state.py` | signed state、pending auth、nonce / replay guard |
 | `personal-assistant-service/app/tools/calendar_tools.py` | Calendar Tool 与 AgentArts Identity SDK provider 使用 |
-| `personal-assistant-client/src/` | AuthCard、callback page、主窗口 callback coordinator |
+| `personal-assistant-client/src/` | AuthCard、callback status observer、legacy callback redirect |
+| `personal-assistant-infra/agent_identity.tf` | Production return URL allowlist |
 | `personal-assistant-e2e/tests/` | Calendar OAuth2 授权回归测试 |
