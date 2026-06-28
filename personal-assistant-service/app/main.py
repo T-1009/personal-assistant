@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field, StrictBool, ValidationError  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 from app.auth import (  # noqa: E402
+    extract_authorization_user_token,
     extract_gateway_session_id,
     extract_gateway_user_id,
     extract_workload_access_token,
@@ -445,6 +446,7 @@ async def complete_oauth2_auth(request: Request):
         )
         raise HTTPException(status_code=403, detail="invalid OAuth2 state") from e
 
+    user_token = extract_authorization_user_token(request)
     try:
         logger.info(
             "Calling Identity complete_resource_token_auth provider=%s "
@@ -457,7 +459,7 @@ async def complete_oauth2_auth(request: Request):
         client = IdentityClient(region=get_region())
         client.complete_resource_token_auth(
             session_uri=complete_request.session_uri,
-            user_identifier=UserIdentifier(user_id=user_id),
+            user_identifier=UserIdentifier(user_token=user_token),
         )
     except Exception as e:
         logger.warning(

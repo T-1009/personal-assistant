@@ -25,6 +25,13 @@ def calendar_settings():
     )
 
 
+def _headers(user_id: str = "user-1", user_token: str = "jwt-token") -> dict[str, str]:
+    return {
+        USER_ID_HEADER: user_id,
+        "Authorization": f"Bearer {user_token}",
+    }
+
+
 def _state(settings: Settings, user_id: str = "user-1") -> str:
     return create_oauth2_state(
         settings=settings,
@@ -92,7 +99,7 @@ async def test_complete_calls_identity_client(client, calendar_settings):
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
-            headers={USER_ID_HEADER: "user-1"},
+            headers=_headers(user_token="user-jwt"),
         )
 
     assert response.status_code == 200
@@ -100,7 +107,31 @@ async def test_complete_calls_identity_client(client, calendar_settings):
     identity_client.complete_resource_token_auth.assert_called_once()
     kwargs = identity_client.complete_resource_token_auth.call_args.kwargs
     assert kwargs["session_uri"] == "urn:uuid:test"
-    assert kwargs["user_identifier"].user_id == "user-1"
+    assert kwargs["user_identifier"].user_token == "user-jwt"
+
+
+@pytest.mark.asyncio
+async def test_complete_requires_authorization_user_token(client, calendar_settings):
+    identity_client = MagicMock()
+    state = _state(calendar_settings)
+
+    with (
+        patch("app.main.get_settings", return_value=calendar_settings),
+        patch("app.main.IdentityClient", return_value=identity_client),
+    ):
+        response = await client.post(
+            "/auth/oauth2/complete",
+            json={
+                "provider": "m365-calendar-provider",
+                "session_uri": "urn:uuid:test",
+                "state": state,
+            },
+            headers={USER_ID_HEADER: "user-1"},
+        )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Missing Authorization header"
+    identity_client.complete_resource_token_auth.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -187,7 +218,7 @@ async def test_complete_reports_identity_permission_error(client, calendar_setti
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
-            headers={USER_ID_HEADER: "user-1"},
+            headers=_headers(),
         )
 
     assert response.status_code == 502
