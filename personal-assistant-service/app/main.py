@@ -462,7 +462,7 @@ async def complete_oauth2_auth(request: Request):
             user_identifier=UserIdentifier(user_token=user_token),
         )
     except Exception as e:
-        logger.warning(
+        logger.error(
             "Calendar OAuth2 complete failed provider=%s user_id=%s "
             "error_type=%s error=%s",
             complete_request.provider,
