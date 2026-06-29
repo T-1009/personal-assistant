@@ -4,27 +4,61 @@
 
 ## 架构
 
-Cloudflare Pages 同时承担 Vite 静态前端托管和 same-origin API Proxy：
+Cloudflare Pages 同时承担 Vite 静态前端托管和 same-origin API Proxy。
+真正负责“静态资源 vs Pages Function”分流的，是 Pages 自己的 file-based routing：
 
 ```mermaid
 flowchart LR
-    Browser["Browser"] -->|"GET /"| Pages["Cloudflare Pages<br/>Vite static assets"]
-    Browser -->|"POST /invocations"| Function["Pages Function"]
-    Function -->|"JWT + session header<br/>full Runtime path"| Gateway["AgentArts Gateway"]
-    Gateway -->|"SSE ReadableStream"| Function
-    Function -->|"SSE ReadableStream"| Browser
+    Browser["Browser"] --> Pages["Cloudflare Pages"]
+
+    Pages -->|"GET /, /assets/*"| Assets["Vite build artifacts<br/>dist/"]
+    Pages -->|"POST /invocations"| ExactFn["functions/invocations.js<br/>exact route"]
+    Pages -->|"GET/POST /invocations/*"| DeepFn["functions/invocations/[[path]].js<br/>multipath route"]
+
+    ExactFn -->|"re-export"| Proxy["shared proxy implementation"]
+    DeepFn -->|"same proxy helper"| Proxy
+    Proxy -->|"JWT + session header<br/>full Runtime path"| Gateway["AgentArts Gateway"]
+    Gateway -->|"SSE ReadableStream"| Proxy
+    Proxy -->|"SSE ReadableStream"| Browser
 ```
 
 Browser 只访问 Pages origin，因此不会产生 CORS preflight。Pages Function
 透明转发必要 headers、request body 和 SSE response body；JWT validation
-仍由 AgentArts Gateway 完成。
+仍由 AgentArts Gateway 完成。Pages 的 route specificity 规则会让
+`/invocations` 优先命中精确文件，而 `/invocations/*` 由多段动态路由处理。
+
+## Pages Function 路由
+
+Cloudflare Pages 使用 file-based routing。对本项目来说，静态资源和函数路由的
+分工如下：
+
+| 路径 | 处理方式 | 说明 |
+|------|----------|------|
+| `/`, `/chat`, `/assets/*` | 静态文件 | 直接从 `dist/` 提供 |
+| `POST /invocations` | `functions/invocations.js` | 精确匹配的 API 入口 |
+| `/invocations/*` | `functions/invocations/[[path]].js` | 多路径段动态路由，处理子路径 |
+
+如果没有匹配到 Function，Pages 会继续按静态资源规则尝试返回 asset。
+因此这里没有单独的“gateway”组件，Pages 本身就是这层协调者。
+
+## 代码分工
+
+| 文件 | 职责 |
+|------|------|
+| `personal-assistant-client/functions/invocations.js` | `/invocations` 的精确入口，当前只导出 `onRequestPost`，作为根路径 shim |
+| `personal-assistant-client/functions/invocations/[[path]].js` | 共享的 proxy 实现，处理 `/invocations/*` 的 GET/POST，请求会按 suffix 透传到 AgentArts Runtime 子路径 |
+
+`functions/invocations.js` 和 `functions/invocations/[[path]].js` 不是两套代理逻辑，
+而是“一个精确入口 + 一个通配入口”的组合。前者把根路径请求挂到同一套 proxy
+代码上，后者负责处理带 suffix 的场景，例如 OAuth callback 和 playground 子路径。
 
 ## Repository 配置
 
 | 文件 | 职责 |
 |------|------|
 | `personal-assistant-client/wrangler.toml` | Pages project name、build output 与 compatibility date |
-| `personal-assistant-client/functions/invocations.js` | `/invocations` same-origin Proxy |
+| `personal-assistant-client/functions/invocations.js` | `/invocations` exact-route shim |
+| `personal-assistant-client/functions/invocations/[[path]].js` | `/invocations/*` shared proxy implementation |
 | `personal-assistant-client/src/lib/chat/chat-api-client.ts` | 固定请求 same-origin `/invocations` |
 | `.github/workflows/deploy-frontend-to-cloudflare.yml` | `main` branch 自动测试、构建、部署和 smoke test |
 

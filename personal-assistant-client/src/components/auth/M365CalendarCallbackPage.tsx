@@ -23,6 +23,13 @@ export function buildBackendCalendarCallbackUrl(
   return target;
 }
 
+export function getCalendarCallbackState(
+  search = window.location.search,
+): string | null {
+  const params = new URLSearchParams(search);
+  return params.get("state") || params.get("custom_state") || null;
+}
+
 async function getCalendarCallbackToken(): Promise<string | null> {
   return useAuthStore.getState().idToken ?? (await acquireIdTokenSilently());
 }
@@ -103,15 +110,16 @@ export default function M365CalendarCallbackPage() {
       } catch (error) {
         if (cancelled) return;
         const message = formatCalendarOAuthError(error);
+        const callbackState = getCalendarCallbackState();
         setStatus("failed");
         setMessage(message);
         broadcastCalendarOAuthStatus({
           type: "m365-calendar-auth",
-          requestId: "",
+          requestId: callbackState ?? "",
           provider: CALENDAR_OAUTH_PROVIDER,
           status: "failed",
           message,
-          state: null,
+          state: callbackState,
         });
       }
     }

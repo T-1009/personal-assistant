@@ -1,7 +1,10 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { buildBackendCalendarCallbackUrl } from "./M365CalendarCallbackPage";
+import {
+  buildBackendCalendarCallbackUrl,
+  getCalendarCallbackState,
+} from "./M365CalendarCallbackPage";
 import M365CalendarCallbackPage from "./M365CalendarCallbackPage";
 import { acquireIdTokenSilently } from "@/lib/auth";
 import { useAuthStore } from "@/stores/auth-store";
@@ -34,6 +37,15 @@ describe("M365CalendarCallbackPage", () => {
       ).toString(),
     ).toBe(
       "http://localhost:5173/invocations/auth/oauth2/callback/m365-calendar?session_uri=urn:session:test&state=signed-state",
+    );
+  });
+
+  it("extracts signed callback state from state or custom_state", () => {
+    expect(getCalendarCallbackState("?state=signed-state")).toBe(
+      "signed-state",
+    );
+    expect(getCalendarCallbackState("?custom_state=custom-signed-state")).toBe(
+      "custom-signed-state",
     );
   });
 
@@ -117,7 +129,21 @@ describe("M365CalendarCallbackPage", () => {
   it("does not call backend completion when the callback tab cannot get a token", async () => {
     acquireIdTokenSilentlyMock.mockResolvedValue(null);
     const fetchMock = vi.fn();
+    const postMessageMock = vi.fn();
+    const closeMock = vi.fn();
+    class MockBroadcastChannel {
+      name: string;
+
+      constructor(name: string) {
+        this.name = name;
+      }
+
+      postMessage = postMessageMock;
+      close = closeMock;
+    }
+
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("BroadcastChannel", MockBroadcastChannel);
     window.history.pushState(
       {},
       "",
@@ -133,5 +159,12 @@ describe("M365CalendarCallbackPage", () => {
       screen.getByText("请保持原聊天窗口处于登录状态后，再重新完成日历授权。"),
     ).toBeInTheDocument();
     expect(fetchMock).not.toHaveBeenCalled();
+    expect(postMessageMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requestId: "signed-state",
+        state: "signed-state",
+        status: "failed",
+      }),
+    );
   });
 });

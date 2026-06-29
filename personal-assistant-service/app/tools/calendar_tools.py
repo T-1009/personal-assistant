@@ -51,6 +51,7 @@ def _push_auth_complete() -> None:
                 "system_message": "日历授权已完成 ✅",
                 "auth_complete": True,
                 "provider": CALENDAR_PROVIDER,
+                "oauth2_state": AgentArtsRuntimeContext.get_oauth2_custom_state(),
             }
         )
     except RuntimeError:
