@@ -3,6 +3,20 @@ import { buildUpstreamUrl } from "../../invocations/[[path]].js";
 const CALLBACK_PUBLIC_PATH = "/auth/callback/m365-calendar";
 const CALLBACK_UPSTREAM_PREFIX = "auth/oauth2/callback/m365-calendar";
 const CALLBACK_SECRET_HEADER = "x-pa-oauth2-callback-secret";
+const CALLBACK_AUTH_COOKIE = "pa_oauth2_callback_auth";
+
+function getCookieValue(request, name) {
+  const cookieHeader = request.headers.get("Cookie");
+  if (!cookieHeader) return null;
+
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rawValue] = part.trim().split("=");
+    if (rawKey === name) {
+      return decodeURIComponent(rawValue.join("="));
+    }
+  }
+  return null;
+}
 
 function getDirectCallbackUrl(env, requestUrl) {
   const value = env?.AGENTARTS_OAUTH_CALLBACK_URL?.trim();
@@ -82,7 +96,9 @@ export async function onRequestGet({ request, env }) {
   try {
     const upstreamUrl = buildCallbackUpstreamUrl(env, request.url);
     const headers = new Headers({ Accept: "text/html" });
-    const authorization = env?.AGENTARTS_OAUTH_CALLBACK_AUTHORIZATION?.trim();
+    const authorization =
+      env?.AGENTARTS_OAUTH_CALLBACK_AUTHORIZATION?.trim() ||
+      getCookieValue(request, CALLBACK_AUTH_COOKIE);
     if (authorization) {
       headers.set("Authorization", authorization);
     }

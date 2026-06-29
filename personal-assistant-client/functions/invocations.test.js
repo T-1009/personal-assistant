@@ -69,6 +69,14 @@ describe("Cloudflare Pages invocations proxy", () => {
     });
     expect(response.headers.get("Content-Type")).toContain("text/event-stream");
     expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_auth=Bearer%20test-jwt",
+    );
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "Path=/auth/callback/m365-calendar",
+    );
+    expect(response.headers.get("Set-Cookie")).toContain("HttpOnly");
+    expect(response.headers.get("Set-Cookie")).toContain("SameSite=Lax");
     expect(await response.text()).toBe("data: token\n\n");
   });
 
@@ -212,7 +220,7 @@ describe("Cloudflare Pages invocations proxy", () => {
     );
   });
 
-  it("BFF callback forwards only server-side callback headers", async () => {
+  it("BFF callback uses callback auth cookie without forwarding browser auth", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       new Response("<html>done</html>", {
         status: 200,
@@ -227,7 +235,8 @@ describe("Cloudflare Pages invocations proxy", () => {
         method: "GET",
         headers: {
           Authorization: "Bearer browser-token",
-          Cookie: "session=browser-cookie",
+          Cookie:
+            "session=browser-cookie; pa_oauth2_callback_auth=Bearer%20callback-token",
         },
       },
     );
@@ -245,7 +254,9 @@ describe("Cloudflare Pages invocations proxy", () => {
       "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
     );
     expect(forwardedRequest.headers.get("Accept")).toBe("text/html");
-    expect(forwardedRequest.headers.get("Authorization")).toBeNull();
+    expect(forwardedRequest.headers.get("Authorization")).toBe(
+      "Bearer callback-token",
+    );
     expect(forwardedRequest.headers.get("Cookie")).toBeNull();
     expect(forwardedRequest.headers.get("x-pa-oauth2-callback-secret")).toBe(
       "bff-secret",
@@ -254,7 +265,7 @@ describe("Cloudflare Pages invocations proxy", () => {
     expect(await response.text()).toBe("<html>done</html>");
   });
 
-  it("BFF callback can attach server-side Authorization when configured", async () => {
+  it("BFF callback prefers configured server-side Authorization over cookie", async () => {
     const mockFetch = vi.fn().mockResolvedValue(new Response("<html>done</html>"));
     globalThis.fetch = mockFetch;
 
@@ -264,6 +275,7 @@ describe("Cloudflare Pages invocations proxy", () => {
         method: "GET",
         headers: {
           Authorization: "Bearer browser-token",
+          Cookie: "pa_oauth2_callback_auth=Bearer%20callback-token",
         },
       },
     );

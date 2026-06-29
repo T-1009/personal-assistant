@@ -8,8 +8,9 @@ related: ["feature-15-calendar-agentarts-full-oauth2"]
 > 2026-06-28 implementation note：已采用 architectural fix。Calendar OAuth2
 > completion 从多个 Web Chat tab 迁移到 Cloudflare Pages BFF + Service-owned
 > callback。OAuth provider 先落到 `/auth/callback/m365-calendar` Pages Function；
-> BFF server-side 转发 callback query 到 Service，并可注入 shared secret。Web Chat
-> 只接收 state-scoped UI status，不再调用 legacy
+> BFF server-side 转发 callback query 到 Service；通过 callback-only HttpOnly
+> auth cookie 或可选 service Authorization 通过 AgentArts Gateway，并可注入 shared
+> secret。Web Chat 只接收 state-scoped UI status，不再调用 legacy
 > `POST /invocations/auth/oauth2/complete`，callback 也不再依赖 MSAL
 > `localStorage` token cache。
 
@@ -132,7 +133,7 @@ sequenceDiagram
     User->>UI: 点击 Calendar AuthCard
     UI-->>User: 打开 auth_url
     User->>BFF: Microsoft redirect<br/>GET /auth/callback/m365-calendar
-    BFF->>Agent: server-side GET /auth/oauth2/callback/m365-calendar<br/>BFF shared secret
+    BFF->>Agent: server-side GET /auth/oauth2/callback/m365-calendar<br/>callback auth + BFF shared secret
     Agent->>Agent: 验证 signed state<br/>user_id / session_id / provider / nonce
     Agent->>DB: mark nonce active / completed
     Agent->>IdSvc: complete_resource_token_auth(session_uri, state.user_id)
@@ -150,8 +151,9 @@ sequenceDiagram
   complete 业务逻辑。
 - 多个 Web Chat tab 可共享 `m365-calendar-auth` BroadcastChannel，但 channel 上只传播
   complete 后的 UI status，不传播需要任一 tab 执行业务 complete 的 envelope。
-- Cloudflare Pages BFF 不转发浏览器 Authorization / Cookie；如需鉴权，使用 BFF
-  自己的 shared secret / service token。
+- Cloudflare Pages BFF 不把 callback 请求中的浏览器 Authorization / Cookie 原样透传给
+  upstream；通过 Gateway 时使用 `/invocations` 阶段写入的短时 callback-only
+  HttpOnly auth cookie，或显式配置的 service token。
 - callback result page 只有在后端 complete 已完成 / 失败后，才展示最终状态。
 - replay / duplicate callback 状态写入 PostgreSQL；本地未配置数据库时才使用进程内
   fallback。

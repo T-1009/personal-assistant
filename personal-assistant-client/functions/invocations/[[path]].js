@@ -5,6 +5,23 @@ const FORWARDED_HEADERS = [
   "x-hw-agentarts-session-id",
   "x-hw-agentgateway-user-id",
 ];
+const CALLBACK_AUTH_COOKIE = "pa_oauth2_callback_auth";
+const CALLBACK_AUTH_COOKIE_MAX_AGE_SECONDS = 600;
+const CALLBACK_AUTH_COOKIE_PATH = "/auth/callback/m365-calendar";
+
+function buildCallbackAuthCookie(authorization) {
+  const value = authorization?.trim();
+  if (!value) return null;
+
+  return [
+    `${CALLBACK_AUTH_COOKIE}=${encodeURIComponent(value)}`,
+    `Max-Age=${CALLBACK_AUTH_COOKIE_MAX_AGE_SECONDS}`,
+    `Path=${CALLBACK_AUTH_COOKIE_PATH}`,
+    "HttpOnly",
+    "Secure",
+    "SameSite=Lax",
+  ].join("; ");
+}
 
 function getInvocationsUrl(env) {
   const value = env?.AGENTARTS_INVOCATIONS_URL?.trim();
@@ -73,6 +90,12 @@ export async function proxyInvocationsRequest({
     const upstreamRequest = new Request(upstreamUrl, init);
     const upstreamResponse = await fetch(upstreamRequest);
     const responseHeaders = new Headers(upstreamResponse.headers);
+    const callbackAuthCookie = buildCallbackAuthCookie(
+      request.headers.get("Authorization"),
+    );
+    if (callbackAuthCookie) {
+      responseHeaders.append("Set-Cookie", callbackAuthCookie);
+    }
 
     responseHeaders.set("Cache-Control", "no-store");
 
