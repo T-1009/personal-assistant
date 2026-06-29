@@ -290,7 +290,7 @@ describe("Cloudflare Pages invocations proxy", () => {
     expect(await response.text()).toBe("<html>done</html>");
   });
 
-  it("BFF callback prefers configured server-side Authorization over cookie", async () => {
+  it("BFF callback does not forward browser callback Authorization", async () => {
     const mockFetch = vi.fn().mockResolvedValue(new Response("<html>done</html>"));
     globalThis.fetch = mockFetch;
 
@@ -300,23 +300,17 @@ describe("Cloudflare Pages invocations proxy", () => {
         method: "GET",
         headers: {
           Authorization: "Bearer browser-token",
-          Cookie: "pa_oauth2_callback_auth=Bearer%20callback-token",
         },
       },
     );
 
     await onRequestGetCalendarCallback({
       request,
-      env: {
-        ...env,
-        AGENTARTS_OAUTH_CALLBACK_AUTHORIZATION: "Bearer service-token",
-      },
+      env,
     });
     const forwardedRequest = mockFetch.mock.calls[0][0];
 
-    expect(forwardedRequest.headers.get("Authorization")).toBe(
-      "Bearer service-token",
-    );
+    expect(forwardedRequest.headers.get("Authorization")).toBeNull();
   });
 
   it("BFF callback returns a broadcasting failure page when upstream fails", async () => {

@@ -892,9 +892,9 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 
 Cloudflare Pages BFF 可复用该 Gateway full Runtime path 转发 Calendar OAuth2
 callback，也可以通过 `AGENTARTS_OAUTH_CALLBACK_URL` 配置 direct Service callback
-upstream。无论走哪条 upstream，Service 都以 signed state 中的 `user_id` 作为
-`complete_resource_token_auth` ownership，BFF secret / service token 只保护
-BFF-to-Service 通道。
+upstream。无论走哪条 upstream，Service 都用 signed state 做 callback 绑定和 replay
+control，并以 callback context 恢复的 `Authorization` user token 调用
+`complete_resource_token_auth`；不要用 service token 覆盖该 user token。
 
 #### 11.7.2 404 判别
 

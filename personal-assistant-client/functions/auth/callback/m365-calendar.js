@@ -88,10 +88,6 @@ export async function onRequestGet({ request, env }) {
     const upstreamUrl = buildCallbackUpstreamUrl(env, request.url);
     const headers = new Headers({ Accept: "text/html" });
     applyCallbackContextHeaders(headers, request);
-    const authorization = env?.AGENTARTS_OAUTH_CALLBACK_AUTHORIZATION?.trim();
-    if (authorization) {
-      headers.set("Authorization", authorization);
-    }
     const secret = env?.OAUTH2_CALLBACK_BFF_SECRET?.trim();
     if (secret) {
       headers.set(CALLBACK_SECRET_HEADER, secret);

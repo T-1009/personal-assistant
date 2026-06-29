@@ -52,7 +52,7 @@ Cloudflare Pages 使用 file-based routing。对本项目来说，静态资源�
 |------|------|
 | `personal-assistant-client/functions/invocations.js` | `/invocations` 的精确入口，当前只导出 `onRequestPost`，作为根路径 shim |
 | `personal-assistant-client/functions/invocations/[[path]].js` | 共享的 proxy 实现，处理 `/invocations/*` 的 GET/POST，请求会按 suffix 透传到 AgentArts Runtime 子路径；当请求携带 Gateway context 时，下发短时 callback-only HttpOnly cookies |
-| `personal-assistant-client/functions/auth/callback/m365-calendar.js` | Calendar OAuth2 BFF callback；不直接转发 callback 请求中的浏览器 Authorization/Cookie，只转发 callback query，并用 callback context cookies 或可选 service Authorization 通过 Gateway |
+| `personal-assistant-client/functions/auth/callback/m365-calendar.js` | Calendar OAuth2 BFF callback；不直接转发 callback 请求中的浏览器 Authorization/Cookie，只转发 callback query，并用 callback context cookies 恢复 Gateway context headers |
 
 `functions/invocations.js` 和 `functions/invocations/[[path]].js` 不是两套代理逻辑，
 而是“一个精确入口 + 一个通配入口”的组合。前者把根路径请求挂到同一套 proxy
@@ -184,11 +184,11 @@ Required / recommended Pages runtime variables：
   `OAUTH2_CALLBACK_BFF_SECRET` 相同。
 - `AGENTARTS_OAUTH_CALLBACK_URL`：可选 direct Service callback upstream；未配置时
   BFF 复用 `AGENTARTS_INVOCATIONS_URL` 构造 Gateway full Runtime callback path。
-- `AGENTARTS_OAUTH_CALLBACK_AUTHORIZATION`：可选 server-side Authorization header；
-  仅在 callback 仍需通过 Gateway policy 且平台提供 service token 时使用。未配置时，
-  BFF 使用 `/invocations` 正常登录请求预先写入的 callback-only HttpOnly cookies
-  恢复 Gateway 所需的 `Authorization`、`x-hw-agentarts-session-id` 和
-  `X-HW-AgentGateway-User-Id`。
+BFF 使用 `/invocations` 正常登录请求预先写入的 callback-only HttpOnly cookies
+恢复 Gateway 所需的 `Authorization`、`x-hw-agentarts-session-id` 和
+`X-HW-AgentGateway-User-Id`。Calendar complete 的 `Authorization` 必须是同一用户的
+inbound user token；不要用 service token 覆盖，否则 AgentArts Identity 可能返回
+`AgentIdentityTokenVault.1002` identity mismatch。
 
 API Token 最小权限为目标 Account 的 `Cloudflare Pages: Edit`。
 

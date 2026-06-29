@@ -32,6 +32,7 @@ from pydantic import (  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 from app.auth import (  # noqa: E402
+    extract_authorization_user_token,
     extract_gateway_session_id,
     extract_gateway_user_id,
     extract_workload_access_token,
@@ -652,9 +653,11 @@ async def calendar_oauth2_callback(request: Request):
         )
 
     try:
+        user_token = extract_authorization_user_token(request)
         logger.info(
             "Calling Identity complete_resource_token_auth from callback. "
-            "provider=%s user_id=%s session_uri_prefix=%s state_session_id=%s",
+            "provider=%s user_id=%s identity_strategy=user_token "
+            "session_uri_prefix=%s state_session_id=%s",
             provider,
             state_claims.user_id,
             _redacted_prefix(callback.session_uri),
@@ -662,11 +665,29 @@ async def calendar_oauth2_callback(request: Request):
         )
         client = IdentityClient(region=get_region())
         # The BFF only protects transport to the callback endpoint. Signed state
-        # remains the completion trust boundary, preserving the user identity
-        # from the request that created the auth session.
+        # still binds the callback to the request that created the auth session,
+        # while AgentArts Identity verifies the session against the original
+        # inbound user token.
         client.complete_resource_token_auth(
             session_uri=callback.session_uri,
-            user_identifier=UserIdentifier(user_id=state_claims.user_id),
+            user_identifier=UserIdentifier(user_token=user_token),
+        )
+    except HTTPException as e:
+        logger.warning(
+            "Calendar OAuth2 backend callback missing user token provider=%s "
+            "user_id=%s status_code=%s detail=%s",
+            provider,
+            state_claims.user_id,
+            e.status_code,
+            e.detail,
+        )
+        await store.clear_active(state_claims)
+        return _oauth2_callback_response(
+            request,
+            status="failed",
+            provider=provider,
+            message="请保持原聊天窗口处于登录状态后，再重新完成日历授权。",
+            state=state,
         )
     except Exception as e:
         logger.error(

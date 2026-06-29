@@ -53,7 +53,7 @@ sequenceDiagram
     API->>API: verify signed state
     API->>Store: INSERT nonce=N status=active
     Store-->>API: started
-    API->>IdSvc: complete_resource_token_auth(U, state.user_id)
+    API->>IdSvc: complete_resource_token_auth(U, Authorization user_token)
     API->>Store: UPDATE nonce=N status=completed
     API-->>BFF: result HTML/JSON
     BFF-->>Browser: result page posts/broadcasts UI status

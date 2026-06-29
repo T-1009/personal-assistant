@@ -143,5 +143,5 @@ Feature 15 架构文档已经强调 `UserIdentifier` 的 `user_id` 与 `user_tok
 |------|--------|
 | `personal-assistant-service/app/main.py` | 旧 `/invocations/auth/oauth2/complete` 已移除；当前使用 Service-owned callback |
 | `personal-assistant-service/app/auth.py` | `extract_authorization_user_token`、`extract_gateway_user_id`、`extract_workload_access_token` |
-| `personal-assistant-service/tests/test_oauth2_callback.py` | Service-owned callback 当前断言 signed-state user_id path |
+| `personal-assistant-service/tests/test_oauth2_callback.py` | Service-owned callback 当前断言 production-like user_token path |
 | `personal-assistant-meta/architecture/auth/feature-15-calendar-oauth2-architecture.md` | `UserIdentifier` 参数约束和 production path 说明 |
