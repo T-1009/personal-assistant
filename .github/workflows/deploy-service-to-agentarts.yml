@@ -105,6 +105,7 @@ jobs:
           LLM_MODEL: ${{ vars.LLM_MODEL }}
           LLM_CREDENTIAL_PROVIDER: ${{ vars.LLM_CREDENTIAL_PROVIDER }}
           POSTGRES_DSN: ${{ secrets.POSTGRES_DSN }}
+          OAUTH2_CALENDAR_CALLBACK_URL: ${{ vars.OAUTH2_CALENDAR_CALLBACK_URL }}
         run: |
           cd personal-assistant-service
 
@@ -116,6 +117,7 @@ jobs:
             LLM_MODEL \
             LLM_CREDENTIAL_PROVIDER \
             POSTGRES_DSN \
+            OAUTH2_CALENDAR_CALLBACK_URL \
             AGENTARTS_IMAGE_URL
           do
             test -n "$(printenv "$name")" || {
