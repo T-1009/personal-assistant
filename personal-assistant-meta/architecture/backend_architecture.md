@@ -65,10 +65,10 @@ AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。�
 - `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**，也是浏览器 Web Chat 的生产流式入口。
 - Web Chat 对话调用收敛到 `POST /invocations` 单一路径，通过 JSON body 字段区分同步或流式模式。
 - `PREFIX_MATCH` 子路径映射规则：`/runtimes/{runtime_name}/invocations/<suffix>` 映射到容器内 `/<suffix>`。
-- Calendar OAuth2 callback 的公网 URL 是 React callback shell
-  `GET /auth/callback/m365-calendar`；该 shell 携带 Web Chat Authorization header 调用
-  `/invocations/auth/oauth2/callback/m365-calendar`，再通过 Gateway 映射到 FastAPI
-  `GET /auth/oauth2/callback/m365-calendar`。
+- Calendar OAuth2 callback 的公网 URL 是 Cloudflare Pages BFF
+  `GET /auth/callback/m365-calendar`；BFF server-side 转发 callback query 到 FastAPI
+  `GET /auth/oauth2/callback/m365-calendar`，并可注入
+  `X-PA-OAuth2-Callback-Secret` 做 BFF-to-Service trust。
 - `/invocations/playground` 可通过 Gateway 的完整 Runtime 子路径访问，但 Cloudflare Pages Function 当前不代理该路径。
 
 > **Inbound authentication**：Gateway 使用 `authorizer_type: CUSTOM_JWT`。
@@ -167,10 +167,10 @@ mount_chainlit(app=app, target=..., path="/invocations/playground")
 |------|------|--------|------|-------------|
 | `/ping` | GET | AgentArts 平台（控制面） | 健康检查 | ❌ 平台内部 |
 | `/invocations` | POST | AgentArts SDK / OfficeClaw / 浏览器 | `stream: false` 或未传返回 JSON；`stream: true` 返回 SSE | ✅（PREFIX_MATCH） |
-| `/auth/oauth2/callback/m365-calendar` | GET | React callback shell authenticated request | 完成 Calendar Resource Token Auth session binding，并返回 result | ✅ 由 React shell 通过 `/invocations/auth/oauth2/callback/m365-calendar` 进入 Gateway |
+| `/auth/oauth2/callback/m365-calendar` | GET | Cloudflare Pages BFF server-side callback forward | 完成 Calendar Resource Token Auth session binding，并返回 result | ✅ 由 BFF direct upstream 或 Gateway full Runtime path 进入 |
 | `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅ 通过完整 Runtime path；Cloudflare Function 不代理 |
 
-> **注意**：`/feishu/webhook` 等需要独立公网 URL 的路由无法直接通过 Gateway root path 暴露。Calendar OAuth2 的公网入口由 React callback shell 提供，内部 authenticated fetch 通过 `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` 命中 Gateway policy，容器内 route 保持 Auth 语义路径。
+> **注意**：`/feishu/webhook` 等需要独立公网 URL 的路由无法直接通过 Gateway root path 暴露。Calendar OAuth2 的公网入口由 Cloudflare Pages BFF 提供；BFF 可直接调用 Service callback upstream，或通过 `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` 命中 Gateway policy，容器内 route 保持 Auth 语义路径。
 
 ### 2.3 AgentArts Gateway Header 注入
 

@@ -1,8 +1,4 @@
-import {
-  BrowserCacheLocation,
-  PublicClientApplication,
-  type Configuration,
-} from "@azure/msal-browser";
+import { PublicClientApplication, type Configuration } from "@azure/msal-browser";
 import { getPublicConfig } from "@/config";
 import { useAuthStore } from "@/stores/auth-store";
 
@@ -12,12 +8,6 @@ const msalConfig: Configuration = {
     clientId: publicConfig.entraClientId,
     authority: `https://login.microsoftonline.com/${publicConfig.entraTenantId}`,
     redirectUri: typeof window !== "undefined" ? window.location.origin : "",
-  },
-  cache: {
-    // Calendar OAuth returns to a noopener callback tab. MSAL localStorage is
-    // the supported same-origin cache that lets that tab acquire the Web Chat
-    // ID token silently without passing bearer tokens through postMessage.
-    cacheLocation: BrowserCacheLocation.LocalStorage,
   },
 };
 

@@ -1,3 +1,4 @@
+import hmac
 import html as html_lib
 import json
 import logging
@@ -6,8 +7,6 @@ from contextlib import asynccontextmanager
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Literal
-
-from app.logging_config import RequestLoggingMiddleware
 
 logger = logging.getLogger("app")
 
@@ -37,16 +36,16 @@ from app.auth import (  # noqa: E402
     extract_gateway_user_id,
     extract_workload_access_token,
 )
+from app.logging_config import RequestLoggingMiddleware  # noqa: E402
+from app.oauth2_callback_store import OAuth2CallbackStore  # noqa: E402
 from app.oauth2_state import (  # noqa: E402
     OAuth2StateError,
-    clear_oauth2_state_active,
     create_oauth2_state,
-    is_oauth2_state_completed,
-    mark_oauth2_state_active,
-    mark_oauth2_state_completed,
     verify_oauth2_state,
 )
 from app.settings import get_settings  # noqa: E402
+
+OAUTH2_CALLBACK_BFF_SECRET_HEADER = "x-pa-oauth2-callback-secret"
 
 
 class InvocationRequest(BaseModel):
@@ -91,7 +90,7 @@ class OAuth2CallbackQuery(BaseModel):
 
 
 class OAuth2CallbackResponse(BaseModel):
-    """Calendar OAuth2 callback status returned to the React callback shell."""
+    """Calendar OAuth2 callback status returned to the BFF result page."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -114,7 +113,7 @@ OAUTH2_CALLBACK_RESPONSES = {
     200: {
         "description": (
             "Callback status as HTML for direct browser opens or JSON for the "
-            "React callback shell."
+            "local development fallback."
         ),
         "content": {
             "text/html": {"schema": {"type": "string"}},
@@ -185,6 +184,19 @@ def _redacted_prefix(value: str | None, *, length: int = 32) -> str | None:
     if not value:
         return None
     return value[:length]
+
+
+def _verify_oauth2_callback_bff_secret(request: Request) -> None:
+    """Verify the optional server-to-server callback secret from the BFF."""
+    settings = get_settings()
+    expected = settings.oauth2_callback_bff_secret
+    if not expected:
+        return
+
+    supplied = request.headers.get(OAUTH2_CALLBACK_BFF_SECRET_HEADER)
+    if not supplied or not hmac.compare_digest(supplied, expected):
+        logger.warning("OAuth2 callback rejected due to invalid BFF secret")
+        raise HTTPException(status_code=403, detail="invalid OAuth2 callback secret")
 
 
 def _oauth2_callback_page(
@@ -309,7 +321,7 @@ def _oauth2_callback_response(
     message: str,
     state: str | None,
 ) -> HTMLResponse | JSONResponse:
-    """Return callback status as JSON for the React shell, HTML for direct opens."""
+    """Return callback status as JSON for local fallback, HTML for direct opens."""
     payload = {
         "type": "m365-calendar-auth",
         "requestId": state or "",
@@ -349,6 +361,7 @@ async def lifespan(app: FastAPI):
     # the first request places the Gateway workload token in Runtime Context.
     from app.llm_config import validate_model_config
 
+    settings = get_settings()
     try:
         validate_model_config()
     except ValueError as e:
@@ -358,10 +371,14 @@ async def lifespan(app: FastAPI):
     handler = get_agent_handler()
     await handler.startup()
     app.state.agent_handler = handler
+    oauth2_callback_store = OAuth2CallbackStore(settings=settings)
+    await oauth2_callback_store.startup()
+    app.state.oauth2_callback_store = oauth2_callback_store
 
     try:
         yield
     finally:
+        await oauth2_callback_store.shutdown()
         await handler.shutdown()
 
 
@@ -531,6 +548,7 @@ async def invocations(request: Request):
 )
 async def calendar_oauth2_callback(request: Request):
     """Complete Calendar OAuth2 from the backend-owned callback endpoint."""
+    _verify_oauth2_callback_bff_secret(request)
     settings = get_settings()
     provider = settings.m365_calendar_provider_name
     try:
@@ -596,7 +614,12 @@ async def calendar_oauth2_callback(request: Request):
             state=state,
         )
 
-    if is_oauth2_state_completed(state_claims):
+    store = getattr(request.app.state, "oauth2_callback_store", None)
+    if store is None:
+        store = OAuth2CallbackStore(settings=settings)
+
+    begin_status = await store.begin_completion(state_claims)
+    if begin_status == "completed":
         logger.info(
             "Calendar OAuth2 callback replay ignored provider=%s user_id=%s "
             "state_prefix=%s",
@@ -612,7 +635,7 @@ async def calendar_oauth2_callback(request: Request):
             state=state,
         )
 
-    if not mark_oauth2_state_active(state_claims):
+    if begin_status == "active":
         logger.info(
             "Calendar OAuth2 callback duplicate already active provider=%s "
             "user_id=%s state_prefix=%s",
@@ -638,9 +661,9 @@ async def calendar_oauth2_callback(request: Request):
             state_claims.session_id,
         )
         client = IdentityClient(region=get_region())
-        # The React callback shell carries Authorization only to pass Gateway
-        # auth. Signed state remains the completion trust boundary, preserving
-        # the user identity from the request that created the auth session.
+        # The BFF only protects transport to the callback endpoint. Signed state
+        # remains the completion trust boundary, preserving the user identity
+        # from the request that created the auth session.
         client.complete_resource_token_auth(
             session_uri=callback.session_uri,
             user_identifier=UserIdentifier(user_id=state_claims.user_id),
@@ -662,7 +685,7 @@ async def calendar_oauth2_callback(request: Request):
             )
         else:
             message = "日历授权完成失败，请重新发起授权。"
-        clear_oauth2_state_active(state_claims)
+        await store.clear_active(state_claims)
         return _oauth2_callback_response(
             request,
             status="failed",
@@ -671,7 +694,7 @@ async def calendar_oauth2_callback(request: Request):
             state=state,
         )
 
-    mark_oauth2_state_completed(state_claims)
+    await store.mark_completed(state_claims)
     logger.info(
         "Calendar OAuth2 backend callback complete succeeded provider=%s user_id=%s",
         provider,

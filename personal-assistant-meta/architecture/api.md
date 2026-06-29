@@ -136,7 +136,7 @@ Gateway 完成 JWT validation，并在转发到容器时注入或提供平台 he
 |--------|-------------|--------|-------------------------|------|
 | `GET` | `/ping` | AgentArts 控制面、本地开发者 | 否 | Liveness health check，返回 `{"status":"ok"}` |
 | `POST` | `/invocations` | Web Chat、AgentArts SDK、其他 AgentArts Client | 是 | 统一对话入口，支持同步 JSON 和 SSE |
-| `GET` | `/auth/oauth2/callback/m365-calendar` | React callback shell authenticated request | 是，通过 Gateway full Runtime path | 完成 Calendar Resource Token Auth session binding，并返回 callback result |
+| `GET` | `/auth/oauth2/callback/m365-calendar` | Cloudflare Pages BFF server-side callback forward | 是，通过 BFF direct upstream 或 Gateway full Runtime path | 完成 Calendar Resource Token Auth session binding，并返回 callback result |
 | `GET` | `/invocations/playground` | 开发者 | 是，通过 Gateway full Runtime path | Redirect 到 `/invocations/playground/` |
 | `GET` / WebSocket | `/invocations/playground/*` | Chainlit Browser Client | 是，通过 Gateway full Runtime path | Chainlit Playground 静态资源、HTTP API 与 WebSocket |
 
@@ -216,12 +216,13 @@ flowchart LR
     Vite -->|"same path + dev-user header"| FastAPI["FastAPI<br/>POST :8080/invocations"]
 ```
 
-Calendar OAuth2 本地 callback 先进入 React callback shell，再由 shell 使用
-`/invocations` proxy 调后端 callback API：
+Calendar OAuth2 production callback 由 Cloudflare Pages Function BFF 接住，
+server-side 转发到 Service callback API。Vite 本地开发没有 Pages Function，
+因此保留 React fallback shell 调 `/invocations` proxy：
 
 ```text
 http://localhost:5173/auth/callback/m365-calendar
--> React Callback Shell
+-> React fallback shell
 -> http://localhost:5173/invocations/auth/oauth2/callback/m365-calendar
 -> http://localhost:8080/auth/oauth2/callback/m365-calendar
 ```
@@ -233,8 +234,8 @@ http://localhost:5173/auth/callback/m365-calendar
 | Cloudflare production | `/invocations` | Pages Function → Gateway full Runtime path | `/invocations` | 是 |
 | Wrangler Pages local preview | `/invocations` | Local Pages Function → production Gateway | `/invocations` | 是，需要有效 JWT |
 | Vite + local Backend | `/invocations` | Vite Proxy → `localhost:8080` | `/invocations` | 是 |
-| Vite + local Calendar OAuth callback shell | `/auth/callback/m365-calendar` | React Shell → Vite `/invocations` proxy | `/auth/oauth2/callback/m365-calendar` | 是 |
-| Cloudflare Calendar OAuth callback shell | `/auth/callback/m365-calendar` | React Shell → Pages `/invocations` Function → Gateway full Runtime path | `/auth/oauth2/callback/m365-calendar` | 是 |
+| Vite + local Calendar OAuth fallback shell | `/auth/callback/m365-calendar` | React fallback shell → Vite `/invocations` proxy | `/auth/oauth2/callback/m365-calendar` | 是 |
+| Cloudflare Calendar OAuth BFF callback | `/auth/callback/m365-calendar` | Pages Function BFF → direct callback upstream 或 Gateway full Runtime path | `/auth/oauth2/callback/m365-calendar` | 是 |
 | Backend direct local | `/invocations` | 无 | `/invocations` | 是 |
 | Backend Playground local | `/invocations/playground` | 无 | `/invocations/playground` | 是 |
 | Gateway direct invocation | `/runtimes/personal-assistant/invocations` | Gateway | `/invocations` | 是，需要有效 JWT |

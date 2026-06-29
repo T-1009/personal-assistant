@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     oauth2_calendar_callback_url: AnyHttpUrl | None = (
         "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar"
     )
+    oauth2_callback_bff_secret: str | None = None
     oauth2_state_secret: str = "dev-only-calendar-oauth2-state-secret"
     oauth2_pending_auth_ttl_seconds: int = Field(default=600, gt=0)
     graph_base_url: AnyHttpUrl = "https://graph.microsoft.com/v1.0/me"
@@ -60,6 +61,7 @@ class Settings(BaseSettings):
         "sqlite_db_path",
         "iam_users_endpoint",
         "oauth2_calendar_callback_url",
+        "oauth2_callback_bff_secret",
         mode="before",
     )
     @classmethod

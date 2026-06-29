@@ -1,15 +1,14 @@
 import {
+  CALENDAR_OAUTH_FAILED_MESSAGE,
   CALENDAR_OAUTH_PENDING_MESSAGE,
   CALENDAR_OAUTH_PROVIDER,
-  formatCalendarOAuthError,
   isCalendarOAuthResponse,
   openCalendarOAuthChannel,
   type CalendarOAuthResponse,
 } from "@/lib/auth/calendar-oauth-bridge";
-import { acquireIdTokenSilently } from "@/lib/auth";
-import { buildHeaders } from "@/lib/chat/chat-api-client";
-import { useAuthStore } from "@/stores/auth-store";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+
+type CallbackStatus = "pending" | "complete" | "failed";
 
 export function buildBackendCalendarCallbackUrl(
   origin = window.location.origin,
@@ -30,46 +29,7 @@ export function getCalendarCallbackState(
   return params.get("state") || params.get("custom_state") || null;
 }
 
-async function getCalendarCallbackToken(): Promise<string | null> {
-  return useAuthStore.getState().idToken ?? (await acquireIdTokenSilently());
-}
-
-async function completeCalendarOAuthCallback(
-  search = window.location.search,
-): Promise<CalendarOAuthResponse> {
-  // Microsoft lands on this React route, but AgentArts Gateway still expects
-  // the same Web Chat ID token used by normal /invocations calls. The shell
-  // only transports the signed callback params; backend state decides ownership.
-  const idToken = await getCalendarCallbackToken();
-  if (!idToken) {
-    throw new Error("Authentication required");
-  }
-
-  const headers = buildHeaders(idToken);
-  headers.Accept = "application/json";
-  delete headers["Content-Type"];
-
-  const response = await fetch(
-    buildBackendCalendarCallbackUrl(window.location.origin, search),
-    {
-      method: "GET",
-      headers,
-    },
-  );
-  if (!response.ok) {
-    throw new Error(`OAuth2 callback failed: ${response.status}`);
-  }
-
-  const data = (await response.json()) as unknown;
-  if (!isCalendarOAuthResponse(data)) {
-    throw new Error("Invalid OAuth2 callback response");
-  }
-  return data;
-}
-
 function broadcastCalendarOAuthStatus(response: CalendarOAuthResponse) {
-  // Broadcast only backend-returned UI status. Completion already happened on
-  // the service, so other tabs cannot race to finish the same OAuth2 session.
   try {
     const channel = openCalendarOAuthChannel();
     channel?.postMessage(response);
@@ -81,10 +41,12 @@ function broadcastCalendarOAuthStatus(response: CalendarOAuthResponse) {
 }
 
 export default function M365CalendarCallbackPage() {
-  const startedRef = useRef(false);
-  const [status, setStatus] = useState<"pending" | "complete" | "failed">(
-    "pending",
+  const params = useMemo(
+    () => new URLSearchParams(window.location.search),
+    [],
   );
+  const startedRef = useRef(false);
+  const [status, setStatus] = useState<CallbackStatus>("pending");
   const [message, setMessage] = useState(CALENDAR_OAUTH_PENDING_MESSAGE);
 
   useEffect(() => {
@@ -92,43 +54,54 @@ export default function M365CalendarCallbackPage() {
     startedRef.current = true;
 
     let cancelled = false;
-    async function complete() {
+    async function completeViaLocalProxyFallback() {
+      const callbackState = getCalendarCallbackState();
       try {
-        const response = await completeCalendarOAuthCallback();
-        if (cancelled) return;
-        if (response.status === "complete" || response.status === "failed") {
-          setStatus(response.status);
-          setMessage(response.message);
-          broadcastCalendarOAuthStatus(response);
-          if (response.status === "complete") {
-            window.setTimeout(() => window.close(), 1200);
-          }
-        } else {
-          setStatus("pending");
-          setMessage(response.message);
+        const response = await fetch(
+          buildBackendCalendarCallbackUrl(window.location.origin, window.location.search),
+          { headers: { Accept: "application/json" } },
+        );
+        if (!response.ok) {
+          throw new Error(`OAuth2 callback failed: ${response.status}`);
         }
-      } catch (error) {
+        const data = (await response.json()) as unknown;
+        if (!isCalendarOAuthResponse(data)) {
+          throw new Error("Invalid OAuth2 callback response");
+        }
         if (cancelled) return;
-        const message = formatCalendarOAuthError(error);
-        const callbackState = getCalendarCallbackState();
+        if (data.status === "pending") {
+          setStatus("pending");
+          setMessage(data.message);
+          return;
+        }
+
+        setStatus(data.status);
+        setMessage(data.message);
+        broadcastCalendarOAuthStatus(data);
+        if (data.status === "complete") {
+          window.setTimeout(() => window.close(), 1200);
+        }
+      } catch {
+        if (cancelled) return;
+        const errorMessage = params.get("error_description") || CALENDAR_OAUTH_FAILED_MESSAGE;
         setStatus("failed");
-        setMessage(message);
+        setMessage(errorMessage);
         broadcastCalendarOAuthStatus({
           type: "m365-calendar-auth",
           requestId: callbackState ?? "",
           provider: CALENDAR_OAUTH_PROVIDER,
           status: "failed",
-          message,
+          message: errorMessage,
           state: callbackState,
         });
       }
     }
 
-    void complete();
+    void completeViaLocalProxyFallback();
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [params]);
 
   const isComplete = status === "complete";
   const isFailed = status === "failed";

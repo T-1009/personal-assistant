@@ -5,6 +5,10 @@ import {
   onRequestGet as onRequestGetNested,
   onRequestPost as onRequestPostNested,
 } from "./invocations/[[path]].js";
+import {
+  buildCallbackUpstreamUrl,
+  onRequestGet as onRequestGetCalendarCallback,
+} from "./auth/callback/m365-calendar.js";
 
 describe("Cloudflare Pages invocations proxy", () => {
   const originalFetch = globalThis.fetch;
@@ -180,5 +184,120 @@ describe("Cloudflare Pages invocations proxy", () => {
     );
     expect(response.headers.get("Content-Type")).toContain("text/html");
     expect(await response.text()).toBe("<html>done</html>");
+  });
+
+  it("builds the BFF callback upstream URL from the public callback path", () => {
+    expect(
+      buildCallbackUpstreamUrl(
+        env,
+        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      ).toString(),
+    ).toBe(
+      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+    );
+  });
+
+  it("prefers a direct service callback URL when configured", () => {
+    expect(
+      buildCallbackUpstreamUrl(
+        {
+          ...env,
+          AGENTARTS_OAUTH_CALLBACK_URL:
+            "https://service.example.com/auth/oauth2/callback/m365-calendar",
+        },
+        "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      ).toString(),
+    ).toBe(
+      "https://service.example.com/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+    );
+  });
+
+  it("BFF callback forwards only server-side callback headers", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      new Response("<html>done</html>", {
+        status: 200,
+        headers: { "Content-Type": "text/html" },
+      }),
+    );
+    globalThis.fetch = mockFetch;
+
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer browser-token",
+          Cookie: "session=browser-cookie",
+        },
+      },
+    );
+
+    const response = await onRequestGetCalendarCallback({
+      request,
+      env: {
+        ...env,
+        OAUTH2_CALLBACK_BFF_SECRET: "bff-secret",
+      },
+    });
+    const forwardedRequest = mockFetch.mock.calls[0][0];
+
+    expect(forwardedRequest.url).toBe(
+      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+    );
+    expect(forwardedRequest.headers.get("Accept")).toBe("text/html");
+    expect(forwardedRequest.headers.get("Authorization")).toBeNull();
+    expect(forwardedRequest.headers.get("Cookie")).toBeNull();
+    expect(forwardedRequest.headers.get("x-pa-oauth2-callback-secret")).toBe(
+      "bff-secret",
+    );
+    expect(response.headers.get("Content-Type")).toContain("text/html");
+    expect(await response.text()).toBe("<html>done</html>");
+  });
+
+  it("BFF callback can attach server-side Authorization when configured", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(new Response("<html>done</html>"));
+    globalThis.fetch = mockFetch;
+
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      {
+        method: "GET",
+        headers: {
+          Authorization: "Bearer browser-token",
+        },
+      },
+    );
+
+    await onRequestGetCalendarCallback({
+      request,
+      env: {
+        ...env,
+        AGENTARTS_OAUTH_CALLBACK_AUTHORIZATION: "Bearer service-token",
+      },
+    });
+    const forwardedRequest = mockFetch.mock.calls[0][0];
+
+    expect(forwardedRequest.headers.get("Authorization")).toBe(
+      "Bearer service-token",
+    );
+  });
+
+  it("BFF callback returns a broadcasting failure page when upstream fails", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network error"));
+
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      { method: "GET" },
+    );
+
+    const response = await onRequestGetCalendarCallback({ request, env });
+    const text = await response.text();
+
+    expect(response.status).toBe(502);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(text).toContain("授权失败");
+    expect(text).toContain('"requestId":"signed-state"');
+    expect(text).toContain('"status":"failed"');
+    expect(text).toContain('BroadcastChannel("m365-calendar-auth")');
   });
 });

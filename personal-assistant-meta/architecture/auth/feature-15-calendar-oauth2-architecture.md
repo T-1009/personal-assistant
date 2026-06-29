@@ -10,10 +10,13 @@ Calendar Tool 是本项目第一个覆盖 AgentArts OAuth2 full flow 的示范�
 
 - Calendar Tool 以 User Federation 模式读取用户 Microsoft Calendar。
 - 用户未授权时，服务端通过 `@require_access_token` / `on_auth_url` 向 Web Chat 下发 AuthCard。
-- OAuth2 callback 直接回到 Personal Assistant Service，由后端验证 signed state 后调用
+- OAuth2 callback 先由 Cloudflare Pages Function BFF 接住，再 server-to-server 转发到
+  Personal Assistant Service；Service 验证 signed state 后调用
   `complete_resource_token_auth`，完成 Resource Token Auth session binding。
 - Web Chat 只负责展示 AuthCard、打开授权 URL、根据后端 callback status 更新 UI，不参与
   OAuth2 complete 业务决策。
+- replay / duplicate callback 状态在 production 使用 PostgreSQL 持久化，避免多实例、
+  重启或重复 redirect 导致重复 complete。
 - Microsoft Graph access token 只保存在 AgentArts Identity Token Vault，不暴露给浏览器、LLM 或日志。
 
 ## 2. 端到端流程
@@ -23,12 +26,12 @@ sequenceDiagram
     autonumber
     actor User as 用户
     participant UI as Web Chat
-    participant CB as React Callback Shell
+    participant BFF as Cloudflare Pages BFF
     participant Agent as Personal Assistant Service
+    participant DB as PostgreSQL
     participant SDK as AgentArts Identity SDK
     participant IdSvc as AgentArts Identity Service
     participant MS as Microsoft OAuth2
-    participant CB as Callback Page
     participant Graph as Microsoft Graph
 
     User->>UI: 请求查看日历
@@ -40,14 +43,15 @@ sequenceDiagram
     SDK-->>Agent: on_auth_url(auth_url)
     Agent-->>UI: SSE AuthCard
     User->>MS: 打开 auth_url 并完成授权
-    MS-->>CB: GET /auth/callback/m365-calendar<br/>state / session_uri / error
-    CB->>Agent: GET /invocations/auth/oauth2/callback/m365-calendar<br/>Authorization: Bearer ID Token
+    MS-->>BFF: GET /auth/callback/m365-calendar<br/>state / session_uri / error
+    BFF->>Agent: server-side GET /auth/oauth2/callback/m365-calendar<br/>BFF shared secret
     Agent->>Agent: 校验 signed state<br/>user_id / session_id / provider / nonce
+    Agent->>DB: mark nonce active / completed
     Agent->>IdSvc: complete_resource_token_auth(session_uri, state.user_id)
     IdSvc->>MS: 交换授权结果
     IdSvc->>IdSvc: 保存 Calendar Resource Token
-    Agent-->>CB: callback result JSON
-    CB-->>UI: UI-only status notification<br/>state / provider / complete|failed
+    Agent-->>BFF: callback result HTML
+    BFF-->>UI: result page posts UI-only status<br/>state / provider / complete|failed
     UI->>Agent: 重试 Calendar 请求
     Agent->>SDK: 再次调用 Calendar Tool
     SDK->>IdSvc: get_resource_oauth2_token
@@ -61,9 +65,11 @@ sequenceDiagram
 
 | 组件 | 职责 | 不负责 |
 |------|------|--------|
-| Web Chat 主窗口 | 展示 AuthCard；打开授权 URL；监听 callback shell 的 UI status；按 `oauth2_state` 更新匹配 AuthCard | 不调用 `complete_resource_token_auth`；不决定 OAuth2 session ownership |
-| React Callback Shell | 承接 OAuth provider redirect；通过 MSAL shared cache 静默取得当前 Web Chat ID Token，向后端 callback API 发起一次 authenticated request；展示后端返回的完成/失败状态；通知 Web Chat 更新 UI | 不执行业务判断；不通过 `postMessage` / BroadcastChannel 传递 bearer token；不调用 AgentArts Identity SDK |
-| Personal Assistant Service | 生成 signed state；校验 callback state；调用 `complete_resource_token_auth`；控制 replay / stale callback 语义 | 不把第三方 access token 写入 response 或 prompt |
+| Web Chat 主窗口 | 展示 AuthCard；打开授权 URL；监听 callback result page 的 UI status；按 `oauth2_state` 更新匹配 AuthCard | 不调用 `complete_resource_token_auth`；不决定 OAuth2 session ownership |
+| Cloudflare Pages BFF | 承接 OAuth provider redirect；server-side 转发 callback query 到 Service；注入可选 BFF shared secret；返回 Service result HTML | 不转发浏览器 Authorization / Cookie；不执行业务 ownership 判断；不调用 AgentArts Identity SDK |
+| React Callback Shell | 仅作为 Vite 本地开发 fallback；生产 callback path 由 Pages Function 优先处理 | 不获取 MSAL token；不参与 production complete 协议 |
+| Personal Assistant Service | 生成 signed state；校验 callback state；调用 `complete_resource_token_auth`；用 PostgreSQL/本地 fallback 控制 replay / stale callback 语义 | 不把第三方 access token 写入 response 或 prompt |
+| PostgreSQL | production callback nonce active/completed 状态与过期时间 | 不保存 Microsoft access token |
 | AgentArts Gateway | 校验 Inbound JWT；注入可信 user/session/workload headers | 不执行 Calendar 业务逻辑 |
 | AgentArts Identity Service | 维护 Resource Token Auth session；保存 Calendar Resource Token | 不信任浏览器 body 中的 user identity |
 | Microsoft OAuth2 / Graph | 完成用户授权；提供 Calendar API | 不感知 Agent conversation state |
@@ -74,31 +80,29 @@ sequenceDiagram
 > `window.postMessage`。这只是完成后的展示同步通道，不承载 `session_uri` completion
 > 决策，也不允许任何 Web Chat tab 调用 `complete_resource_token_auth`。
 >
-> Inbound Web Chat 使用 MSAL `localStorage` cache。OAuth callback 由 `noopener`
-> 新窗口/新 tab 承接，因此不能依赖主窗口内存状态或 opener token handoff；callback shell
-> 通过 MSAL `acquireTokenSilent` 从 same-origin shared cache 取得 ID Token。
+> Production callback path 由 Cloudflare Pages Function 优先接管，因此 callback 不依赖
+> React tab、MSAL cache、opener 或 BroadcastChannel 来完成业务协议。Browser 收到的只是
+> Service 返回的 result HTML，页面脚本只广播 UI status。
 
-Feature 15 使用 frontend callback shell + backend-owned completion 模型：
+Feature 15 使用 Cloudflare Pages BFF + backend-owned completion 模型：
 
 | URL | 调用方 | 目的 |
 |-----|--------|------|
-| `/auth/callback/m365-calendar` | Microsoft OAuth2 redirect 到 React Callback Shell | 前端只作为 credential-bearing transport shell，携带 Web Chat ID Token 调用后端 callback API |
-| `/invocations/auth/oauth2/callback/m365-calendar` | React Callback Shell authenticated fetch | 通过 Pages `/invocations` proxy / Gateway 到 Service-owned callback，由后端完成 AgentArts Resource Token Auth session binding |
+| `/auth/callback/m365-calendar` | Microsoft OAuth2 redirect 到 Cloudflare Pages BFF | server-side 转发 callback query，返回 Service result HTML |
+| `/invocations/auth/oauth2/callback/m365-calendar` | Vite local fallback / legacy proxy path | 本地开发时由 React fallback shell 调 FastAPI；production 主路径不依赖该 fetch |
 | `/auth/oauth2/callback/m365-calendar` | FastAPI container route | Service 内部 route；校验 signed state、调用 `complete_resource_token_auth`、返回 callback result |
 
 生产路径逐层映射：
 
 ```text
-Browser:
+Browser / OAuth provider:
   GET /auth/callback/m365-calendar?state=...&session_uri=...
 
-React Callback Shell:
-  GET /invocations/auth/oauth2/callback/m365-calendar?state=...&session_uri=...
-  Authorization: Bearer <Web Chat ID Token>
-
-Cloudflare Pages Function:
-  /invocations/auth/oauth2/callback/m365-calendar
-  -> AgentArts Gateway /runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar
+Cloudflare Pages Function BFF:
+  functions/auth/callback/m365-calendar.js
+  -> <direct service callback URL> 或
+     AgentArts Gateway /runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar
+  Header: X-PA-OAuth2-Callback-Secret
 
 AgentArts Gateway:
   /runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar
@@ -118,7 +122,8 @@ http://localhost:5173/auth/callback/m365-calendar
 -> http://localhost:8080/auth/oauth2/callback/m365-calendar
 ```
 
-`AgentArtsRuntimeContext.set_oauth2_callback_url(...)` 必须指向 React Callback Shell：
+`AgentArtsRuntimeContext.set_oauth2_callback_url(...)` 必须指向 Pages BFF callback URL
+（本地开发可指向 Vite fallback shell）：
 
 ```python
 AgentArtsRuntimeContext.set_oauth2_callback_url(
@@ -133,11 +138,11 @@ AgentArtsRuntimeContext.set_oauth2_callback_url(
 | 字段 | 来源 | 使用场景 |
 |------|------|----------|
 | `user_id` | Gateway 注入的 `X-HW-AgentGateway-User-Id`，或本地 mock header | 本地测试、mock、无真实 Gateway JWT 的开发路径 |
-| `user_token` | 请求 `Authorization: Bearer <jwt>` 中的 JWT | 当前 Calendar backend callback 主流程不使用；保留为 AgentArts API 可用字段说明 |
+| `user_token` | 请求 `Authorization: Bearer <jwt>` 中的 JWT | 当前 Calendar BFF callback 主流程不使用；保留为 AgentArts API 可用字段说明 |
 
-主流程中 React Callback Shell 调用后端 callback API 时会携带 Web Chat
-`Authorization` header；Service 仍使用 signed state 中的 `user_id` 作为
-`complete_resource_token_auth` 的 trust boundary。该 `user_id` 不是浏览器 body
+主流程中 Cloudflare BFF 只承载 callback query 和 server-to-server trust；
+Service 使用 signed state 中的 `user_id` 作为 `complete_resource_token_auth`
+的 trust boundary。该 `user_id` 不是浏览器 body
 提供的值，而是 Service 在创建 OAuth2 state 时从 AgentArts Gateway trusted header
 读取并签名绑定的值：
 
@@ -171,18 +176,20 @@ ClientRequestException - {
 
 因此：
 
-- 主流程 backend callback 使用 signed state 中的 trusted `user_id`；React shell 携带
-  Authorization 只是为了通过 Gateway auth，不作为 completion ownership 决策来源。
+- 主流程 backend callback 使用 signed state 中的 trusted `user_id`；BFF secret /
+  service-side authorization 只用于保护 BFF-to-Service 通道，不作为 completion
+  ownership 决策来源。
 - 不要为了兼容不同环境而同时传 `user_id` 与 `user_token`；这会让 complete step 直接失败。
 
 ## 7. 安全边界
 
 - 浏览器 body 中的 `user_id` 永远不可信。
 - `state` 必须由服务端签名并绑定 Gateway `user_id`、session 和 provider。
-- callback shell 只把 OAuth callback 参数转交给 Service，并接收完成/失败 UI status；
-  浏览器不负责 complete 业务决策。
-- callback shell 需要 bearer token 时，只能通过 MSAL same-origin shared cache 静默获取；
-  不通过 opener、BroadcastChannel 或 URL 传递 bearer token。
+- Cloudflare Pages BFF 不转发浏览器 Authorization / Cookie；如需通过 Gateway 或直连
+  Service，应使用 BFF 自己的 server-side secret / service token。
+- Browser result page 只接收完成/失败 UI status；浏览器不负责 complete 业务决策。
+- production replay guard 使用 PostgreSQL `oauth2_callback_states` 表；未配置
+  `POSTGRES_DSN` 的本地开发才使用进程内 fallback。
 - 后端日志只能记录 redacted prefix，不记录完整 JWT、OAuth2 code 或 third-party access token。
 - Service-owned callback 只做 session binding，不直接读取 Calendar 数据。
 
@@ -191,6 +198,6 @@ ClientRequestException - {
 | 问题 | 结论 |
 |------|------|
 | Is it best practice? | Yes。OAuth callback、state 校验、session binding 与 replay control 留在服务端；浏览器只更新 UI。 |
-| Is it industry standard? | Yes。后端 callback / BFF-style OAuth completion 避免让浏览器 tab 拓扑参与业务协议。 |
-| Is it conventional? | Yes。Inbound JWT 与 Outbound OAuth2 User Federation 分层清晰，新成员能按 Gateway、Service、Identity、Provider 四层理解。 |
-| Is it modern? | Yes。使用 same-origin UI-only status notification、Gateway JWT、managed Token Vault 与 server-side session binding。 |
+| Is it industry standard? | Yes。Cloudflare Pages Function 作为 same-origin BFF 承接 OAuth callback，Service 做协议完成，是现代 SPA/OAuth 常见模式。 |
+| Is it conventional? | Yes。新成员会自然预期 `redirect_uri -> BFF -> Service -> DB idempotency -> Identity complete -> result page`。 |
+| Is it modern? | Yes。避免 implicit flow、避免 callback 依赖 browser token cache，使用 managed Token Vault、serverless BFF 与 PostgreSQL 幂等状态。 |

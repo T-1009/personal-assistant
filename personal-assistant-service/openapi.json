@@ -103,7 +103,7 @@
         "operationId": "calendar_oauth2_callback_auth_oauth2_callback_m365_calendar_get",
         "responses": {
           "200": {
-            "description": "Callback status as HTML for direct browser opens or JSON for the React callback shell.",
+            "description": "Callback status as HTML for direct browser opens or JSON for the local development fallback.",
             "content": {
               "text/html": {
                 "schema": {
@@ -166,7 +166,7 @@
                     "message"
                   ],
                   "title": "OAuth2CallbackResponse",
-                  "description": "Calendar OAuth2 callback status returned to the React callback shell."
+                  "description": "Calendar OAuth2 callback status returned to the BFF result page."
                 }
               }
             }
