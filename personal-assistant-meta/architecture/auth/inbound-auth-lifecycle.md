@@ -269,6 +269,11 @@ flowchart LR
 - Client 不自行信任 token 内容作为最终授权结论；它只用 `exp` 做发送前防御和从 token 提取本地 dev/proxy 需要的 user id。
 - Gateway 是生产环境 JWT 验证的 authority。
 - Service 不负责浏览器登录态恢复；它只处理 Gateway 已转发的合法请求。
+- Cloudflare Pages Function 当前是 same-origin lightweight BFF/proxy，不是 full
+  OAuth BFF / token handler。Browser 仍持有 inbound login token；future full
+  BFF 迁移会改为 Browser 仅持有 `HttpOnly; Secure` session cookie，token 由
+  server-side store 管理。详见
+  [ADR-019](../ADR/ADR-019-web-chat-bff-boundary.md)。
 
 ---
 

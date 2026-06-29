@@ -81,6 +81,10 @@ sequenceDiagram
 - Outbound Auth（Agent 调用 Microsoft 365）由 AgentArts Identity SDK 管理。
   Web Chat 只负责展示 SDK 产生的 Auth Card，不接触 Microsoft Graph access
   token。
+- Cloudflare Pages Function 当前承担 lightweight BFF/proxy 职责：同源
+  `/invocations`、SSE pass-through、Gateway path mapping 和 OAuth callback bridge。
+  它不是 full OAuth BFF；full BFF / token handler 作为后续安全演进方向记录在
+  [ADR-019](ADR/ADR-019-web-chat-bff-boundary.md)。
 
 Web Chat Inbound Auth 的完整登录态生命周期（AuthGuard、Zustand `idToken`、
 silent refresh、401/403 retry、LandingPage / ChatPage gate）见
@@ -436,7 +440,8 @@ flowchart LR
 Web Chat 前端部署在 Cloudflare Pages。Client 请求 same-origin
 `/invocations`，Pages Function 将请求转发到 AgentArts Gateway 的完整
 Runtime path。详见
-[ADR-017](ADR/ADR-017-cloudflare-pages-proxy.md)。
+[ADR-017](ADR/ADR-017-cloudflare-pages-proxy.md)。BFF 边界与 full BFF
+演进方向见 [ADR-019](ADR/ADR-019-web-chat-bff-boundary.md)。
 
 Production URL：`https://agentarts-personal-assistant.pages.dev`
 
@@ -453,6 +458,7 @@ flowchart LR
 | **同源** | SPA 与 `/invocations` 使用同一 Pages origin，不触发 CORS preflight |
 | **认证** | Browser 发送 Microsoft JWT，Gateway 通过 `CUSTOM_JWT` 验证 |
 | **Streaming** | Pages Function 透明透传 Gateway SSE `ReadableStream` |
+| **BFF 边界** | 当前为 lightweight BFF/proxy；不在 Function 内持久保存 login token |
 
 ### 6.2 Web Chat 前端部署
 

@@ -31,6 +31,12 @@ Browser 只访问 Pages origin，因此不会产生 CORS preflight。Pages Funct
 仍由 AgentArts Gateway 完成。Pages 的 route specificity 规则会让
 `/invocations` 优先命中精确文件，而 `/invocations/*` 由多段动态路由处理。
 
+这层 Pages Function 是 Web Chat 的 lightweight BFF/proxy：适合承担同源路由、
+header allowlist、SSE pass-through 和 OAuth callback bridge；不在 Function
+内持久保存 inbound login token。完整 BFF / token handler 是否迁移、以及
+Cloudflare Function 作为 BFF 后端的适用边界，见
+[`ADR-019`](../../ADR/ADR-019-web-chat-bff-boundary.md)。
+
 ## Pages Function 路由
 
 Cloudflare Pages 使用 file-based routing。对本项目来说，静态资源和函数路由的

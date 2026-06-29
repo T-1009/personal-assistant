@@ -136,7 +136,75 @@ AgentArtsRuntimeContext.set_oauth2_callback_url(
 )
 ```
 
-## 5. Identity 参数选择
+## 5. Callback Context Cookies 的作用
+
+OAuth provider redirect 是浏览器发起的全新 `GET /auth/callback/m365-calendar`
+请求，不会自然携带原始 `/invocations` 请求里的 `Authorization`、
+`x-hw-agentarts-session-id` 和 `X-HW-AgentGateway-User-Id`。但线上 callback
+仍需要这些 Gateway context headers：Gateway 要校验用户身份，Service 要从
+`Authorization` 中恢复 `user_token` 调用 `complete_resource_token_auth`。
+
+因此 Cloudflare Pages BFF 在正常 `/invocations` 请求返回时，写入一组短时、
+callback-only、HttpOnly cookies，把原聊天窗口的 Gateway context 暂存到浏览器；
+OAuth redirect 回到同源 callback path 时，BFF 再 server-side 读取这些 cookies，
+恢复成 upstream headers 转发给 Gateway / Service。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant UI as Web Chat
+    participant BFF as Cloudflare Pages BFF
+    participant GW as AgentArts Gateway
+    participant Agent as Personal Assistant Service
+    participant MS as Microsoft OAuth2
+
+    UI->>BFF: POST /invocations<br/>Authorization + session id + user id
+    BFF->>GW: Forward /invocations headers
+    GW->>Agent: /invocations
+    Agent-->>GW: AuthCard(auth_url)
+    GW-->>BFF: AuthCard response
+    BFF-->>UI: AuthCard + Set-Cookie pa_oauth2_callback_*<br/>Path=/auth/callback/m365-calendar
+    UI->>MS: Open auth_url
+    MS-->>BFF: GET /auth/callback/m365-calendar<br/>state + session_uri
+    BFF->>BFF: Read callback-only HttpOnly cookies
+    BFF->>GW: GET /invocations/auth/oauth2/callback/m365-calendar<br/>Restored Gateway context headers
+    GW->>Agent: /auth/oauth2/callback/m365-calendar
+    Agent->>Agent: Verify signed state + complete with user_token
+    BFF-->>UI: Clear pa_oauth2_callback_* cookies
+```
+
+| Cookie | 来源 header | Callback 时恢复为 | 作用 |
+|--------|-------------|-------------------|------|
+| `pa_oauth2_callback_auth` | `Authorization` | `Authorization` | 携带同一用户的 inbound user token；Service 从中提取 `user_token` 完成 `complete_resource_token_auth` |
+| `pa_oauth2_callback_session` | `x-hw-agentarts-session-id` | `x-hw-agentarts-session-id` | 恢复 Gateway / Runtime session context，辅助 session 绑定与排障 |
+| `pa_oauth2_callback_user` | `X-HW-AgentGateway-User-Id` | `X-HW-AgentGateway-User-Id` | 恢复 Gateway user context，并与 signed state 中的 `user_id` 做审计关联 |
+
+这些 cookies 的安全属性必须保持收敛：
+
+- `Path=/auth/callback/m365-calendar`：只在 Calendar callback path 发送，不参与普通
+  `/chat` 或 `/invocations` 请求。
+- `Max-Age=600`：只覆盖一次 OAuth redirect 的短窗口，降低过期 callback 复用风险。
+- `HttpOnly`：React / 第三方脚本不能读取 `Authorization` snapshot。
+- `Secure`：只允许 HTTPS 传输。
+- `SameSite=Lax`：允许 Microsoft OAuth2 顶层导航 redirect 带回同源 callback cookie，
+  同时避免作为跨站子请求 cookie 被发送。
+
+边界也同样重要：
+
+- Cookie 只是 Gateway context 的短时 transport bridge，不是登录态数据库，也不是
+  replay store。
+- Cookie 不保存 Microsoft Graph access token；第三方 Resource Token 只在
+  AgentArts Identity Token Vault 中保存。
+- CSRF / callback ownership 仍由 signed state 负责；重复提交和并发 callback 由
+  PostgreSQL `oauth2_callback_states` 负责。
+- BFF 不转发 OAuth callback 请求自带的浏览器 `Authorization` 或 `Cookie` header，
+  只使用 callback-only cookies 生成受控 upstream headers。
+- `Authorization` 必须是原用户的 inbound user token，不能用 service token 覆盖；
+  否则 AgentArts Identity 可能返回 `AgentIdentityTokenVault.1002` identity mismatch。
+- 如果 cookies 缺失、过期或与 AgentArts session identity 不匹配，callback 应失败并提示
+  用户回到原聊天窗口重新发起授权，不回退到 `UserIdentifier(user_id=...)`。
+
+## 6. Identity 参数选择
 
 `complete_resource_token_auth` 的 `UserIdentifier` 在本项目有两种可用来源：
 
@@ -160,7 +228,7 @@ client.complete_resource_token_auth(
 )
 ```
 
-## 6. 已知约束：`user_id` 与 `user_token` 互斥
+## 7. 已知约束：`user_id` 与 `user_token` 互斥
 
 AgentArts Identity Service 不允许在同一个 `UserIdentifier` 中同时传入 `user_id` 和 `user_token`。如果这样调用：
 
@@ -188,7 +256,7 @@ ClientRequestException - {
   Resource Token Auth session 时的真实 inbound identity 匹配。
 - 不要为了兼容不同环境而同时传 `user_id` 与 `user_token`；这会让 complete step 直接失败。
 
-## 7. 安全边界
+## 8. 安全边界
 
 - 浏览器 body 中的 `user_id` 永远不可信。
 - `state` 必须由服务端签名并绑定 Gateway `user_id`、session 和 provider。
@@ -202,7 +270,7 @@ ClientRequestException - {
 - 后端日志只能记录 redacted prefix，不记录完整 JWT、OAuth2 code 或 third-party access token。
 - Service-owned callback 只做 session binding，不直接读取 Calendar 数据。
 
-## 8. Four-Question Gate
+## 9. Four-Question Gate
 
 | 问题 | 结论 |
 |------|------|
