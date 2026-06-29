@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 from agentarts.sdk import require_access_token
+from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 from langgraph.config import get_stream_writer
 
 from app.settings import get_settings
@@ -34,6 +35,7 @@ async def handle_auth_url(auth_url: str) -> None:
                 "auth_url": auth_url,
                 "auth_required": True,
                 "provider": CALENDAR_PROVIDER,
+                "oauth2_state": AgentArtsRuntimeContext.get_oauth2_custom_state(),
             }
         )
     except RuntimeError:
@@ -49,6 +51,7 @@ def _push_auth_complete() -> None:
                 "system_message": "日历授权已完成 ✅",
                 "auth_complete": True,
                 "provider": CALENDAR_PROVIDER,
+                "oauth2_state": AgentArtsRuntimeContext.get_oauth2_custom_state(),
             }
         )
     except RuntimeError:

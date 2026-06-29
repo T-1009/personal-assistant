@@ -170,12 +170,37 @@ async def test_calendar_tools_return_auth_required_without_access_token():
 @pytest.mark.asyncio
 async def test_handle_auth_url_streams_sdk_authorization_url_unchanged():
     writer_mock = MagicMock()
-    with patch("app.tools.calendar_tools.get_stream_writer", return_value=writer_mock):
+    with (
+        patch("app.tools.calendar_tools.get_stream_writer", return_value=writer_mock),
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_oauth2_custom_state",
+            return_value="signed-state",
+        ),
+    ):
         await ct.handle_auth_url("https://auth.example.com/login?client_id=abc")
 
     writer_mock.assert_called_once()
     payload = writer_mock.call_args[0][0]
     assert payload["auth_url"] == "https://auth.example.com/login?client_id=abc"
+    assert payload["oauth2_state"] == "signed-state"
+
+
+def test_push_auth_complete_streams_matching_oauth2_state():
+    writer_mock = MagicMock()
+    with (
+        patch("app.tools.calendar_tools.get_stream_writer", return_value=writer_mock),
+        patch(
+            "app.tools.calendar_tools.AgentArtsRuntimeContext.get_oauth2_custom_state",
+            return_value="signed-state",
+        ),
+    ):
+        ct._push_auth_complete()
+
+    writer_mock.assert_called_once()
+    payload = writer_mock.call_args[0][0]
+    assert payload["auth_complete"] is True
+    assert payload["provider"] == ct.CALENDAR_PROVIDER
+    assert payload["oauth2_state"] == "signed-state"
 
 
 @pytest.mark.asyncio

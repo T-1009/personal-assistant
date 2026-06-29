@@ -829,7 +829,7 @@ if (isTokenExpiringSoon(idToken)) {
 
 `acquireTokenSilent` 优先从缓存读取，缓存过期时自动用 refresh token 换新（无用户交互）。
 
-**页面刷新后的 token 恢复**：非登录跳转的普通页面加载时，`handleRedirectPromise()` 返回 null。需额外调用 `acquireIdTokenSilently()` 从 sessionStorage 加载已有 token：
+**页面刷新后的 token 恢复**：非登录跳转的普通页面加载时，`handleRedirectPromise()` 返回 null。需额外调用 `acquireIdTokenSilently()` 从 MSAL cache 加载已有 token。Calendar OAuth2 production callback 已由 Cloudflare Pages Function BFF 承接，不再要求 callback tab 从 MSAL cache 静默取得 ID Token：
 
 ```typescript
 msalInstance.handleRedirectPromise().then(async (response) => {
@@ -886,9 +886,15 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 |-------------------|---------------------|
 | `/runtimes/{runtime_name}/invocations` | `/invocations` |
 | `/runtimes/{runtime_name}/invocations/<suffix>` | `/<suffix>` |
-| `/runtimes/personal-assistant/invocations/auth/oauth2/complete` | `/auth/oauth2/complete` |
+| `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `/auth/oauth2/callback/m365-calendar` |
 
-`/auth/oauth2/complete` 只是 suffix 映射的一个业务例子，不是特殊规则。
+`/auth/oauth2/callback/m365-calendar` 只是 suffix 映射的一个业务例子，不是特殊规则。
+
+Cloudflare Pages BFF 可复用该 Gateway full Runtime path 转发 Calendar OAuth2
+callback，也可以通过 `AGENTARTS_OAUTH_CALLBACK_URL` 配置 direct Service callback
+upstream。无论走哪条 upstream，Service 都以 signed state 中的 `user_id` 作为
+`complete_resource_token_auth` ownership，BFF secret / service token 只保护
+BFF-to-Service 通道。
 
 #### 11.7.2 404 判别
 

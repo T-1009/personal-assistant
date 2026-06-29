@@ -30,6 +30,7 @@ class OAuth2StateClaims:
 
 
 _COMPLETED_NONCES: dict[str, int] = {}
+_ACTIVE_NONCES: dict[str, int] = {}
 
 
 def create_oauth2_state(
@@ -58,7 +59,7 @@ def verify_oauth2_state(
     state: str,
     *,
     settings: Settings,
-    expected_user_id: str,
+    expected_user_id: str | None = None,
     expected_provider: str,
     now: float | None = None,
 ) -> OAuth2StateClaims:
@@ -86,7 +87,7 @@ def verify_oauth2_state(
     current_time = int(now if now is not None else time.time())
     if claims.exp < current_time:
         raise OAuth2StateError("OAuth2 state expired")
-    if claims.user_id != expected_user_id:
+    if expected_user_id is not None and claims.user_id != expected_user_id:
         raise OAuth2StateError("OAuth2 state user mismatch")
     if claims.provider != expected_provider:
         raise OAuth2StateError("OAuth2 state provider mismatch")
@@ -101,9 +102,24 @@ def is_oauth2_state_completed(claims: OAuth2StateClaims) -> bool:
     return claims.nonce in _COMPLETED_NONCES
 
 
+def mark_oauth2_state_active(claims: OAuth2StateClaims) -> bool:
+    """Mark a nonce as actively completing, returning false for duplicates."""
+    _prune_completed_nonces(int(time.time()))
+    if claims.nonce in _COMPLETED_NONCES or claims.nonce in _ACTIVE_NONCES:
+        return False
+    _ACTIVE_NONCES[claims.nonce] = claims.exp
+    return True
+
+
 def mark_oauth2_state_completed(claims: OAuth2StateClaims) -> None:
     """Record a successfully completed OAuth2 state nonce for replay handling."""
     _COMPLETED_NONCES[claims.nonce] = claims.exp
+    _ACTIVE_NONCES.pop(claims.nonce, None)
+
+
+def clear_oauth2_state_active(claims: OAuth2StateClaims) -> None:
+    """Release an active nonce when completion fails before it is finalized."""
+    _ACTIVE_NONCES.pop(claims.nonce, None)
 
 
 def _sign(payload: str, secret: str) -> str:
@@ -145,3 +161,6 @@ def _prune_completed_nonces(now: int) -> None:
     expired = [nonce for nonce, exp in _COMPLETED_NONCES.items() if exp < now]
     for nonce in expired:
         _COMPLETED_NONCES.pop(nonce, None)
+    expired_active = [nonce for nonce, exp in _ACTIVE_NONCES.items() if exp < now]
+    for nonce in expired_active:
+        _ACTIVE_NONCES.pop(nonce, None)

@@ -29,8 +29,9 @@ export interface CalendarOAuthResponse {
   type: "m365-calendar-auth";
   requestId: string;
   provider: string;
-  status: "complete" | "failed";
+  status: "complete" | "failed" | "pending";
   message: string;
+  state?: string | null;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -74,8 +75,9 @@ export function createCalendarOAuthRequest(input: {
 export function createCalendarOAuthResponse(input: {
   provider: string;
   requestId: string;
-  status: "complete" | "failed";
+  status: "complete" | "failed" | "pending";
   message: string;
+  state?: string | null;
 }): CalendarOAuthResponse {
   return {
     type: "m365-calendar-auth",
@@ -83,6 +85,7 @@ export function createCalendarOAuthResponse(input: {
     provider: input.provider,
     status: input.status,
     message: input.message,
+    ...(input.state ? { state: input.state } : {}),
   };
 }
 
@@ -111,8 +114,11 @@ export function isCalendarOAuthResponse(
   return (
     isString(value.requestId) &&
     isString(value.provider) &&
-    (value.status === "complete" || value.status === "failed") &&
-    isString(value.message)
+    (value.status === "complete" ||
+      value.status === "failed" ||
+      value.status === "pending") &&
+    isString(value.message) &&
+    (value.state === undefined || value.state === null || isString(value.state))
   );
 }
 

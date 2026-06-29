@@ -1,111 +1,105 @@
 import {
   CALENDAR_OAUTH_FAILED_MESSAGE,
-  CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE,
   CALENDAR_OAUTH_PENDING_MESSAGE,
   CALENDAR_OAUTH_PROVIDER,
-  CALENDAR_OAUTH_TIMEOUT_MS,
-  CALENDAR_OAUTH_UNAVAILABLE_MESSAGE,
-  createCalendarOAuthRequest,
   isCalendarOAuthResponse,
   openCalendarOAuthChannel,
+  type CalendarOAuthResponse,
 } from "@/lib/auth/calendar-oauth-bridge";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
-type CallbackStatus = "loading" | "complete" | "failed";
+type CallbackStatus = "pending" | "complete" | "failed";
+
+export function buildBackendCalendarCallbackUrl(
+  origin = window.location.origin,
+  search = window.location.search,
+): URL {
+  const target = new URL(
+    "/invocations/auth/oauth2/callback/m365-calendar",
+    origin,
+  );
+  target.search = search;
+  return target;
+}
+
+export function getCalendarCallbackState(
+  search = window.location.search,
+): string | null {
+  const params = new URLSearchParams(search);
+  return params.get("state") || params.get("custom_state") || null;
+}
+
+function broadcastCalendarOAuthStatus(response: CalendarOAuthResponse) {
+  try {
+    const channel = openCalendarOAuthChannel();
+    channel?.postMessage(response);
+    window.setTimeout(() => channel?.close(), 1000);
+  } catch {}
+  try {
+    window.opener?.postMessage(response, window.location.origin);
+  } catch {}
+}
 
 export default function M365CalendarCallbackPage() {
   const params = useMemo(
     () => new URLSearchParams(window.location.search),
     [],
   );
-  const [status, setStatus] = useState<CallbackStatus>("loading");
+  const startedRef = useRef(false);
+  const [status, setStatus] = useState<CallbackStatus>("pending");
   const [message, setMessage] = useState(CALENDAR_OAUTH_PENDING_MESSAGE);
 
   useEffect(() => {
+    if (startedRef.current) return;
+    startedRef.current = true;
+
     let cancelled = false;
-    let timeoutId: number | undefined;
-    let channel: BroadcastChannel | null = null;
-
-    function notifyParent(nextStatus: Exclude<CallbackStatus, "loading">, nextMessage: string) {
-      window.opener?.postMessage(
-        {
-          type: "m365-calendar-auth",
-          status: nextStatus,
-          provider: CALENDAR_OAUTH_PROVIDER,
-          message: nextMessage,
-        },
-        window.location.origin,
-      );
-    }
-
-    function finish(nextStatus: Exclude<CallbackStatus, "loading">, nextMessage: string) {
-      if (cancelled) return;
-      setStatus(nextStatus);
-      setMessage(nextMessage);
-      notifyParent(nextStatus, nextMessage);
-      channel?.close();
-      if (nextStatus === "complete") {
-        window.setTimeout(() => window.close(), 1000);
-      }
-    }
-
-    async function complete() {
-      const error = params.get("error");
-      const errorDescription = params.get("error_description");
-      const sessionUri = params.get("session_uri");
-      const state = params.get("state") ?? params.get("custom_state");
-
-      if (error) {
-        finish("failed", errorDescription || "日历授权失败，请重新发起授权。");
-        return;
-      }
-
-      if (!sessionUri || !state) {
-        finish("failed", CALENDAR_OAUTH_MISSING_PARAMS_MESSAGE);
-        return;
-      }
-
-      channel = openCalendarOAuthChannel();
-      if (!channel) {
-        finish("failed", CALENDAR_OAUTH_UNAVAILABLE_MESSAGE);
-        return;
-      }
-
-      const request = createCalendarOAuthRequest({
-        provider: CALENDAR_OAUTH_PROVIDER,
-        sessionUri,
-        state,
-      });
-
-      channel.onmessage = (event) => {
-        if (!isCalendarOAuthResponse(event.data)) return;
-        if (
-          event.data.provider !== CALENDAR_OAUTH_PROVIDER ||
-          event.data.requestId !== request.requestId
-        ) {
+    async function completeViaLocalProxyFallback() {
+      const callbackState = getCalendarCallbackState();
+      try {
+        const response = await fetch(
+          buildBackendCalendarCallbackUrl(window.location.origin, window.location.search),
+          { headers: { Accept: "application/json" } },
+        );
+        if (!response.ok) {
+          throw new Error(`OAuth2 callback failed: ${response.status}`);
+        }
+        const data = (await response.json()) as unknown;
+        if (!isCalendarOAuthResponse(data)) {
+          throw new Error("Invalid OAuth2 callback response");
+        }
+        if (cancelled) return;
+        if (data.status === "pending") {
+          setStatus("pending");
+          setMessage(data.message);
           return;
         }
 
-        if (timeoutId !== undefined) {
-          window.clearTimeout(timeoutId);
+        setStatus(data.status);
+        setMessage(data.message);
+        broadcastCalendarOAuthStatus(data);
+        if (data.status === "complete") {
+          window.setTimeout(() => window.close(), 1200);
         }
-        finish(event.data.status, event.data.message);
-      };
-
-      timeoutId = window.setTimeout(() => {
-        finish("failed", CALENDAR_OAUTH_FAILED_MESSAGE);
-      }, CALENDAR_OAUTH_TIMEOUT_MS);
-
-      channel.postMessage(request);
+      } catch {
+        if (cancelled) return;
+        const errorMessage = params.get("error_description") || CALENDAR_OAUTH_FAILED_MESSAGE;
+        setStatus("failed");
+        setMessage(errorMessage);
+        broadcastCalendarOAuthStatus({
+          type: "m365-calendar-auth",
+          requestId: callbackState ?? "",
+          provider: CALENDAR_OAUTH_PROVIDER,
+          status: "failed",
+          message: errorMessage,
+          state: callbackState,
+        });
+      }
     }
 
-    void complete();
+    void completeViaLocalProxyFallback();
     return () => {
       cancelled = true;
-      if (timeoutId !== undefined) {
-        window.clearTimeout(timeoutId);
-      }
-      channel?.close();
     };
   }, [params]);
 
@@ -124,7 +118,7 @@ export default function M365CalendarCallbackPage() {
                 : "mx-auto mb-4 flex size-12 items-center justify-center rounded-full bg-blue-100 text-blue-700"
           }
         >
-          {isComplete ? "✓" : isFailed ? "!" : "…"}
+          {isComplete ? "✓" : isFailed ? "!" : "..."}
         </div>
         <h1 className="text-lg font-semibold">
           {isComplete ? "授权完成" : isFailed ? "授权失败" : "正在授权"}

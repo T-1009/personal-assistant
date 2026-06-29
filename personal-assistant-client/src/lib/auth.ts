@@ -9,9 +9,6 @@ const msalConfig: Configuration = {
     authority: `https://login.microsoftonline.com/${publicConfig.entraTenantId}`,
     redirectUri: typeof window !== "undefined" ? window.location.origin : "",
   },
-  cache: {
-    cacheLocation: "sessionStorage", // Required by loginRedirect (redirect destroys memory)
-  },
 };
 
 export const msalInstance = new PublicClientApplication(msalConfig);

@@ -9,6 +9,8 @@ export interface AuthCardEntry {
   authUrl: string | null;
   /** Human-readable message explaining why authorization is needed. */
   message: string;
+  /** Signed OAuth2 state for matching backend callback status to this card. */
+  oauth2State?: string | null;
   /** Whether the user has completed authorization (green card). */
   authComplete: boolean;
   /** Whether the latest authorization attempt failed (red card). */
@@ -23,9 +25,18 @@ interface AuthCardState extends AuthCardEntry {
     provider: string,
     url: string,
     message: string,
+    oauth2State?: string | null,
   ) => void;
-  setAuthComplete: (provider: string, message?: string) => void;
-  setAuthFailed: (provider: string, message?: string) => void;
+  setAuthComplete: (
+    provider: string,
+    message?: string,
+    oauth2State?: string | null,
+  ) => void;
+  setAuthFailed: (
+    provider: string,
+    message?: string,
+    oauth2State?: string | null,
+  ) => void;
   clearAuth: (messageId?: string) => void;
 }
 
@@ -34,6 +45,7 @@ const emptyAuthCard: AuthCardEntry = {
   provider: null,
   authUrl: null,
   message: "",
+  oauth2State: null,
   authComplete: false,
   authFailed: false,
 };
@@ -48,11 +60,17 @@ function pickLatestCard(
 function findLatestProviderMessageId(
   cardsByMessageId: Record<string, AuthCardEntry>,
   provider: string,
+  oauth2State?: string | null,
 ): string | undefined {
   return (
     Object.values(cardsByMessageId)
       .reverse()
-      .find((card) => card.authUrl && card.provider === provider)?.messageId ??
+      .find(
+        (card) =>
+          card.authUrl &&
+          card.provider === provider &&
+          (!oauth2State || card.oauth2State === oauth2State),
+      )?.messageId ??
     undefined
   );
 }
@@ -60,13 +78,14 @@ function findLatestProviderMessageId(
 export const useAuthCardStore = create<AuthCardState>((set) => ({
   ...emptyAuthCard,
   cardsByMessageId: {},
-  setAuth: (messageId, provider, url, message) =>
+  setAuth: (messageId, provider, url, message, oauth2State) =>
     set((state) => {
       const card: AuthCardEntry = {
         messageId,
         provider,
         authUrl: url,
         message,
+        oauth2State: oauth2State ?? null,
         authComplete: false,
         authFailed: false,
       };
@@ -78,11 +97,12 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
         },
       };
     }),
-  setAuthComplete: (provider, message) =>
+  setAuthComplete: (provider, message, oauth2State) =>
     set((state) => {
       const messageId = findLatestProviderMessageId(
         state.cardsByMessageId,
         provider,
+        oauth2State,
       );
       if (!messageId) {
         return state;
@@ -112,11 +132,12 @@ export const useAuthCardStore = create<AuthCardState>((set) => ({
         cardsByMessageId,
       };
     }),
-  setAuthFailed: (provider, message) =>
+  setAuthFailed: (provider, message, oauth2State) =>
     set((state) => {
       const messageId = findLatestProviderMessageId(
         state.cardsByMessageId,
         provider,
+        oauth2State,
       );
       if (!messageId) {
         return state;

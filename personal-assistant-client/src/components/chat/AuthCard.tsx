@@ -1,5 +1,10 @@
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import {
+  CALENDAR_OAUTH_PROVIDER,
+  isCalendarOAuthResponse,
+  openCalendarOAuthChannel,
+} from "@/lib/auth/calendar-oauth-bridge";
+import {
   AlertCircleIcon,
   CheckCircleIcon,
   ShieldCheckIcon,
@@ -25,20 +30,59 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
         status?: string;
         provider?: string;
         message?: string;
+        state?: string | null;
       };
       if (data.type !== "m365-calendar-auth" || !data.provider) return;
+      if (data.provider === CALENDAR_OAUTH_PROVIDER && !data.state) return;
+      // Browser tabs are status observers only. The Service owns OAuth
+      // completion, which avoids cross-tab races where another tab completes
+      // the same AgentArts session with a different active identity.
       if (data.status === "complete") {
         useAuthCardStore
           .getState()
-          .setAuthComplete(data.provider, data.message);
+          .setAuthComplete(data.provider, data.message, data.state);
       }
       if (data.status === "failed") {
-        useAuthCardStore.getState().setAuthFailed(data.provider, data.message);
+        useAuthCardStore
+          .getState()
+          .setAuthFailed(data.provider, data.message, data.state);
       }
     }
 
+    const channel = openCalendarOAuthChannel();
+    if (channel) {
+      channel.onmessage = (event) => {
+        if (!isCalendarOAuthResponse(event.data)) return;
+        if (
+          event.data.provider === CALENDAR_OAUTH_PROVIDER &&
+          !event.data.state
+        ) {
+          return;
+        }
+        // State-scoped status prevents stale callbacks from changing the
+        // currently visible AuthCard after a user retries authorization.
+        if (event.data.status === "complete") {
+          useAuthCardStore.getState().setAuthComplete(
+            event.data.provider,
+            event.data.message,
+            event.data.state,
+          );
+        }
+        if (event.data.status === "failed") {
+          useAuthCardStore.getState().setAuthFailed(
+            event.data.provider,
+            event.data.message,
+            event.data.state,
+          );
+        }
+      };
+    }
+
     window.addEventListener("message", handleMessage);
-    return () => window.removeEventListener("message", handleMessage);
+    return () => {
+      window.removeEventListener("message", handleMessage);
+      channel?.close();
+    };
   }, []);
 
   if (!authCard?.authUrl) return null;

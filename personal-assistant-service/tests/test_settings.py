@@ -9,7 +9,9 @@ from app.settings import Settings, get_settings
 
 
 @pytest.fixture(autouse=True)
-def clear_settings_cache():
+def clear_settings_cache(monkeypatch):
+    monkeypatch.delenv("OAUTH2_CALENDAR_CALLBACK_URL", raising=False)
+    monkeypatch.delenv("OAUTH2_CALLBACK_BFF_SECRET", raising=False)
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -127,6 +129,7 @@ def test_empty_optional_values_are_unset():
         sqlite_db_path="",
         iam_users_endpoint="",
         oauth2_calendar_callback_url="",
+        oauth2_callback_bff_secret="",
     )
 
     assert settings.llm_base_url is None
@@ -134,6 +137,7 @@ def test_empty_optional_values_are_unset():
     assert settings.sqlite_db_path is None
     assert settings.iam_users_endpoint is None
     assert settings.oauth2_calendar_callback_url is None
+    assert settings.oauth2_callback_bff_secret is None
 
 
 def test_settings_are_frozen():

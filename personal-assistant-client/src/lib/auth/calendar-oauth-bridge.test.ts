@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 
 import {
   CALENDAR_OAUTH_FAILED_MESSAGE,
+  createCalendarOAuthRequest,
+  createCalendarOAuthResponse,
   formatCalendarOAuthError,
+  isCalendarOAuthRequest,
+  isCalendarOAuthResponse,
 } from "@/lib/auth/calendar-oauth-bridge";
 
 describe("formatCalendarOAuthError", () => {
@@ -34,5 +38,34 @@ describe("formatCalendarOAuthError", () => {
     expect(formatCalendarOAuthError(new Error("OAuth2 complete failed: 502"))).toBe(
       "日历授权服务暂时不可用，请稍后重试。",
     );
+  });
+});
+
+describe("calendar OAuth channel envelopes", () => {
+  it("validates callback request envelopes", () => {
+    const request = createCalendarOAuthRequest({
+      sessionUri: "urn:session:test",
+      state: "signed-state",
+    });
+
+    expect(isCalendarOAuthRequest(request)).toBe(true);
+    expect(request).toMatchObject({
+      state: "signed-state",
+    });
+  });
+
+  it("allows backend callback status envelopes to carry OAuth state", () => {
+    const response = createCalendarOAuthResponse({
+      provider: "m365-calendar-provider",
+      requestId: "signed-state",
+      status: "complete",
+      message: "done",
+      state: "signed-state",
+    });
+
+    expect(isCalendarOAuthResponse(response)).toBe(true);
+    expect(response).toMatchObject({
+      state: "signed-state",
+    });
   });
 });
