@@ -48,7 +48,7 @@ sequenceDiagram
     BFF->>Agent: server-side GET /auth/oauth2/callback/m365-calendar<br/>Gateway context + BFF shared secret
     Agent->>Agent: 校验 signed state<br/>user_id / session_id / provider / nonce
     Agent->>DB: mark nonce active / completed
-    Agent->>IdSvc: complete_resource_token_auth(session_uri, state.user_id)
+    Agent->>IdSvc: complete_resource_token_auth(session_uri, Authorization user_token)
     IdSvc->>MS: 交换授权结果
     IdSvc->>IdSvc: 保存 Calendar Resource Token
     Agent-->>BFF: callback result HTML
@@ -142,19 +142,21 @@ AgentArtsRuntimeContext.set_oauth2_callback_url(
 
 | 字段 | 来源 | 使用场景 |
 |------|------|----------|
-| `user_id` | Gateway 注入的 `X-HW-AgentGateway-User-Id`，或本地 mock header | 本地测试、mock、无真实 Gateway JWT 的开发路径 |
-| `user_token` | 请求 `Authorization: Bearer <jwt>` 中的 JWT | 当前 Calendar BFF callback 主流程不使用；保留为 AgentArts API 可用字段说明 |
+| `user_id` | Gateway 注入的 `X-HW-AgentGateway-User-Id`，或本地 mock header | signed state 绑定、日志审计、本地 mock |
+| `user_token` | 请求 `Authorization: Bearer <jwt>` 中的 JWT | production Calendar BFF callback complete 主流程 |
 
 主流程中 Cloudflare BFF 承载 callback query、Gateway context transport
-和 server-to-server trust；Service 使用 signed state 中的 `user_id` 作为
-`complete_resource_token_auth` 的 trust boundary。该 `user_id` 不是浏览器 body
-提供的值，而是 Service 在创建 OAuth2 state 时从 AgentArts Gateway trusted header
-读取并签名绑定的值：
+和 server-to-server trust；Service 使用 signed state 中的 `user_id` / `session_id`
+做 CSRF、replay 和审计绑定，但调用 AgentArts Identity
+`complete_resource_token_auth` 时使用 `Authorization` header 中恢复的真实
+`user_token`。该 token 来自 `/invocations` 阶段写入的 callback-only HttpOnly
+cookie，不来自 OAuth provider callback 请求本身：
 
 ```python
+user_token = extract_authorization_user_token(request)
 client.complete_resource_token_auth(
     session_uri=callback.session_uri,
-    user_identifier=UserIdentifier(user_id=state_claims.user_id),
+    user_identifier=UserIdentifier(user_token=user_token),
 )
 ```
 
@@ -181,9 +183,9 @@ ClientRequestException - {
 
 因此：
 
-- 主流程 backend callback 使用 signed state 中的 trusted `user_id`；BFF secret /
-  service-side authorization 只用于保护 BFF-to-Service 通道，不作为 completion
-  ownership 决策来源。
+- 主流程 backend callback 使用 signed state 中的 trusted `user_id` 做 state 绑定，
+  但 `complete_resource_token_auth` 只传 `user_token`，确保与 AgentArts 创建
+  Resource Token Auth session 时的真实 inbound identity 匹配。
 - 不要为了兼容不同环境而同时传 `user_id` 与 `user_token`；这会让 complete step 直接失败。
 
 ## 7. 安全边界
@@ -193,7 +195,7 @@ ClientRequestException - {
 - Cloudflare Pages BFF 不把 callback 请求上的浏览器 Authorization / Cookie 原样透传给
   upstream；通过 Gateway 时只使用 `/invocations` 阶段写入的短时 callback-only
   HttpOnly cookies 恢复 `Authorization`、`x-hw-agentarts-session-id` 和
-  `X-HW-AgentGateway-User-Id`，或显式配置的 server-side service token。
+  `X-HW-AgentGateway-User-Id`。
 - Browser result page 只接收完成/失败 UI status；浏览器不负责 complete 业务决策。
 - production replay guard 使用 PostgreSQL `oauth2_callback_states` 表；未配置
   `POSTGRES_DSN` 的本地开发才使用进程内 fallback。

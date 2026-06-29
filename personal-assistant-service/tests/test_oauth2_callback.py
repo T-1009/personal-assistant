@@ -94,7 +94,7 @@ def test_backend_callback_openapi_documents_html_and_json():
 
 
 @pytest.mark.asyncio
-async def test_backend_callback_completes_identity_with_state_user_id(
+async def test_backend_callback_completes_identity_with_authorization_user_token(
     client,
     calendar_settings,
 ):
@@ -113,6 +113,7 @@ async def test_backend_callback_completes_identity_with_state_user_id(
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
+            headers={"Authorization": "Bearer callback-user-token"},
         )
 
     assert response.status_code == 200
@@ -121,7 +122,8 @@ async def test_backend_callback_completes_identity_with_state_user_id(
     identity_client.complete_resource_token_auth.assert_called_once()
     kwargs = identity_client.complete_resource_token_auth.call_args.kwargs
     assert kwargs["session_uri"] == "urn:uuid:test"
-    assert kwargs["user_identifier"].user_id == "state-user"
+    assert kwargs["user_identifier"].user_token == "callback-user-token"
+    assert kwargs["user_identifier"].user_id is None
     assert len(store.begin_calls) == 1
     assert len(store.completed_calls) == 1
 
@@ -146,7 +148,10 @@ async def test_backend_callback_returns_json_for_local_fallback(
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
-            headers={"Accept": "application/json"},
+            headers={
+                "Accept": "application/json",
+                "Authorization": "Bearer callback-user-token",
+            },
         )
 
     assert response.status_code == 200
@@ -318,11 +323,41 @@ async def test_backend_callback_reports_identity_permission_error(
                 "session_uri": "urn:uuid:test",
                 "state": state,
             },
+            headers={"Authorization": "Bearer callback-user-token"},
         )
 
     assert response.status_code == 200
     assert "授权失败" in response.text
     assert "日历授权服务权限尚未配置完成" in response.text
+    assert len(store.clear_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_backend_callback_requires_authorization_user_token(
+    client,
+    calendar_settings,
+):
+    identity_client = MagicMock()
+    store = FakeOAuth2CallbackStore()
+    state = _state(calendar_settings, user_id="state-user")
+
+    with (
+        patch("app.main.get_settings", return_value=calendar_settings),
+        patch("app.main.IdentityClient", return_value=identity_client),
+    ):
+        app.state.oauth2_callback_store = store
+        response = await client.get(
+            "/auth/oauth2/callback/m365-calendar",
+            params={
+                "session_uri": "urn:uuid:test",
+                "state": state,
+            },
+        )
+
+    assert response.status_code == 200
+    assert "授权失败" in response.text
+    assert "请保持原聊天窗口处于登录状态" in response.text
+    identity_client.complete_resource_token_auth.assert_not_called()
     assert len(store.clear_calls) == 1
 
 

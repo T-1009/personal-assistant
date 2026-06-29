@@ -9,7 +9,7 @@ related: ["feature-15-calendar-agentarts-full-oauth2"]
 > completion 从多个 Web Chat tab 迁移到 Cloudflare Pages BFF + Service-owned
 > callback。OAuth provider 先落到 `/auth/callback/m365-calendar` Pages Function；
 > BFF server-side 转发 callback query 到 Service；通过 callback-only HttpOnly
-> context cookies 或可选 service Authorization 通过 AgentArts Gateway，并可注入 shared
+> context cookies 恢复用户 Authorization / session / user headers，并可注入 shared
 > secret。Web Chat 只接收 state-scoped UI status，不再调用 legacy
 > `POST /invocations/auth/oauth2/complete`，callback 也不再依赖 MSAL
 > `localStorage` token cache。
@@ -113,7 +113,7 @@ sequenceDiagram
     CB->>OtherUI: 同一 BroadcastChannel envelope
     UI->>API: POST /invocations/auth/oauth2/complete
     OtherUI->>API: 也可能 POST /invocations/auth/oauth2/complete
-    API->>IdSvc: complete_resource_token_auth(user_id, session_uri)
+    API->>IdSvc: complete_resource_token_auth(legacy request identity, session_uri)
     IdSvc-->>API: 可能返回 400 AgentIdentityTokenVault.1002<br/>request identity != session identity
     API-->>OtherUI: auth session failed
     OtherUI-->>User: 错误 tab / stale AuthCard 显示 Authorization session failed
@@ -136,7 +136,7 @@ sequenceDiagram
     BFF->>Agent: server-side GET /auth/oauth2/callback/m365-calendar<br/>Gateway context + BFF shared secret
     Agent->>Agent: 验证 signed state<br/>user_id / session_id / provider / nonce
     Agent->>DB: mark nonce active / completed
-    Agent->>IdSvc: complete_resource_token_auth(session_uri, state.user_id)
+    Agent->>IdSvc: complete_resource_token_auth(session_uri, Authorization user_token)
     IdSvc-->>Agent: success / controlled failure
     Agent-->>BFF: 返回 callback result HTML
     BFF-->>UI: result page UI status<br/>provider + oauth2_state + complete|failed
@@ -145,8 +145,10 @@ sequenceDiagram
 
 ## 修复决策
 
-- Service callback endpoint 使用 signed state 中的 trusted `user_id`，不再依赖任一
-  Web Chat tab 的当前 id token / session context 完成 Resource Token Auth。
+- Service callback endpoint 使用 signed state 中的 trusted `user_id` / `session_id`
+  做 state 绑定和 replay control，但 complete 阶段向 AgentArts Identity 传入
+  callback context cookies 恢复的 `Authorization` user token，避免
+  `user_id` strategy 与平台创建 session 时的 user-token identity 不一致。
 - 主聊天窗口 callback coordinator 降级为 UI status observer；Web Chat tab 不承担
   complete 业务逻辑。
 - 多个 Web Chat tab 可共享 `m365-calendar-auth` BroadcastChannel，但 channel 上只传播
@@ -154,7 +156,7 @@ sequenceDiagram
 - Cloudflare Pages BFF 不把 callback 请求中的浏览器 Authorization / Cookie 原样透传给
   upstream；通过 Gateway 时使用 `/invocations` 阶段写入的短时 callback-only
   HttpOnly context cookies 恢复 `Authorization`、`x-hw-agentarts-session-id` 和
-  `X-HW-AgentGateway-User-Id`，或显式配置的 service token。
+  `X-HW-AgentGateway-User-Id`。
 - callback result page 只有在后端 complete 已完成 / 失败后，才展示最终状态。
 - replay / duplicate callback 状态写入 PostgreSQL；本地未配置数据库时才使用进程内
   fallback。
@@ -164,8 +166,8 @@ sequenceDiagram
 
 - callback result page 只有在 Service callback endpoint 完成真实 complete 后，才展示
   最终“授权完成”状态。
-- Service 调用 `complete_resource_token_auth` 时使用 signed state 绑定的 trusted
-  `user_id`，必须与创建 AgentArts OAuth2 session 的 identity 一致。
+- Service 调用 `complete_resource_token_auth` 时使用 callback context 恢复的
+  `Authorization` user token，必须与创建 AgentArts OAuth2 session 的 identity 一致。
 - 如果 AgentArts 返回 `AgentIdentityTokenVault.1002`，前端应展示准确、可恢复的错误，
   不应误导为用户拒绝授权或普通 session 过期。
 - 重复 callback、旧 callback、跨 tab callback 应被识别并返回受控结果，不应污染当前
