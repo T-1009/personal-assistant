@@ -45,6 +45,7 @@ describe("Cloudflare Pages invocations proxy", () => {
           Cookie: "should-not-be-forwarded=true",
           "Content-Type": "application/json",
           "x-hw-agentarts-session-id": "test-session",
+          "X-HW-AgentGateway-User-Id": "test-user",
         },
         body: JSON.stringify({ message: "hello", stream: true }),
       },
@@ -69,6 +70,20 @@ describe("Cloudflare Pages invocations proxy", () => {
     });
     expect(response.headers.get("Content-Type")).toContain("text/event-stream");
     expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_auth=Bearer%20test-jwt",
+    );
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_session=test-session",
+    );
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_user=test-user",
+    );
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "Path=/auth/callback/m365-calendar",
+    );
+    expect(response.headers.get("Set-Cookie")).toContain("HttpOnly");
+    expect(response.headers.get("Set-Cookie")).toContain("SameSite=Lax");
     expect(await response.text()).toBe("data: token\n\n");
   });
 
@@ -212,7 +227,7 @@ describe("Cloudflare Pages invocations proxy", () => {
     );
   });
 
-  it("BFF callback forwards only server-side callback headers", async () => {
+  it("BFF callback uses callback auth cookie without forwarding browser auth", async () => {
     const mockFetch = vi.fn().mockResolvedValue(
       new Response("<html>done</html>", {
         status: 200,
@@ -227,7 +242,11 @@ describe("Cloudflare Pages invocations proxy", () => {
         method: "GET",
         headers: {
           Authorization: "Bearer browser-token",
-          Cookie: "session=browser-cookie",
+          Cookie:
+            "session=browser-cookie; "
+            + "pa_oauth2_callback_auth=Bearer%20callback-token; "
+            + "pa_oauth2_callback_session=callback-session; "
+            + "pa_oauth2_callback_user=callback-user",
         },
       },
     );
@@ -245,16 +264,33 @@ describe("Cloudflare Pages invocations proxy", () => {
       "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
     );
     expect(forwardedRequest.headers.get("Accept")).toBe("text/html");
-    expect(forwardedRequest.headers.get("Authorization")).toBeNull();
+    expect(forwardedRequest.headers.get("Authorization")).toBe(
+      "Bearer callback-token",
+    );
+    expect(forwardedRequest.headers.get("x-hw-agentarts-session-id")).toBe(
+      "callback-session",
+    );
+    expect(forwardedRequest.headers.get("X-HW-AgentGateway-User-Id")).toBe(
+      "callback-user",
+    );
     expect(forwardedRequest.headers.get("Cookie")).toBeNull();
     expect(forwardedRequest.headers.get("x-pa-oauth2-callback-secret")).toBe(
       "bff-secret",
     );
     expect(response.headers.get("Content-Type")).toContain("text/html");
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_auth=; Max-Age=0",
+    );
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_session=; Max-Age=0",
+    );
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_user=; Max-Age=0",
+    );
     expect(await response.text()).toBe("<html>done</html>");
   });
 
-  it("BFF callback can attach server-side Authorization when configured", async () => {
+  it("BFF callback prefers configured server-side Authorization over cookie", async () => {
     const mockFetch = vi.fn().mockResolvedValue(new Response("<html>done</html>"));
     globalThis.fetch = mockFetch;
 
@@ -264,6 +300,7 @@ describe("Cloudflare Pages invocations proxy", () => {
         method: "GET",
         headers: {
           Authorization: "Bearer browser-token",
+          Cookie: "pa_oauth2_callback_auth=Bearer%20callback-token",
         },
       },
     );
@@ -287,7 +324,15 @@ describe("Cloudflare Pages invocations proxy", () => {
 
     const request = new Request(
       "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state&session_uri=urn:test",
-      { method: "GET" },
+      {
+        method: "GET",
+        headers: {
+          Cookie:
+            "pa_oauth2_callback_auth=Bearer%20callback-token; "
+            + "pa_oauth2_callback_session=callback-session; "
+            + "pa_oauth2_callback_user=callback-user",
+        },
+      },
     );
 
     const response = await onRequestGetCalendarCallback({ request, env });
@@ -295,6 +340,9 @@ describe("Cloudflare Pages invocations proxy", () => {
 
     expect(response.status).toBe(502);
     expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_auth=; Max-Age=0",
+    );
     expect(text).toContain("授权失败");
     expect(text).toContain('"requestId":"signed-state"');
     expect(text).toContain('"status":"failed"');

@@ -1,4 +1,9 @@
-import { buildUpstreamUrl } from "../../invocations/[[path]].js";
+import {
+  applyCallbackContextHeaders,
+  applyExpiredCallbackContextCookies,
+  buildUpstreamUrl,
+  getCallbackContextFromCookies,
+} from "../../invocations/[[path]].js";
 
 const CALLBACK_PUBLIC_PATH = "/auth/callback/m365-calendar";
 const CALLBACK_UPSTREAM_PREFIX = "auth/oauth2/callback/m365-calendar";
@@ -82,6 +87,7 @@ export async function onRequestGet({ request, env }) {
   try {
     const upstreamUrl = buildCallbackUpstreamUrl(env, request.url);
     const headers = new Headers({ Accept: "text/html" });
+    applyCallbackContextHeaders(headers, request);
     const authorization = env?.AGENTARTS_OAUTH_CALLBACK_AUTHORIZATION?.trim();
     if (authorization) {
       headers.set("Authorization", authorization);
@@ -100,6 +106,9 @@ export async function onRequestGet({ request, env }) {
     );
     const responseHeaders = new Headers(upstreamResponse.headers);
     responseHeaders.set("Cache-Control", "no-store");
+    if (getCallbackContextFromCookies(request).authorization) {
+      applyExpiredCallbackContextCookies(responseHeaders);
+    }
 
     return new Response(upstreamResponse.body, {
       status: upstreamResponse.status,
@@ -108,12 +117,16 @@ export async function onRequestGet({ request, env }) {
     });
   } catch (error) {
     console.error("OAuth2 callback BFF request failed", error);
+    const responseHeaders = new Headers({
+      "Cache-Control": "no-store",
+      "Content-Type": "text/html; charset=utf-8",
+    });
+    if (getCallbackContextFromCookies(request).authorization) {
+      applyExpiredCallbackContextCookies(responseHeaders);
+    }
     return new Response(bffFailurePage(request.url), {
       status: 502,
-      headers: {
-        "Cache-Control": "no-store",
-        "Content-Type": "text/html; charset=utf-8",
-      },
+      headers: responseHeaders,
     });
   }
 }
