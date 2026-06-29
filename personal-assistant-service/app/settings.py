@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     iam_users_region: str = "cn-southwest-2"
     iam_users_endpoint: AnyHttpUrl | None = None
 
+    github_provider_name: str = "github-provider"
+    github_scopes: str = "repo,read:user"
+
     m365_calendar_provider_name: str = "m365-calendar-provider"
     m365_calendar_scopes: str = "https://graph.microsoft.com/Calendars.Read"
     oauth2_calendar_callback_url: AnyHttpUrl | None = (
@@ -74,6 +77,8 @@ class Settings(BaseSettings):
         "llm_model",
         "llm_credential_provider",
         "gitee_provider_name",
+        "github_provider_name",
+        "github_scopes",
         "iam_users_provider_name",
         "iam_users_agency_session_name",
         "iam_users_region",
@@ -110,6 +115,15 @@ class Settings(BaseSettings):
         if self.iam_users_endpoint:
             return str(self.iam_users_endpoint).rstrip("/")
         return f"https://iam.{self.iam_users_region}.myhuaweicloud.com"
+
+    @property
+    def github_scope_list(self) -> list[str]:
+        """Return configured GitHub OAuth2 scopes."""
+        return [
+            scope.strip()
+            for scope in self.github_scopes.split(",")
+            if scope.strip()
+        ]
 
     @property
     def m365_calendar_scope_list(self) -> list[str]:
