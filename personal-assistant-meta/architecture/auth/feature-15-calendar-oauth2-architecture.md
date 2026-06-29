@@ -36,7 +36,7 @@ sequenceDiagram
 
     User->>UI: 请求查看日历
     UI->>Agent: POST /invocations<br/>Authorization: Bearer ID Token
-    BFF-->>UI: Set-Cookie callback auth<br/>HttpOnly, callback path
+    BFF-->>UI: Set-Cookie callback context<br/>HttpOnly, callback path
     Agent->>Agent: 设置 Runtime Context<br/>user_id / session_id / custom_state / workload token
     Agent->>SDK: 调用 Calendar Tool<br/>require_access_token(provider=m365-calendar-provider)
     SDK->>IdSvc: get_resource_oauth2_token
@@ -45,7 +45,7 @@ sequenceDiagram
     Agent-->>UI: SSE AuthCard
     User->>MS: 打开 auth_url 并完成授权
     MS-->>BFF: GET /auth/callback/m365-calendar<br/>state / session_uri / error
-    BFF->>Agent: server-side GET /auth/oauth2/callback/m365-calendar<br/>callback auth + BFF shared secret
+    BFF->>Agent: server-side GET /auth/oauth2/callback/m365-calendar<br/>Gateway context + BFF shared secret
     Agent->>Agent: 校验 signed state<br/>user_id / session_id / provider / nonce
     Agent->>DB: mark nonce active / completed
     Agent->>IdSvc: complete_resource_token_auth(session_uri, state.user_id)
@@ -67,7 +67,7 @@ sequenceDiagram
 | 组件 | 职责 | 不负责 |
 |------|------|--------|
 | Web Chat 主窗口 | 展示 AuthCard；打开授权 URL；监听 callback result page 的 UI status；按 `oauth2_state` 更新匹配 AuthCard | 不调用 `complete_resource_token_auth`；不决定 OAuth2 session ownership |
-| Cloudflare Pages BFF | 承接 OAuth provider redirect；server-side 转发 callback query 到 Service；用 callback-only HttpOnly cookie 恢复 Gateway Authorization；注入可选 BFF shared secret；返回 Service result HTML | 不把 callback 请求中的浏览器 Authorization/Cookie 原样透传给 upstream；不执行业务 ownership 判断；不调用 AgentArts Identity SDK |
+| Cloudflare Pages BFF | 承接 OAuth provider redirect；server-side 转发 callback query 到 Service；用 callback-only HttpOnly cookies 恢复 Gateway context headers；注入可选 BFF shared secret；返回 Service result HTML | 不把 callback 请求中的浏览器 Authorization/Cookie 原样透传给 upstream；不执行业务 ownership 判断；不调用 AgentArts Identity SDK |
 | React Callback Shell | 仅作为 Vite 本地开发 fallback；生产 callback path 由 Pages Function 优先处理 | 不获取 MSAL token；不参与 production complete 协议 |
 | Personal Assistant Service | 生成 signed state；校验 callback state；调用 `complete_resource_token_auth`；用 PostgreSQL/本地 fallback 控制 replay / stale callback 语义 | 不把第三方 access token 写入 response 或 prompt |
 | PostgreSQL | production callback nonce active/completed 状态与过期时间 | 不保存 Microsoft access token |
@@ -103,7 +103,10 @@ Cloudflare Pages Function BFF:
   functions/auth/callback/m365-calendar.js
   -> <direct service callback URL> 或
      AgentArts Gateway /runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar
-  Header: Authorization from callback-only HttpOnly cookie
+  Headers from callback-only HttpOnly cookies:
+    Authorization
+    x-hw-agentarts-session-id
+    X-HW-AgentGateway-User-Id
   Header: X-PA-OAuth2-Callback-Secret
 
 AgentArts Gateway:
@@ -142,7 +145,7 @@ AgentArtsRuntimeContext.set_oauth2_callback_url(
 | `user_id` | Gateway 注入的 `X-HW-AgentGateway-User-Id`，或本地 mock header | 本地测试、mock、无真实 Gateway JWT 的开发路径 |
 | `user_token` | 请求 `Authorization: Bearer <jwt>` 中的 JWT | 当前 Calendar BFF callback 主流程不使用；保留为 AgentArts API 可用字段说明 |
 
-主流程中 Cloudflare BFF 承载 callback query、Gateway Authorization transport
+主流程中 Cloudflare BFF 承载 callback query、Gateway context transport
 和 server-to-server trust；Service 使用 signed state 中的 `user_id` 作为
 `complete_resource_token_auth` 的 trust boundary。该 `user_id` 不是浏览器 body
 提供的值，而是 Service 在创建 OAuth2 state 时从 AgentArts Gateway trusted header
@@ -189,7 +192,8 @@ ClientRequestException - {
 - `state` 必须由服务端签名并绑定 Gateway `user_id`、session 和 provider。
 - Cloudflare Pages BFF 不把 callback 请求上的浏览器 Authorization / Cookie 原样透传给
   upstream；通过 Gateway 时只使用 `/invocations` 阶段写入的短时 callback-only
-  HttpOnly auth cookie，或显式配置的 server-side service token。
+  HttpOnly cookies 恢复 `Authorization`、`x-hw-agentarts-session-id` 和
+  `X-HW-AgentGateway-User-Id`，或显式配置的 server-side service token。
 - Browser result page 只接收完成/失败 UI status；浏览器不负责 complete 业务决策。
 - production replay guard 使用 PostgreSQL `oauth2_callback_states` 表；未配置
   `POSTGRES_DSN` 的本地开发才使用进程内 fallback。
