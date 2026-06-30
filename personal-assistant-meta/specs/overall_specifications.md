@@ -68,17 +68,17 @@ flowchart LR
 
 ## 3. 功能模块
 
-详细 use case 已拆分到 [`UseCase/`](UseCase/README.md)。当前功能模块分为两类：基础身份能力和已注册 tool 能力。
+详细 use case 已拆分到 [`UseCase/`](use-cases/README.md)。当前功能模块分为两类：基础身份能力和已注册 tool 能力。
 
 | 类型 | 模块 | Use Case 文档 | 当前状态 |
 |---|---|---|---|
-| 基础身份能力 | Web Chat Inbound Identity | [`UseCase/web-chat-inbound-identity.md`](UseCase/web-chat-inbound-identity.md) | 已实现 |
-| 基础身份能力 | Session Isolation | [`UseCase/session-isolation.md`](UseCase/session-isolation.md) | 已实现 |
-| Tool 能力 | Email Tools | [`UseCase/email-tools.md`](UseCase/email-tools.md) | 已实现 |
-| Tool 能力 | Calendar Tools | [`UseCase/calendar-tools.md`](UseCase/calendar-tools.md) | 已实现 |
-| Tool 能力 | GitHub Tools | [`UseCase/github-tools.md`](UseCase/github-tools.md) | 已实现 |
-| Tool 能力 | Gitee Tools | [`UseCase/gitee-tools.md`](UseCase/gitee-tools.md) | 已实现 |
-| Tool 能力 | HuaweiCloud IAM Tools | [`UseCase/huaweicloud-iam-tools.md`](UseCase/huaweicloud-iam-tools.md) | 已实现 |
+| 基础身份能力 | Web Chat Inbound Identity | [`UseCase/web-chat-inbound-identity.md`](use-cases/web-chat-inbound-identity.md) | 已实现 |
+| 基础身份能力 | Session Isolation | [`UseCase/session-isolation.md`](use-cases/session-isolation.md) | 已实现 |
+| Tool 能力 | Email Tools | [`UseCase/email-tools.md`](use-cases/email-tools.md) | 已实现 |
+| Tool 能力 | Calendar Tools | [`UseCase/calendar-tools.md`](use-cases/calendar-tools.md) | 已实现 |
+| Tool 能力 | GitHub Tools | [`UseCase/github-tools.md`](use-cases/github-tools.md) | 已实现 |
+| Tool 能力 | Gitee Tools | [`UseCase/gitee-tools.md`](use-cases/gitee-tools.md) | 已实现 |
+| Tool 能力 | HuaweiCloud IAM Tools | [`UseCase/huaweicloud-iam-tools.md`](use-cases/huaweicloud-iam-tools.md) | 已实现 |
 
 ### 3.1 Web Chat Inbound Identity
 
@@ -88,7 +88,7 @@ flowchart LR
 - **可信身份来源**：`X-HW-AgentGateway-User-Id`。
 - **会话来源**：`x-hw-agentarts-session-id`。
 - **Workload Identity**：`X-HW-AgentGateway-Workload-Access-Token` 用于 Runtime 访问 AgentArts Identity。
-- **详细规格**：[`UseCase/web-chat-inbound-identity.md`](UseCase/web-chat-inbound-identity.md)。
+- **详细规格**：[`UseCase/web-chat-inbound-identity.md`](use-cases/web-chat-inbound-identity.md)。
 
 ### 3.2 Session Isolation
 
@@ -98,7 +98,7 @@ flowchart LR
 - **不同 Session 隔离**：同一用户的不同 Session 不共享 checkpoint。
 - **跨用户隔离**：即使不同用户使用相同 session id，最终 thread_id 仍不同。
 - **Checkpoint 后端**：支持 in-memory、SQLite 和 PostgreSQL。
-- **详细规格**：[`UseCase/session-isolation.md`](UseCase/session-isolation.md)。
+- **详细规格**：[`UseCase/session-isolation.md`](use-cases/session-isolation.md)。
 
 ### 3.3 Email Tools
 
@@ -108,7 +108,7 @@ Email Tools 以 User Federation 模式调用 Microsoft Graph Mail API，支持�
 - **读操作**：`list_emails`、`get_email`、`search_emails`。
 - **写操作**：`send_email`、`reply_to_email`。
 - **Guard**：发送和回复必须先展示预览并获得用户明确确认。
-- **详细规格**：[`UseCase/email-tools.md`](UseCase/email-tools.md)。
+- **详细规格**：[`UseCase/email-tools.md`](use-cases/email-tools.md)。
 
 ### 3.4 Calendar Tools
 
@@ -118,7 +118,7 @@ Calendar Tools 以 User Federation 模式只读访问 Microsoft 365 Calendar，�
 - **Scope**：`https://graph.microsoft.com/Calendars.Read`。
 - **只读能力**：`list_calendar_events`、`get_calendar_event`、`search_calendar_events`。
 - **OAuth2 Full Flow**：Service-owned callback、signed state、replay guard、`complete_resource_token_auth`。
-- **详细规格**：[`UseCase/calendar-tools.md`](UseCase/calendar-tools.md)。
+- **详细规格**：[`UseCase/calendar-tools.md`](use-cases/calendar-tools.md)。
 
 ### 3.5 GitHub Tools
 
@@ -128,7 +128,7 @@ GitHub Tools 以用户身份访问 GitHub API，支持仓库列表、目录查�
 - **读操作**：`github_list_repositories`、`github_list_repo_contents`、`github_get_file_content`、`github_search_code`。
 - **写操作**：`github_star_repository`。
 - **Tool-level Guard**：`confirm=False` 返回预览，用户确认后 `confirm=True` 才执行 star。
-- **详细规格**：[`UseCase/github-tools.md`](UseCase/github-tools.md)。
+- **详细规格**：[`UseCase/github-tools.md`](use-cases/github-tools.md)。
 
 ### 3.6 Gitee Tools
 
@@ -137,7 +137,7 @@ Gitee Tools 以用户身份访问 Gitee API，当前提供仓库列表读取能�
 - **Provider**：`gitee-provider`。
 - **只读能力**：`gitee_list_repositories`。
 - **授权方式**：OAuth2 User Federation + AuthCard。
-- **详细规格**：[`UseCase/gitee-tools.md`](UseCase/gitee-tools.md)。
+- **详细规格**：[`UseCase/gitee-tools.md`](use-cases/gitee-tools.md)。
 
 ### 3.7 HuaweiCloud IAM Tools
 
@@ -147,7 +147,7 @@ HuaweiCloud IAM Tools 使用 AgentArts Identity STS Credential Provider 获取�
 - **能力**：`huaweicloud_list_iam_users`。
 - **凭据类型**：STS 临时凭证，不使用长期 AK/SK。
 - **安全边界**：只读查询，不返回 AK/SK/Token。
-- **详细规格**：[`UseCase/huaweicloud-iam-tools.md`](UseCase/huaweicloud-iam-tools.md)。
+- **详细规格**：[`UseCase/huaweicloud-iam-tools.md`](use-cases/huaweicloud-iam-tools.md)。
 
 ---
 
