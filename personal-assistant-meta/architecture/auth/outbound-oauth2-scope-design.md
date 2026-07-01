@@ -48,7 +48,30 @@ EMAIL_OAUTH_SCOPES = [
 )
 ```
 
-### 3.2 权限控制上移：依赖 Guardrail 而非 Identity
+### 3.2 Token 注入边界下沉到 private authorized boundary
+OAuth2 access token 是 Runtime credential，不是 LLM 可见的业务输入。所有注册给 Agent / ToolNode 的 public tool 只暴露业务参数，例如 `folder`、`query`、`owner/repo`、`event_id`；`access_token`、`api_key` 或其他 injected credential 不得出现在 public tool 签名和 tool schema 中。
+
+```mermaid
+flowchart TD
+    LLM["LLM / ToolNode"] --> Public["Public tool<br/>business parameters only"]
+    Public --> Validate["Input validation<br/>preview / confirmation / guardrail"]
+    Validate --> NeedAPI{"Need external API?"}
+    NeedAPI -->|"No"| LocalResult["Return validation or preview result"]
+    NeedAPI -->|"Yes"| Boundary["Private authorized boundary<br/>@require_access_token"]
+    Boundary --> Identity["AgentArts Identity SDK"]
+    Identity --> Token["Injected access_token"]
+    Token --> Impl["Private HTTP implementation"]
+    Impl --> API["External API"]
+```
+
+落地规则：
+
+- `@require_access_token` 只放在 private authorized boundary，例如 `_github_request()`、`_gitee_request()`、`_send_email_authorized()`、`_list_calendar_events_authorized()`。
+- 同一 Domain 的 `provider_name`、`scopes`、`auth_flow`、`on_auth_url` 使用集中常量或集中 helper，避免重复声明产生 drift。
+- public tool 必须先执行业务参数校验和确认流；只有需要真实外部 API 调用时，才进入 private authorized boundary。
+- 未授权或授权 pending 时，private boundary 返回统一 `auth_required` 结果；public tool 只负责透传或按 Domain 标准格式包装。
+
+### 3.3 权限控制上移：依赖 Guardrail 而非 Identity
 既然为了架构妥协向用户超额申请了 `Mail.Send` 权限，系统应当如何在不打断连贯对话的前提下，保障高危操作的安全性？
 
 **解决方案：将防御机制从 Identity 层面移到 Agent Runtime（应用层）层面。**

@@ -6,17 +6,17 @@ import pytest
 
 import app.tools.calendar_tools as ct
 
-_TOOL_NAMES = [
-    "list_calendar_events",
-    "get_calendar_event",
-    "search_calendar_events",
+_AUTHORIZED_BOUNDARIES = [
+    "_list_calendar_events_authorized",
+    "_get_calendar_event_authorized",
+    "_search_calendar_events_authorized",
 ]
 
 
 @pytest.fixture(autouse=True)
-def unwrap_calendar_tools():
+def unwrap_calendar_authorized_boundaries():
     saved = {}
-    for name in _TOOL_NAMES:
+    for name in _AUTHORIZED_BOUNDARIES:
         wrapped = getattr(ct, name)
         saved[name] = wrapped
         raw = wrapped
@@ -156,7 +156,7 @@ async def test_search_calendar_events_with_time_window_filters_locally():
 
 @pytest.mark.asyncio
 async def test_calendar_tools_return_auth_required_without_access_token():
-    result = await ct._list_calendar_events_impl(
+    result = await ct._list_calendar_events_authorized(
         start_time="2026-06-22T00:00:00",
         end_time="2026-06-23T00:00:00",
         calendar_id="primary",
@@ -204,7 +204,49 @@ def test_push_auth_complete_streams_matching_oauth2_state():
 
 
 @pytest.mark.asyncio
-async def test_calendar_tool_forwards_injected_access_token_to_impl():
+async def test_calendar_public_tool_schema_excludes_access_token():
+    import inspect
+
+    assert list(inspect.signature(ct.list_calendar_events).parameters) == [
+        "start_time",
+        "end_time",
+        "calendar_id",
+        "limit",
+    ]
+    assert list(inspect.signature(ct.get_calendar_event).parameters) == [
+        "event_id",
+        "calendar_id",
+    ]
+    assert list(inspect.signature(ct.search_calendar_events).parameters) == [
+        "query",
+        "start_time",
+        "end_time",
+        "calendar_id",
+        "limit",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_calendar_public_tool_calls_authorized_boundary():
+    async def fake_authorized(**kwargs):
+        return {"ok": True, "kwargs": kwargs}
+
+    with patch(
+        "app.tools.calendar_tools._list_calendar_events_authorized",
+        side_effect=fake_authorized,
+    ):
+        result = await ct.list_calendar_events(
+            "2026-06-22T00:00:00",
+            "2026-06-23T00:00:00",
+        )
+
+    assert result["ok"] is True
+    assert result["kwargs"]["start_time"] == "2026-06-22T00:00:00"
+    assert "access_token" not in result["kwargs"]
+
+
+@pytest.mark.asyncio
+async def test_calendar_authorized_boundary_forwards_injected_token_to_impl():
     async def fake_impl(**kwargs):
         return {"ok": True, "kwargs": kwargs}
 
@@ -212,9 +254,11 @@ async def test_calendar_tool_forwards_injected_access_token_to_impl():
         "app.tools.calendar_tools._list_calendar_events_impl",
         side_effect=fake_impl,
     ):
-        result = await ct.list_calendar_events(
-            "2026-06-22T00:00:00",
-            "2026-06-23T00:00:00",
+        result = await ct._list_calendar_events_authorized(
+            start_time="2026-06-22T00:00:00",
+            end_time="2026-06-23T00:00:00",
+            calendar_id="primary",
+            limit=20,
             access_token="token",
         )
 

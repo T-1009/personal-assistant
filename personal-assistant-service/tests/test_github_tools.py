@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import inspect
 
 import pytest
 from httpx import Request, Response
@@ -16,6 +17,19 @@ from app.tools.github_tools import (
     search_code,
     star_repository,
 )
+
+
+def test_github_public_tool_signatures_exclude_access_token():
+    signatures = {
+        "list_repositories": list_repositories,
+        "list_repo_contents": list_repo_contents,
+        "get_file_content": get_file_content,
+        "search_code": search_code,
+        "star_repository": star_repository,
+    }
+
+    for name, func in signatures.items():
+        assert "access_token" not in inspect.signature(func).parameters, name
 
 
 @pytest.mark.asyncio
@@ -174,10 +188,13 @@ async def test_raw_github_request_handles_put_no_content(monkeypatch):
 @pytest.mark.asyncio
 async def test_auth_required_returns_structured_response(monkeypatch):
     """When _github_request signals auth is pending, tools propagate it."""
+
     async def fake_request(method, path, *, params=None):
         return {
             "auth_required": True,
-            "error": "GitHub authorization pending. Please follow the authorization link.",
+            "error": (
+                "GitHub authorization pending. Please follow the authorization link."
+            ),
         }
 
     monkeypatch.setattr("app.tools.github_tools._github_request", fake_request)

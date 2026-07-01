@@ -85,7 +85,7 @@ sequenceDiagram
 
 | 能力 | 在 Calendar Tools 中的使用 |
 |---|---|
-| OAuth2 User Federation | Calendar tools 通过 `@require_access_token(provider_name=CALENDAR_PROVIDER, auth_flow="USER_FEDERATION")` 以用户身份读取日历 |
+| OAuth2 User Federation | Calendar public tools 只接收业务参数，内部调用 `_..._authorized` private boundary；该 boundary 通过 `@require_access_token(provider_name=CALENDAR_PROVIDER, auth_flow="USER_FEDERATION")` 以用户身份读取日历 |
 | Least Privilege | Calendar 首版只读，仅使用 `https://graph.microsoft.com/Calendars.Read` |
 | Callback URL | `callback_url` 指向 `/auth/callback/m365-calendar`，由 Cloudflare Pages BFF 承接 |
 | Signed State | Service 为每次 `/invocations` 生成绑定 `user_id`、`session_id`、provider 的 signed state |
@@ -115,6 +115,8 @@ Calendar Tools 当前只支持读取：
 
 - Browser 只展示授权状态，不调用 `complete_resource_token_auth`。
 - Callback 请求中的 `user_id` 不可信；Service 使用 signed state 和 Gateway context 做绑定。
+- public Calendar tool schema 不包含 `access_token`；LLM 只填写 `start_time`、`end_time`、`event_id`、`calendar_id`、`query`、`limit` 等业务参数。
+- Microsoft Graph access token 只在 `_list_calendar_events_authorized`、`_get_calendar_event_authorized`、`_search_calendar_events_authorized` private boundary 内由 Identity SDK 注入。
 - `session_uri` 只在 callback completion 中使用，不写入 LLM prompt。
 - Microsoft Graph access token 不出 AgentArts Identity Token Vault。
 - 日历内容可能包含隐私信息，Agent 只读取并总结用户请求范围内的数据。

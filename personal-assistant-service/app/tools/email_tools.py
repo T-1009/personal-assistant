@@ -9,6 +9,16 @@ from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
+_SETTINGS = get_settings()
+GRAPH_BASE_URL = str(_SETTINGS.graph_base_url).rstrip("/")
+EMAIL_PROVIDER = "m365-email-provider"
+EMAIL_SCOPES = (
+    "https://graph.microsoft.com/Mail.Read",
+    "https://graph.microsoft.com/Mail.ReadWrite",
+    "https://graph.microsoft.com/Mail.Send",
+)
+EMAIL_AUTH_FLOW = "USER_FEDERATION"
+
 
 async def handle_auth_url(auth_url: str) -> None:
     """Callback triggered by the SDK when user authentication is required.
@@ -23,12 +33,10 @@ async def handle_auth_url(auth_url: str) -> None:
         writer(
             {
                 "type": "system_message",
-                "system_message": (
-                    "邮件功能需要您的授权。请点击该链接进行授权"
-                ),
+                "system_message": ("邮件功能需要您的授权。请点击该链接进行授权"),
                 "auth_url": auth_url,
                 "auth_required": True,
-                "provider": "m365-email-provider",
+                "provider": EMAIL_PROVIDER,
             }
         )
     except RuntimeError:
@@ -58,12 +66,7 @@ def _push_auth_complete(provider: str) -> None:
             }
         )
     except RuntimeError:
-        logger.warning(
-            "get_stream_writer unavailable — auth_complete not streamed"
-        )
-
-
-GRAPH_BASE_URL = str(get_settings().graph_base_url).rstrip("/")
+        logger.warning("get_stream_writer unavailable — auth_complete not streamed")
 
 
 def _extract_graph_error(resp: httpx.Response) -> str:
@@ -101,8 +104,7 @@ def _auth_required_response() -> dict[str, Any]:
     return {
         "auth_required": True,
         "error": (
-            "Authorization pending. Please follow the authorization link "
-            "sent to you."
+            "Authorization pending. Please follow the authorization link sent to you."
         ),
     }
 
@@ -149,36 +151,53 @@ def _get_client() -> httpx.AsyncClient:
 
 # ── 1. list_emails ──
 
-@require_access_token(
-    provider_name="m365-email-provider",
-    scopes=[
-        "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/Mail.ReadWrite",
-        "https://graph.microsoft.com/Mail.Send",
-    ],
-    auth_flow="USER_FEDERATION",
-    on_auth_url=handle_auth_url,
-)
+
 async def list_emails(
     folder: str = "inbox",
     limit: int = 10,
-    access_token: str | None = None,
 ) -> dict[str, Any]:
     """列出指定文件夹中的邮件。
 
     Args:
         folder: 邮件文件夹名（inbox, sentitems, drafts 等），默认为 inbox
         limit: 返回邮件数量上限，默认 10
-        access_token: AgentArts Identity SDK 自动注入的 Microsoft Graph access token
 
     Returns:
         dict with keys: emails (list of {id, subject, from, receivedDateTime,
         isRead, importance}), count (int), folder (str)
     """
-    logger.debug("list_emails access_token: %s", access_token)
+    return await _list_emails_authorized(folder=folder, limit=limit)
+
+
+@require_access_token(
+    provider_name=EMAIL_PROVIDER,
+    into="access_token",
+    scopes=list(EMAIL_SCOPES),
+    auth_flow=EMAIL_AUTH_FLOW,
+    on_auth_url=handle_auth_url,
+)
+async def _list_emails_authorized(
+    *,
+    folder: str,
+    limit: int,
+    access_token: str | None = None,
+) -> dict[str, Any]:
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-email-provider")
+    _push_auth_complete(EMAIL_PROVIDER)
+    return await _list_emails_impl(
+        folder=folder,
+        limit=limit,
+        access_token=access_token,
+    )
+
+
+async def _list_emails_impl(
+    *,
+    folder: str = "inbox",
+    limit: int = 10,
+    access_token: str,
+) -> dict[str, Any]:
     try:
         client = _get_client()
         resp = await client.get(
@@ -199,9 +218,7 @@ async def list_emails(
                 "id": m.get("id"),
                 "subject": m.get("subject"),
                 "from": (
-                    (m.get("from") or {})
-                    .get("emailAddress", {})
-                    .get("name", "Unknown")
+                    (m.get("from") or {}).get("emailAddress", {}).get("name", "Unknown")
                 ),
                 "receivedDateTime": m.get("receivedDateTime"),
                 "isRead": m.get("isRead"),
@@ -218,34 +235,45 @@ async def list_emails(
 
 # ── 2. get_email ──
 
-@require_access_token(
-    provider_name="m365-email-provider",
-    scopes=[
-        "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/Mail.ReadWrite",
-        "https://graph.microsoft.com/Mail.Send",
-    ],
-    auth_flow="USER_FEDERATION",
-    on_auth_url=handle_auth_url,
-)
+
 async def get_email(
     email_id: str,
-    access_token: str | None = None,
 ) -> dict[str, Any]:
     """获取单封邮件的完整详情。
 
     Args:
         email_id: Microsoft Graph 邮件 ID
-        access_token: AgentArts Identity SDK 自动注入
 
     Returns:
         dict with: id, subject, body (plain text), from, toRecipients,
         ccRecipients, receivedDateTime, attachments (list of {name, size, contentType})
     """
-    logger.debug("get_email access_token: %s", access_token)
+    return await _get_email_authorized(email_id=email_id)
+
+
+@require_access_token(
+    provider_name=EMAIL_PROVIDER,
+    into="access_token",
+    scopes=list(EMAIL_SCOPES),
+    auth_flow=EMAIL_AUTH_FLOW,
+    on_auth_url=handle_auth_url,
+)
+async def _get_email_authorized(
+    *,
+    email_id: str,
+    access_token: str | None = None,
+) -> dict[str, Any]:
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-email-provider")
+    _push_auth_complete(EMAIL_PROVIDER)
+    return await _get_email_impl(email_id=email_id, access_token=access_token)
+
+
+async def _get_email_impl(
+    *,
+    email_id: str,
+    access_token: str,
+) -> dict[str, Any]:
     try:
         client = _get_client()
         resp = await client.get(
@@ -269,12 +297,10 @@ async def get_email(
             "body": data.get("body", {}).get("content", ""),
             "from": (data.get("from") or {}).get("emailAddress", {}),
             "toRecipients": [
-                r.get("emailAddress", {})
-                for r in data.get("toRecipients", [])
+                r.get("emailAddress", {}) for r in data.get("toRecipients", [])
             ],
             "ccRecipients": [
-                r.get("emailAddress", {})
-                for r in data.get("ccRecipients", [])
+                r.get("emailAddress", {}) for r in data.get("ccRecipients", [])
             ],
             "receivedDateTime": data.get("receivedDateTime"),
             "attachments": [
@@ -284,7 +310,9 @@ async def get_email(
                     "contentType": a.get("contentType"),
                 }
                 for a in data.get("attachments", [])
-            ] if data.get("hasAttachments") else [],
+            ]
+            if data.get("hasAttachments")
+            else [],
         }
     except Exception as e:
         logger.exception("get_email failed")
@@ -293,20 +321,10 @@ async def get_email(
 
 # ── 3. search_emails ──
 
-@require_access_token(
-    provider_name="m365-email-provider",
-    scopes=[
-        "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/Mail.ReadWrite",
-        "https://graph.microsoft.com/Mail.Send",
-    ],
-    auth_flow="USER_FEDERATION",
-    on_auth_url=handle_auth_url,
-)
+
 async def search_emails(
     query: str,
     limit: int = 10,
-    access_token: str | None = None,
 ) -> dict[str, Any]:
     """按关键词搜索邮件。
 
@@ -315,16 +333,43 @@ async def search_emails(
     Args:
         query: 搜索关键词（支持 KQL 语法）
         limit: 返回结果数量上限，默认 10
-        access_token: AgentArts Identity SDK 自动注入
 
     Returns:
         dict with keys: results (list of {id, subject, from, receivedDateTime, isRead}),
         count (int), query (str)
     """
-    logger.debug("search_emails access_token: %s", access_token)
+    return await _search_emails_authorized(query=query, limit=limit)
+
+
+@require_access_token(
+    provider_name=EMAIL_PROVIDER,
+    into="access_token",
+    scopes=list(EMAIL_SCOPES),
+    auth_flow=EMAIL_AUTH_FLOW,
+    on_auth_url=handle_auth_url,
+)
+async def _search_emails_authorized(
+    *,
+    query: str,
+    limit: int,
+    access_token: str | None = None,
+) -> dict[str, Any]:
     if not access_token:
         return _auth_required_response()
-    _push_auth_complete("m365-email-provider")
+    _push_auth_complete(EMAIL_PROVIDER)
+    return await _search_emails_impl(
+        query=query,
+        limit=limit,
+        access_token=access_token,
+    )
+
+
+async def _search_emails_impl(
+    *,
+    query: str,
+    limit: int = 10,
+    access_token: str,
+) -> dict[str, Any]:
     try:
         escaped_query = query.replace('"', '\\"')
         client = _get_client()
@@ -344,9 +389,7 @@ async def search_emails(
                 "id": m.get("id"),
                 "subject": m.get("subject"),
                 "from": (
-                    (m.get("from") or {})
-                    .get("emailAddress", {})
-                    .get("name", "Unknown")
+                    (m.get("from") or {}).get("emailAddress", {}).get("name", "Unknown")
                 ),
                 "receivedDateTime": m.get("receivedDateTime"),
                 "isRead": m.get("isRead"),
@@ -362,22 +405,12 @@ async def search_emails(
 
 # ── 4. send_email (Guard protected) ──
 
-@require_access_token(
-    provider_name="m365-email-provider",
-    scopes=[
-        "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/Mail.ReadWrite",
-        "https://graph.microsoft.com/Mail.Send",
-    ],
-    auth_flow="USER_FEDERATION",
-    on_auth_url=handle_auth_url,
-)
+
 async def send_email(
     to: list[str],
     subject: str,
     body: str,
     cc: list[str] | None = None,
-    access_token: str | None = None,
 ) -> dict[str, Any]:
     """发送邮件。此操作为敏感写操作，Agent 应在调用前向用户确认内容。
 
@@ -386,21 +419,59 @@ async def send_email(
         subject: 邮件主题
         body: 邮件正文（纯文本）
         cc: 抄送邮箱地址列表，可选
-        access_token: AgentArts Identity SDK 自动注入
 
     Returns:
         dict with: sent (bool), message_id (str or None), error (str or None)
     """
-    logger.debug("send_email access_token: %s", access_token)
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete("m365-email-provider")
     if not to:
         return {
             "sent": False,
             "message_id": None,
             "error": "At least one recipient is required",
         }
+    return await _send_email_authorized(
+        to=to,
+        subject=subject,
+        body=body,
+        cc=cc,
+    )
+
+
+@require_access_token(
+    provider_name=EMAIL_PROVIDER,
+    into="access_token",
+    scopes=list(EMAIL_SCOPES),
+    auth_flow=EMAIL_AUTH_FLOW,
+    on_auth_url=handle_auth_url,
+)
+async def _send_email_authorized(
+    *,
+    to: list[str],
+    subject: str,
+    body: str,
+    cc: list[str] | None,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    if not access_token:
+        return _auth_required_response()
+    _push_auth_complete(EMAIL_PROVIDER)
+    return await _send_email_impl(
+        to=to,
+        subject=subject,
+        body=body,
+        cc=cc,
+        access_token=access_token,
+    )
+
+
+async def _send_email_impl(
+    *,
+    to: list[str],
+    subject: str,
+    body: str,
+    cc: list[str] | None = None,
+    access_token: str,
+) -> dict[str, Any]:
     try:
         message: dict[str, Any] = {
             "subject": subject,
@@ -408,9 +479,7 @@ async def send_email(
                 "contentType": "Text",
                 "content": body,
             },
-            "toRecipients": [
-                {"emailAddress": {"address": addr}} for addr in to
-            ],
+            "toRecipients": [{"emailAddress": {"address": addr}} for addr in to],
         }
         if cc:
             message["ccRecipients"] = [
@@ -454,20 +523,10 @@ async def send_email(
 
 # ── 5. reply_to_email ──
 
-@require_access_token(
-    provider_name="m365-email-provider",
-    scopes=[
-        "https://graph.microsoft.com/Mail.Read",
-        "https://graph.microsoft.com/Mail.ReadWrite",
-        "https://graph.microsoft.com/Mail.Send",
-    ],
-    auth_flow="USER_FEDERATION",
-    on_auth_url=handle_auth_url,
-)
+
 async def reply_to_email(
     email_id: str,
     body: str,
-    access_token: str | None = None,
 ) -> dict[str, Any]:
     """回复邮件 — 使用 Graph API POST /messages/{id}/reply 直接发送。
 
@@ -476,19 +535,46 @@ async def reply_to_email(
     Args:
         email_id: 要回复的原始邮件 ID
         body: 回复正文（纯文本），将插入原邮件内容上方
-        access_token: AgentArts Identity SDK 自动注入
 
     Returns:
         dict with: sent (bool), error (str or None)
     """
-    logger.debug("reply_to_email access_token: %s", access_token)
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete("m365-email-provider")
     if not email_id or not email_id.strip():
         return {"sent": False, "error": "email_id is required for reply_to_email"}
     if not body or not body.strip():
         return {"sent": False, "error": "reply body is required"}
+    return await _reply_to_email_authorized(email_id=email_id, body=body)
+
+
+@require_access_token(
+    provider_name=EMAIL_PROVIDER,
+    into="access_token",
+    scopes=list(EMAIL_SCOPES),
+    auth_flow=EMAIL_AUTH_FLOW,
+    on_auth_url=handle_auth_url,
+)
+async def _reply_to_email_authorized(
+    *,
+    email_id: str,
+    body: str,
+    access_token: str | None = None,
+) -> dict[str, Any]:
+    if not access_token:
+        return _auth_required_response()
+    _push_auth_complete(EMAIL_PROVIDER)
+    return await _reply_to_email_impl(
+        email_id=email_id,
+        body=body,
+        access_token=access_token,
+    )
+
+
+async def _reply_to_email_impl(
+    *,
+    email_id: str,
+    body: str,
+    access_token: str,
+) -> dict[str, Any]:
     try:
         client = _get_client()
         resp = await client.post(

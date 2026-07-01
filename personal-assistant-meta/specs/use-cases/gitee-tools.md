@@ -1,6 +1,6 @@
 # Gitee Tools Use Case
 
-`gitee_tools.py` 提供 Gitee / 码云仓库列表能力。它与 GitHub Tools 使用相同的 Agent Identity 模式：AgentArts Identity 管理 OAuth2 Provider，tool 通过 `@require_access_token` 获得用户委托 token。
+`gitee_tools.py` 提供 Gitee / 码云仓库列表能力。它与 GitHub Tools 使用相同的 Agent Identity 模式：AgentArts Identity 管理 OAuth2 Provider，public tool 只暴露业务参数，private request boundary 通过 `@require_access_token` 获得用户委托 token。
 
 ## Tool 列表
 
@@ -34,7 +34,7 @@ Agent 可设置 `sort`、`direction`、`page`、`per_page` 等参数调用 `gite
 
 | 能力 | 在 Gitee Tools 中的使用 |
 |---|---|
-| OAuth2 User Federation | `list_repositories` 使用 `@require_access_token(provider_name=get_gitee_provider_name(), auth_flow="USER_FEDERATION")` |
+| OAuth2 User Federation | public `gitee_list_repositories` 只接收筛选、排序和分页参数；private `_gitee_request` 使用 `@require_access_token(provider_name=get_gitee_provider_name(), auth_flow="USER_FEDERATION")` |
 | Provider Abstraction | `gitee-provider` 与 `github-provider` 独立配置，但 tool 侧使用相同的 Identity SDK 装饰器模式 |
 | AuthCard | `handle_auth_url` 通过 SSE custom stream 展示 Gitee 授权入口 |
 | Token Vault | Gitee access token 由 AgentArts Identity 保存，不暴露给 Service 持久化层 |
@@ -54,6 +54,7 @@ projects
 ## 安全边界
 
 - 当前 Gitee Tool 只读，不执行仓库写入、删除或修改。
-- Gitee token 只由 Identity SDK 注入到 tool，不写入日志或响应。
+- public Gitee tool schema 不包含 `access_token`；LLM 只填写 `visibility`、`repo_type`、`sort`、`direction`、`q`、`page`、`per_page` 等业务参数。
+- Gitee token 只由 Identity SDK 注入到 private `_gitee_request` boundary，不写入日志或响应。
 - 未授权时通过 AuthCard 引导用户完成授权。
 

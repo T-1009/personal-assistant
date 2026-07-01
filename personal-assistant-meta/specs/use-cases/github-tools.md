@@ -1,6 +1,6 @@
 # GitHub Tools Use Case
 
-`github_tools.py` 提供 GitHub 仓库和代码访问能力。Agent 通过 AgentArts Identity 的 OAuth2 User Federation，以当前用户身份调用 GitHub API。
+`github_tools.py` 提供 GitHub 仓库和代码访问能力。Agent 通过 AgentArts Identity 的 OAuth2 User Federation，以当前用户身份调用 GitHub API。GitHub Tools 是 outbound OAuth2 token boundary 的基线模式：public tools 不暴露 credential 参数，统一通过 private `_github_request()` 获取 token 并访问 GitHub API。
 
 ## Tool 列表
 
@@ -77,6 +77,8 @@ Agent：已为该仓库点星。
 ## 安全边界
 
 - GitHub token 不进入 LLM prompt、浏览器 storage 或日志。
+- public GitHub tool schema 不包含 `access_token`；LLM 只填写 `owner`、`repo`、`path`、`query`、`confirm` 等业务参数。
+- GitHub token 只由 Identity SDK 注入到 private `_github_request()` boundary，public tools 只透传 `auth_required` 或处理业务响应。
 - 读取仓库内容时，Agent 只能访问用户 OAuth token 可访问的仓库。
 - `github_star_repository` 必须先预览，确认后才执行。
 - 如果用户未授权，tool 返回 `auth_required` 并通过 AuthCard 引导授权。

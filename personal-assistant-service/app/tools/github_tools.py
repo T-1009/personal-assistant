@@ -323,7 +323,11 @@ async def star_repository(
         return {"starred": True, "repository": repository, "error": None}
     except Exception as e:
         logger.exception("star_repository failed")
-        return {"starred": False, "repository": repository, "error": f"Request failed: {e!s}"}
+        return {
+            "starred": False,
+            "repository": repository,
+            "error": f"Request failed: {e!s}",
+        }
 
 
 GITHUB_TOOLS = [

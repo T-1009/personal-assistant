@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import functools
 import logging
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
@@ -152,16 +151,6 @@ async def _raw_gitee_request(
         return response.json()
 
 
-async def _gitee_request(
-    method: str,
-    path: str,
-    *,
-    params: dict[str, Any] | None = None,
-    access_token: str,
-) -> Any:
-    return await _raw_gitee_request(access_token, method, path, params=params)
-
-
 @require_access_token(
     provider_name=get_gitee_provider_name(),
     into="access_token",
@@ -169,6 +158,19 @@ async def _gitee_request(
     on_auth_url=handle_auth_url,
     auth_flow="USER_FEDERATION",
 )
+async def _gitee_request(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    access_token: str | None = None,
+) -> Any:
+    if not access_token:
+        return _auth_required_response()
+    _push_auth_complete(get_gitee_provider_name())
+    return await _raw_gitee_request(access_token, method, path, params=params)
+
+
 async def list_repositories(
     visibility: GiteeVisibility = "all",
     affiliation: str | None = None,
@@ -178,12 +180,8 @@ async def list_repositories(
     q: str | None = None,
     page: int = 1,
     per_page: int = 20,
-    access_token: str | None = None,
 ) -> dict[str, Any]:
     """List repositories visible to the current Gitee end user."""
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete(get_gitee_provider_name())
     if repo_type and (visibility != "all" or affiliation):
         return {
             "ok": False,
@@ -204,9 +202,9 @@ async def list_repositories(
         "per_page": min(max(per_page, 1), 100),
     }
     try:
-        data = await _gitee_request(
-            "GET", "/user/repos", params=params, access_token=access_token
-        )
+        data = await _gitee_request("GET", "/user/repos", params=params)
+        if isinstance(data, dict) and data.get("auth_required"):
+            return data
         items = [
             _repo_item_to_dict(_normalize_repo_item(item))
             for item in data

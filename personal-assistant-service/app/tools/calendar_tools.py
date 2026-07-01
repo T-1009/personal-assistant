@@ -155,14 +155,17 @@ def _format_event(event: dict[str, Any]) -> dict[str, Any]:
     on_auth_url=handle_auth_url,
     callback_url=CALENDAR_CALLBACK_URL,
 )
-async def list_calendar_events(
+async def _list_calendar_events_authorized(
+    *,
     start_time: str,
     end_time: str,
-    calendar_id: str = "primary",
-    limit: int = 20,
+    calendar_id: str,
+    limit: int,
     access_token: str | None = None,
 ) -> dict[str, Any]:
-    """列出指定时间范围内的 Microsoft 365 日历事件。"""
+    if not access_token:
+        return _auth_required_response()
+    _push_auth_complete()
     return await _list_calendar_events_impl(
         start_time=start_time,
         end_time=end_time,
@@ -172,17 +175,29 @@ async def list_calendar_events(
     )
 
 
+async def list_calendar_events(
+    start_time: str,
+    end_time: str,
+    calendar_id: str = "primary",
+    limit: int = 20,
+) -> dict[str, Any]:
+    """列出指定时间范围内的 Microsoft 365 日历事件。"""
+    return await _list_calendar_events_authorized(
+        start_time=start_time,
+        end_time=end_time,
+        calendar_id=calendar_id,
+        limit=limit,
+    )
+
+
 async def _list_calendar_events_impl(
     *,
     start_time: str,
     end_time: str,
     calendar_id: str,
     limit: int,
-    access_token: str | None,
+    access_token: str,
 ) -> dict[str, Any]:
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete()
 
     safe_limit = max(1, min(limit, 50))
     try:
@@ -221,12 +236,15 @@ async def _list_calendar_events_impl(
     on_auth_url=handle_auth_url,
     callback_url=CALENDAR_CALLBACK_URL,
 )
-async def get_calendar_event(
+async def _get_calendar_event_authorized(
+    *,
     event_id: str,
-    calendar_id: str = "primary",
+    calendar_id: str,
     access_token: str | None = None,
 ) -> dict[str, Any]:
-    """获取单个 Microsoft 365 日历事件详情。"""
+    if not access_token:
+        return _auth_required_response()
+    _push_auth_complete()
     return await _get_calendar_event_impl(
         event_id=event_id,
         calendar_id=calendar_id,
@@ -234,15 +252,23 @@ async def get_calendar_event(
     )
 
 
+async def get_calendar_event(
+    event_id: str,
+    calendar_id: str = "primary",
+) -> dict[str, Any]:
+    """获取单个 Microsoft 365 日历事件详情。"""
+    return await _get_calendar_event_authorized(
+        event_id=event_id,
+        calendar_id=calendar_id,
+    )
+
+
 async def _get_calendar_event_impl(
     *,
     event_id: str,
     calendar_id: str,
-    access_token: str | None,
+    access_token: str,
 ) -> dict[str, Any]:
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete()
 
     try:
         resp = await _get_client().get(
@@ -268,15 +294,18 @@ async def _get_calendar_event_impl(
     on_auth_url=handle_auth_url,
     callback_url=CALENDAR_CALLBACK_URL,
 )
-async def search_calendar_events(
+async def _search_calendar_events_authorized(
+    *,
     query: str,
-    start_time: str | None = None,
-    end_time: str | None = None,
-    calendar_id: str = "primary",
-    limit: int = 20,
+    start_time: str | None,
+    end_time: str | None,
+    calendar_id: str,
+    limit: int,
     access_token: str | None = None,
 ) -> dict[str, Any]:
-    """按关键词搜索 Microsoft 365 日历事件。"""
+    if not access_token:
+        return _auth_required_response()
+    _push_auth_complete()
     return await _search_calendar_events_impl(
         query=query,
         start_time=start_time,
@@ -287,6 +316,23 @@ async def search_calendar_events(
     )
 
 
+async def search_calendar_events(
+    query: str,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    calendar_id: str = "primary",
+    limit: int = 20,
+) -> dict[str, Any]:
+    """按关键词搜索 Microsoft 365 日历事件。"""
+    return await _search_calendar_events_authorized(
+        query=query,
+        start_time=start_time,
+        end_time=end_time,
+        calendar_id=calendar_id,
+        limit=limit,
+    )
+
+
 async def _search_calendar_events_impl(
     *,
     query: str,
@@ -294,11 +340,8 @@ async def _search_calendar_events_impl(
     end_time: str | None,
     calendar_id: str,
     limit: int,
-    access_token: str | None,
+    access_token: str,
 ) -> dict[str, Any]:
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete()
 
     safe_limit = max(1, min(limit, 50))
     try:

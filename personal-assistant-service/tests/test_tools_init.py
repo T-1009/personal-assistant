@@ -4,6 +4,7 @@ Feature 10a: Outbound Email — verifies the factory correctly discovers
 and collects tools from sub-modules.
 """
 
+import inspect
 import sys
 from unittest.mock import patch
 
@@ -12,6 +13,16 @@ from app.tools import build_tools
 
 def _tool_name(tool) -> str:
     return tool.name if hasattr(tool, "name") else tool.__name__
+
+
+def _tool_param_names(tool) -> list[str]:
+    schema = getattr(tool, "args_schema", None)
+    if schema is not None:
+        fields = getattr(schema, "model_fields", None)
+        if fields is None:
+            fields = getattr(schema, "__fields__", {})
+        return list(fields.keys())
+    return list(inspect.signature(tool).parameters)
 
 
 class TestBuildTools:
@@ -87,3 +98,36 @@ class TestBuildTools:
 
         names = [_tool_name(t) for t in result]
         assert len(names) == len(set(names)), f"Duplicate tool names detected: {names}"
+
+    def test_build_tools_oauth2_public_schemas_exclude_credentials(self) -> None:
+        """UT-TI-08: registered OAuth2 tools do not expose injected credentials."""
+        oauth2_tool_names = {
+            "github_list_repositories",
+            "github_list_repo_contents",
+            "github_get_file_content",
+            "github_search_code",
+            "github_star_repository",
+            "gitee_list_repositories",
+            "list_emails",
+            "get_email",
+            "search_emails",
+            "send_email",
+            "reply_to_email",
+            "list_calendar_events",
+            "get_calendar_event",
+            "search_calendar_events",
+        }
+        credential_params = {"access_token", "api_key"}
+
+        tools = build_tools()
+        registered = {_tool_name(t): t for t in tools}
+
+        missing = oauth2_tool_names - set(registered)
+        assert not missing, f"Missing expected OAuth2 tools: {sorted(missing)}"
+
+        for name in oauth2_tool_names:
+            params = set(_tool_param_names(registered[name]))
+            assert params.isdisjoint(credential_params), (
+                f"{name} exposes credential params: "
+                f"{sorted(params & credential_params)}"
+            )
