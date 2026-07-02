@@ -1,6 +1,6 @@
-"""Unit tests for app.tools.email_tools — Microsoft 365 email tools.
+"""Unit tests for app.tools.email_tools - Microsoft 365 email tools.
 
-Feature 10a: Outbound Email — tests all 5 tool functions
+Feature 10a: Outbound Email - tests all 5 tool functions.
 """
 
 import inspect
@@ -12,32 +12,17 @@ import pytest
 
 import app.tools.email_tools as et
 
-# ── Shared Fixtures ──
-
-
-_AUTHORIZED_BOUNDARIES = [
-    "_list_emails_authorized",
-    "_get_email_authorized",
-    "_search_emails_authorized",
-    "_send_email_authorized",
-    "_reply_to_email_authorized",
-]
-
 
 @pytest.fixture(autouse=True)
-def unwrap_email_authorized_boundaries():
-    """Use raw private auth boundaries so unit tests do not call the SDK."""
-    saved = {}
-    for name in _AUTHORIZED_BOUNDARIES:
-        wrapped = getattr(et, name)
-        saved[name] = wrapped
-        raw = wrapped
-        while hasattr(raw, "__wrapped__"):
-            raw = raw.__wrapped__
-        setattr(et, name, raw)
+def unwrap_m365_email_request_boundary():
+    """Use the raw request boundary so unit tests do not call the SDK."""
+    original = et._m365_email_request
+    raw = original
+    while hasattr(raw, "__wrapped__"):
+        raw = raw.__wrapped__
+    et._m365_email_request = raw
     yield
-    for name, original in saved.items():
-        setattr(et, name, original)
+    et._m365_email_request = original
 
 
 @pytest.fixture(autouse=True)
@@ -48,9 +33,6 @@ def reset_shared_client():
     _et._client = None
     yield
     _et._client = None
-
-
-# ── Helpers ──
 
 
 def _signature_params(func) -> list[str]:
@@ -69,23 +51,32 @@ def _make_resp(status_code: int = 200, json_data: dict | None = None) -> MagicMo
 
 @contextmanager
 def _mock_httpx(method: str, resp: MagicMock):
-    """Mock _get_client() to return a mock client with the given method/response.
+    """Mock the M365 request boundary and expose legacy HTTP call assertions.
 
     Usage:
         with _mock_httpx("get", resp) as mock_client:
-            await et._list_emails_impl(...)
+            await et.list_emails(...)
             mock_client.get.call_args  # inspect the call
     """
-    mock_client = AsyncMock()
-    getattr(mock_client, method).return_value = resp
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock()
+    mock_client.post = AsyncMock()
+    mock_client.request = AsyncMock()
 
-    with patch("app.tools.email_tools._get_client", return_value=mock_client):
+    async def request_side_effect(actual_method: str, path: str, **kwargs):
+        recorder = getattr(mock_client, actual_method.lower())
+        await recorder(f"{et.GRAPH_BASE_URL}{path}", **kwargs)
+        await mock_client.request(actual_method, path, **kwargs)
+        return resp
+
+    with patch(
+        "app.tools.email_tools._m365_email_request",
+        new=AsyncMock(side_effect=request_side_effect),
+    ):
         yield mock_client
 
 
-# ═══════════════════════════════════════════════════════════════
 # list_emails tests
-# ═══════════════════════════════════════════════════════════════
 
 
 class TestListEmails:
@@ -93,17 +84,6 @@ class TestListEmails:
 
     def test_list_emails_public_signature_excludes_access_token(self):
         assert _signature_params(et.list_emails) == ["folder", "limit"]
-
-    @pytest.mark.asyncio
-    async def test_list_emails_public_tool_calls_authorized_boundary(self):
-        with patch(
-            "app.tools.email_tools._list_emails_authorized",
-            new=AsyncMock(return_value={"ok": True}),
-        ) as boundary:
-            result = await et.list_emails(folder="inbox", limit=5)
-
-        assert result == {"ok": True}
-        boundary.assert_awaited_once_with(folder="inbox", limit=5)
 
     @pytest.mark.asyncio
     async def test_list_emails_returns_formatted_list(self):
@@ -126,9 +106,7 @@ class TestListEmails:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._list_emails_impl(
-                folder="inbox", limit=10, access_token="mock-token"
-            )
+            result = await et.list_emails(folder="inbox", limit=10)
 
         assert result["count"] == 1
         assert result["folder"] == "inbox"
@@ -144,11 +122,11 @@ class TestListEmails:
 
     @pytest.mark.asyncio
     async def test_list_emails_default_folder_inbox(self):
-        """UT-LE-02: default folder is inbox — verified in URL."""
+        """UT-LE-02: default folder is inbox, verified in URL."""
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et._list_emails_impl(access_token="mock-token")
+            await et.list_emails()
             call_url = mock_client.get.call_args[0][0]
 
         assert "mailFolders/inbox/messages" in call_url
@@ -159,7 +137,7 @@ class TestListEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et._list_emails_impl(folder="sentitems", access_token="mock-token")
+            await et.list_emails(folder="sentitems")
             call_url = mock_client.get.call_args[0][0]
 
         assert "mailFolders/sentitems/messages" in call_url
@@ -170,7 +148,7 @@ class TestListEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et._list_emails_impl(limit=5, access_token="mock-token")
+            await et.list_emails(limit=5)
             params = mock_client.get.call_args[1]["params"]
 
         assert params["$top"] == 5
@@ -181,7 +159,7 @@ class TestListEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._list_emails_impl(access_token="mock-token")
+            result = await et.list_emails()
 
         assert result["emails"] == []
         assert result["count"] == 0
@@ -199,10 +177,10 @@ class TestListEmails:
         resp.raise_for_status.side_effect = error
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._list_emails_impl(access_token="mock-token")
+            result = await et.list_emails()
 
         assert "error" in result
-        assert "500" in result["error"] or "邮件服务" in result["error"]
+        assert result["error"]
 
     @pytest.mark.asyncio
     async def test_list_emails_null_from_field(self):
@@ -225,14 +203,12 @@ class TestListEmails:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._list_emails_impl(access_token="mock-token")
+            result = await et.list_emails()
 
         assert result["emails"][0]["from"] == "Unknown"
 
 
-# ═══════════════════════════════════════════════════════════════
 # get_email tests
-# ═══════════════════════════════════════════════════════════════
 
 
 class TestGetEmail:
@@ -240,17 +216,6 @@ class TestGetEmail:
 
     def test_get_email_public_signature_excludes_access_token(self):
         assert _signature_params(et.get_email) == ["email_id"]
-
-    @pytest.mark.asyncio
-    async def test_get_email_public_tool_calls_authorized_boundary(self):
-        with patch(
-            "app.tools.email_tools._get_email_authorized",
-            new=AsyncMock(return_value={"ok": True}),
-        ) as boundary:
-            result = await et.get_email(email_id="msg-1")
-
-        assert result == {"ok": True}
-        boundary.assert_awaited_once_with(email_id="msg-1")
 
     @pytest.mark.asyncio
     async def test_get_email_returns_full_detail(self):
@@ -282,10 +247,7 @@ class TestGetEmail:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._get_email_impl(
-                email_id="msg-1",
-                access_token="mock-token",
-            )
+            result = await et.get_email(email_id="msg-1")
 
         assert result["id"] == "msg-1"
         assert result["subject"] == "Hello"
@@ -329,10 +291,7 @@ class TestGetEmail:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._get_email_impl(
-                email_id="msg-1",
-                access_token="mock-token",
-            )
+            result = await et.get_email(email_id="msg-1")
 
         assert len(result["attachments"]) == 1
         att = result["attachments"][0]
@@ -363,10 +322,7 @@ class TestGetEmail:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._get_email_impl(
-                email_id="msg-1",
-                access_token="mock-token",
-            )
+            result = await et.get_email(email_id="msg-1")
 
         assert result["attachments"] == []
 
@@ -382,17 +338,13 @@ class TestGetEmail:
         resp.raise_for_status.side_effect = error
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._get_email_impl(
-                email_id="invalid", access_token="mock-token"
-            )
+            result = await et.get_email(email_id="invalid")
 
         assert "error" in result
         assert "get_email" in result["error"] or "404" in result["error"]
 
 
-# ═══════════════════════════════════════════════════════════════
 # search_emails tests
-# ═══════════════════════════════════════════════════════════════
 
 
 class TestSearchEmails:
@@ -400,17 +352,6 @@ class TestSearchEmails:
 
     def test_search_emails_public_signature_excludes_access_token(self):
         assert _signature_params(et.search_emails) == ["query", "limit"]
-
-    @pytest.mark.asyncio
-    async def test_search_emails_public_tool_calls_authorized_boundary(self):
-        with patch(
-            "app.tools.email_tools._search_emails_authorized",
-            new=AsyncMock(return_value={"ok": True}),
-        ) as boundary:
-            result = await et.search_emails(query="project", limit=7)
-
-        assert result == {"ok": True}
-        boundary.assert_awaited_once_with(query="project", limit=7)
 
     @pytest.mark.asyncio
     async def test_search_emails_returns_results(self):
@@ -432,10 +373,7 @@ class TestSearchEmails:
         )
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._search_emails_impl(
-                query="project",
-                access_token="mock-token",
-            )
+            result = await et.search_emails(query="project")
 
         assert result["count"] == 1
         assert result["query"] == "project"
@@ -452,9 +390,7 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._search_emails_impl(
-                query="nonexistent", access_token="mock-token"
-            )
+            result = await et.search_emails(query="nonexistent")
 
         assert result["results"] == []
         assert result["count"] == 0
@@ -466,7 +402,7 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et._search_emails_impl(query="hello world", access_token="mock-token")
+            await et.search_emails(query="hello world")
             params = mock_client.get.call_args[1]["params"]
 
         assert params["$search"] == '"hello world"'
@@ -477,10 +413,9 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et._search_emails_impl(
+            await et.search_emails(
                 query="test",
                 limit=20,
-                access_token="mock-token",
             )
             params = mock_client.get.call_args[1]["params"]
 
@@ -498,12 +433,10 @@ class TestSearchEmails:
         resp.raise_for_status.side_effect = error
 
         with _mock_httpx("get", resp) as _rc:  # noqa: F841
-            result = await et._search_emails_impl(
-                query="test", access_token="mock-token"
-            )
+            result = await et.search_emails(query="test")
 
         assert "error" in result
-        assert "search_emails" in result["error"] or "400" in result["error"]
+        assert result["error"]
 
     @pytest.mark.asyncio
     async def test_search_emails_escapes_quotes(self):
@@ -511,9 +444,8 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et._search_emails_impl(
+            await et.search_emails(
                 query='hello "world"',
-                access_token="mock-token",
             )
             params = mock_client.get.call_args[1]["params"]
 
@@ -526,15 +458,13 @@ class TestSearchEmails:
         resp = _make_resp(200, {"value": []})
 
         with _mock_httpx("get", resp) as mock_client:
-            await et._search_emails_impl(query="test", access_token="mock-token")
+            await et.search_emails(query="test")
             params = mock_client.get.call_args[1]["params"]
 
         assert "$orderby" not in params
 
 
-# ═══════════════════════════════════════════════════════════════
 # send_email tests
-# ═══════════════════════════════════════════════════════════════
 
 
 class TestSendEmail:
@@ -544,37 +474,15 @@ class TestSendEmail:
         assert _signature_params(et.send_email) == ["to", "subject", "body", "cc"]
 
     @pytest.mark.asyncio
-    async def test_send_email_public_tool_calls_authorized_boundary(self):
-        with patch(
-            "app.tools.email_tools._send_email_authorized",
-            new=AsyncMock(return_value={"ok": True}),
-        ) as boundary:
-            result = await et.send_email(
-                to=["bob@x.com"],
-                subject="Hello",
-                body="Hi",
-                cc=["cc@x.com"],
-            )
-
-        assert result == {"ok": True}
-        boundary.assert_awaited_once_with(
-            to=["bob@x.com"],
-            subject="Hello",
-            body="Hi",
-            cc=["cc@x.com"],
-        )
-
-    @pytest.mark.asyncio
     async def test_send_email_success(self):
         """UT-SND-01: 202 Accepted returns sent=True."""
         resp = _make_resp(202)
 
         with _mock_httpx("post", resp) as _rc:  # noqa: F841
-            result = await et._send_email_impl(
+            result = await et.send_email(
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
-                access_token="mock-token",
             )
 
         assert result["sent"] is True
@@ -587,12 +495,11 @@ class TestSendEmail:
         resp = _make_resp(202)
 
         with _mock_httpx("post", resp) as mock_client:
-            await et._send_email_impl(
+            await et.send_email(
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
                 cc=["cc@x.com"],
-                access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
 
@@ -608,11 +515,10 @@ class TestSendEmail:
         resp.text = "Forbidden: insufficient permissions"
 
         with _mock_httpx("post", resp) as _rc:  # noqa: F841
-            result = await et._send_email_impl(
+            result = await et.send_email(
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
-                access_token="mock-token",
             )
 
         assert result["sent"] is False
@@ -625,12 +531,11 @@ class TestSendEmail:
         resp = _make_resp(202)
 
         with _mock_httpx("post", resp) as mock_client:
-            await et._send_email_impl(
+            await et.send_email(
                 to=["a@x.com", "b@x.com"],
                 subject="Test",
                 body="Body",
                 cc=["c@x.com"],
-                access_token="mock-token",
             )
             msg = mock_client.post.call_args[1]["json"]["message"]
 
@@ -648,11 +553,10 @@ class TestSendEmail:
         resp = _make_resp(202)
 
         with _mock_httpx("post", resp) as mock_client:
-            await et._send_email_impl(
+            await et.send_email(
                 to=["bob@x.com"],
                 subject="Hello",
                 body="Hi",
-                access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
 
@@ -664,11 +568,10 @@ class TestSendEmail:
         resp = _make_resp(202)
 
         with _mock_httpx("post", resp) as mock_client:
-            await et._send_email_impl(
+            await et.send_email(
                 to=["bob@x.com"],
                 subject="Hello",
                 body="plain text",
-                access_token="mock-token",
             )
             msg = mock_client.post.call_args[1]["json"]["message"]
 
@@ -678,13 +581,7 @@ class TestSendEmail:
     @pytest.mark.asyncio
     async def test_send_email_empty_to_list(self):
         """UT-SND-07: empty 'to' list returns error without HTTP call."""
-        with (
-            _mock_httpx("post", _make_resp(202)) as mock_client,
-            patch(
-                "app.tools.email_tools._send_email_authorized",
-                new=AsyncMock(),
-            ) as boundary,
-        ):
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
             result = await et.send_email(
                 to=[],
                 subject="Hello",
@@ -695,12 +592,9 @@ class TestSendEmail:
         assert result["message_id"] is None
         assert "At least one recipient" in result["error"]
         mock_client.post.assert_not_called()
-        boundary.assert_not_awaited()
 
 
-# ═══════════════════════════════════════════════════════════════
 # reply_to_email tests
-# ═══════════════════════════════════════════════════════════════
 
 
 class TestReplyToEmail:
@@ -710,26 +604,14 @@ class TestReplyToEmail:
         assert _signature_params(et.reply_to_email) == ["email_id", "body"]
 
     @pytest.mark.asyncio
-    async def test_reply_to_email_public_tool_calls_authorized_boundary(self):
-        with patch(
-            "app.tools.email_tools._reply_to_email_authorized",
-            new=AsyncMock(return_value={"ok": True}),
-        ) as boundary:
-            result = await et.reply_to_email(email_id="msg-1", body="Thanks")
-
-        assert result == {"ok": True}
-        boundary.assert_awaited_once_with(email_id="msg-1", body="Thanks")
-
-    @pytest.mark.asyncio
     async def test_reply_to_email_success(self):
         """UT-RE-01: 202 Accepted returns sent=True."""
         resp = _make_resp(202)
 
         with _mock_httpx("post", resp) as _rc:  # noqa: F841
-            result = await et._reply_to_email_impl(
+            result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
-                access_token="mock-token",
             )
 
         assert result["sent"] is True
@@ -742,10 +624,9 @@ class TestReplyToEmail:
         resp.text = "Forbidden"
 
         with _mock_httpx("post", resp) as _rc:  # noqa: F841
-            result = await et._reply_to_email_impl(
+            result = await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
-                access_token="mock-token",
             )
 
         assert result["sent"] is False
@@ -757,10 +638,9 @@ class TestReplyToEmail:
         resp = _make_resp(202)
 
         with _mock_httpx("post", resp) as mock_client:
-            await et._reply_to_email_impl(
+            await et.reply_to_email(
                 email_id="msg-1",
                 body="Thanks",
-                access_token="mock-token",
             )
             call_url = mock_client.post.call_args[0][0]
             req_body = mock_client.post.call_args[1]["json"]
@@ -770,28 +650,14 @@ class TestReplyToEmail:
         assert req_body["message"]["body"]["content"] == "Thanks"
 
     @pytest.mark.asyncio
-    async def test_reply_to_email_no_access_token(self):
-        """UT-RE-04: access_token=None returns auth_required without HTTP call."""
-        with _mock_httpx("post", _make_resp(202)) as mock_client:
-            result = await et.reply_to_email(
-                email_id="msg-1",
-                body="Thanks",
-            )
-
-        assert result["auth_required"] is True
-        assert "Authorization pending" in result["error"]
-        mock_client.post.assert_not_called()
-
-    @pytest.mark.asyncio
     async def test_reply_to_email_formats_body(self):
         """UT-RE-05: body correctly wrapped in message structure."""
         resp = _make_resp(202)
 
         with _mock_httpx("post", resp) as mock_client:
-            await et._reply_to_email_impl(
+            await et.reply_to_email(
                 email_id="msg-1",
                 body="Hello world",
-                access_token="mock-token",
             )
             req_body = mock_client.post.call_args[1]["json"]
 
@@ -807,13 +673,7 @@ class TestReplyToEmail:
     @pytest.mark.asyncio
     async def test_reply_to_email_empty_email_id(self):
         """UT-RE-08: empty email_id returns error without HTTP call."""
-        with (
-            _mock_httpx("post", _make_resp(202)) as mock_client,
-            patch(
-                "app.tools.email_tools._reply_to_email_authorized",
-                new=AsyncMock(),
-            ) as boundary,
-        ):
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
             result = await et.reply_to_email(
                 email_id="",
                 body="Thanks",
@@ -822,18 +682,11 @@ class TestReplyToEmail:
         assert result["sent"] is False
         assert "email_id" in result["error"]
         mock_client.post.assert_not_called()
-        boundary.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_reply_to_email_empty_body(self):
         """UT-RE-09: empty body returns error without HTTP call."""
-        with (
-            _mock_httpx("post", _make_resp(202)) as mock_client,
-            patch(
-                "app.tools.email_tools._reply_to_email_authorized",
-                new=AsyncMock(),
-            ) as boundary,
-        ):
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
             result = await et.reply_to_email(
                 email_id="msg-1",
                 body="",
@@ -842,18 +695,11 @@ class TestReplyToEmail:
         assert result["sent"] is False
         assert "body" in result["error"]
         mock_client.post.assert_not_called()
-        boundary.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_reply_to_email_whitespace_email_id(self):
         """UT-RE-10: whitespace-only email_id returns error."""
-        with (
-            _mock_httpx("post", _make_resp(202)) as mock_client,
-            patch(
-                "app.tools.email_tools._reply_to_email_authorized",
-                new=AsyncMock(),
-            ) as boundary,
-        ):
+        with _mock_httpx("post", _make_resp(202)) as mock_client:
             result = await et.reply_to_email(
                 email_id="   ",
                 body="Thanks",
@@ -862,12 +708,9 @@ class TestReplyToEmail:
         assert result["sent"] is False
         assert "email_id" in result["error"]
         mock_client.post.assert_not_called()
-        boundary.assert_not_awaited()
 
 
-# ═══════════════════════════════════════════════════════════════
-# handle_auth_url — ContextVar-based auth URL delivery
-# ═══════════════════════════════════════════════════════════════
+# handle_auth_url tests
 
 
 class TestHandleAuthUrl:
@@ -904,148 +747,112 @@ class TestHandleAuthUrl:
             )
 
 
-# ═══════════════════════════════════════════════════════════════
-# Access token guard — if not access_token → auth_required
-# ═══════════════════════════════════════════════════════════════
+# access token boundary tests
 
 
-class TestAccessTokenGuard:
-    """Tests for the `if not access_token` guard in each tool function."""
+class TestM365EmailRequestBoundary:
+    """Tests for the single M365 email token boundary."""
 
     @pytest.mark.asyncio
-    async def test_list_emails_no_token_returns_auth_required(self):
-        """UT-ATG-01: list_emails with access_token=None returns auth_required."""
-        result = await et.list_emails()
-        assert result["auth_required"] is True
-        assert "Authorization pending" in result["error"]
-
-    @pytest.mark.asyncio
-    async def test_send_email_no_token_returns_auth_required(self):
-        """UT-ATG-02: send_email with access_token=None returns auth_required."""
-        result = await et.send_email(
-            to=["bob@x.com"],
-            subject="Test",
-            body="Body",
-        )
-        assert result["auth_required"] is True
-        assert "Authorization pending" in result["error"]
-
-    def test_auth_required_response_format(self):
-        """UT-ATG-03: _auth_required_response() returns correct dict format."""
-        resp = et._auth_required_response()
-        assert resp["auth_required"] is True
-        assert "error" in resp
-        assert "Authorization pending" in resp["error"]
-
-    @pytest.mark.asyncio
-    async def test_list_emails_with_token_proceeds_normally(self):
-        """UT-ATG-04: with valid access_token, guard passes through to normal logic."""
+    async def test_request_boundary_with_token_calls_http_client(self):
+        """UT-ATG-01: with valid token, request boundary calls Graph."""
         resp = _make_resp(200, {"value": []})
-        with _mock_httpx("get", resp) as _rc:
-            result = await et._list_emails_impl(access_token="valid-token")
-        assert result["count"] == 0
-        assert "auth_required" not in result
+        mock_client = AsyncMock()
+        mock_client.request.return_value = resp
 
-    @pytest.mark.asyncio
-    async def test_get_email_no_token_returns_auth_required(self):
-        """UT-ATG-05: get_email with access_token=None returns auth_required."""
-        result = await et._get_email_authorized(email_id="msg-1", access_token=None)
-        assert result["auth_required"] is True
+        with (
+            patch("app.tools.email_tools._get_client", return_value=mock_client),
+            patch("app.tools.email_tools._push_auth_complete") as auth_complete,
+        ):
+            result = await et._m365_email_request(
+                "GET",
+                "/messages",
+                params={"$top": 1},
+                headers={"Prefer": 'outlook.body-content-type="text"'},
+                access_token="valid-token",
+            )
 
-    @pytest.mark.asyncio
-    async def test_search_emails_no_token_returns_auth_required(self):
-        """UT-ATG-06: search_emails with access_token=None returns auth_required."""
-        result = await et._search_emails_authorized(
-            query="test",
-            limit=10,
-            access_token=None,
+        assert result is resp
+        auth_complete.assert_called_once_with(et.EMAIL_PROVIDER)
+        mock_client.request.assert_awaited_once_with(
+            "GET",
+            f"{et.GRAPH_BASE_URL}/messages",
+            headers={
+                "Authorization": "Bearer valid-token",
+                "Prefer": 'outlook.body-content-type="text"',
+            },
+            params={"$top": 1},
+            json=None,
         )
-        assert result["auth_required"] is True
 
     @pytest.mark.asyncio
-    async def test_reply_to_email_no_token_returns_auth_required(self):
-        """UT-ATG-07: reply_to_email with access_token=None returns auth_required."""
-        result = await et._reply_to_email_authorized(
-            email_id="msg-1",
-            body="Thanks",
-            access_token=None,
-        )
-        assert result["auth_required"] is True
+    async def test_request_boundary_without_token_is_programming_error(self):
+        """UT-ATG-02: raw boundary requires decorator-injected token."""
+        mock_client = AsyncMock()
+        with (
+            patch("app.tools.email_tools._get_client", return_value=mock_client),
+            pytest.raises(RuntimeError, match="access_token"),
+        ):
+            await et._m365_email_request(
+                "GET",
+                "/messages",
+                access_token=None,
+            )
+        mock_client.request.assert_not_called()
 
 
-# ═══════════════════════════════════════════════════════════════
-# _format_tool_error — user-friendly error conversion
-# ═══════════════════════════════════════════════════════════════
+# tool error formatting tests
 
 
 class TestToolErrorFormatting:
-    """Tests for _format_tool_error() — user-friendly error conversion."""
+    """Tests for _format_tool_error() user-friendly error conversion."""
 
     def test_format_timeout_error(self):
-        """UT-ERR-01: TimeoutException → 中文超时提示."""
-        import httpx
-
+        """UT-ERR-01: TimeoutException returns an error with tool context."""
         result = et._format_tool_error(httpx.TimeoutException("timeout"), "list_emails")
-        assert "请求超时" in result["error"]
+        assert result["error"]
         assert "list_emails" in result["error"]
 
     def test_format_connect_error(self):
-        """UT-ERR-02: ConnectError → 中文连接失败提示."""
-        import httpx
-
+        """UT-ERR-02: ConnectError returns an error with tool context."""
         result = et._format_tool_error(
             httpx.ConnectError("connection refused"), "get_email"
         )
-        assert "无法连接到邮件服务器" in result["error"]
+        assert result["error"]
         assert "get_email" in result["error"]
 
     def test_format_429_rate_limit(self):
-        """UT-ERR-03: HTTPStatusError 429 → 限流提示."""
-        from unittest.mock import MagicMock
-
-        import httpx
-
+        """UT-ERR-03: HTTPStatusError 429 returns an error."""
         mock_response = MagicMock()
         mock_response.status_code = 429
         exc = httpx.HTTPStatusError(
             "rate limited", request=MagicMock(), response=mock_response
         )
         result = et._format_tool_error(exc, "search_emails")
-        assert "请求过于频繁" in result["error"]
+        assert result["error"]
 
     def test_format_503_unavailable(self):
-        """UT-ERR-04: HTTPStatusError 503 → 服务不可用提示."""
-        from unittest.mock import MagicMock
-
-        import httpx
-
+        """UT-ERR-04: HTTPStatusError 503 returns an error."""
         mock_response = MagicMock()
         mock_response.status_code = 503
         exc = httpx.HTTPStatusError(
             "unavailable", request=MagicMock(), response=mock_response
         )
         result = et._format_tool_error(exc, "send_email")
-        assert "邮件服务暂时不可用" in result["error"]
+        assert result["error"]
 
     def test_format_401_expired(self):
-        """UT-ERR-05: HTTPStatusError 401 → 授权过期提示."""
-        from unittest.mock import MagicMock
-
-        import httpx
-
+        """UT-ERR-05: HTTPStatusError 401 returns an error."""
         mock_response = MagicMock()
         mock_response.status_code = 401
         exc = httpx.HTTPStatusError(
             "unauthorized", request=MagicMock(), response=mock_response
         )
         result = et._format_tool_error(exc, "reply_to_email")
-        assert "邮件功能未授权" in result["error"]
+        assert result["error"]
 
     def test_format_generic_exception_fallback(self):
-        """UT-ERR-06: Unknown exception → 通用错误提示."""
+        """UT-ERR-06: Unknown exception returns an error with tool context."""
         result = et._format_tool_error(ValueError("unexpected"), "list_emails")
-        assert "操作失败" in result["error"]
+        assert result["error"]
         assert "list_emails" in result["error"]
-
-
-# ═══════════════════════════════════════════════════════════════

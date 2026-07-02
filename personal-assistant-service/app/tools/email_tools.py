@@ -99,16 +99,6 @@ def _extract_graph_error(resp: httpx.Response) -> str:
     return f"[{status}] {resp.reason_phrase or 'Unknown error'}"
 
 
-def _auth_required_response() -> dict[str, Any]:
-    """Return a tool result indicating authorization is pending."""
-    return {
-        "auth_required": True,
-        "error": (
-            "Authorization pending. Please follow the authorization link sent to you."
-        ),
-    }
-
-
 def _format_tool_error(e: Exception, tool_name: str) -> dict[str, Any]:
     """Convert known exceptions to user-friendly Chinese error dicts."""
     if isinstance(e, httpx.TimeoutException):
@@ -149,6 +139,39 @@ def _get_client() -> httpx.AsyncClient:
     return _client
 
 
+@require_access_token(
+    provider_name=EMAIL_PROVIDER,
+    scopes=list(EMAIL_SCOPES),
+    auth_flow=EMAIL_AUTH_FLOW,
+    on_auth_url=handle_auth_url,
+)
+async def _m365_email_request(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    headers: dict[str, str] | None = None,
+    json: dict[str, Any] | None = None,
+    access_token: str | None = None,
+) -> httpx.Response:
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
+
+    _push_auth_complete(EMAIL_PROVIDER)
+    request_headers = {"Authorization": f"Bearer {access_token}"}
+    if headers:
+        request_headers.update(headers)
+
+    client = _get_client()
+    return await client.request(
+        method,
+        f"{GRAPH_BASE_URL}{path}",
+        headers=request_headers,
+        params=params,
+        json=json,
+    )
+
+
 # ── 1. list_emails ──
 
 
@@ -166,43 +189,10 @@ async def list_emails(
         dict with keys: emails (list of {id, subject, from, receivedDateTime,
         isRead, importance}), count (int), folder (str)
     """
-    return await _list_emails_authorized(folder=folder, limit=limit)
-
-
-@require_access_token(
-    provider_name=EMAIL_PROVIDER,
-    into="access_token",
-    scopes=list(EMAIL_SCOPES),
-    auth_flow=EMAIL_AUTH_FLOW,
-    on_auth_url=handle_auth_url,
-)
-async def _list_emails_authorized(
-    *,
-    folder: str,
-    limit: int,
-    access_token: str | None = None,
-) -> dict[str, Any]:
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete(EMAIL_PROVIDER)
-    return await _list_emails_impl(
-        folder=folder,
-        limit=limit,
-        access_token=access_token,
-    )
-
-
-async def _list_emails_impl(
-    *,
-    folder: str = "inbox",
-    limit: int = 10,
-    access_token: str,
-) -> dict[str, Any]:
     try:
-        client = _get_client()
-        resp = await client.get(
-            f"{GRAPH_BASE_URL}/mailFolders/{folder}/messages",
-            headers={"Authorization": f"Bearer {access_token}"},
+        resp = await _m365_email_request(
+            "GET",
+            f"/mailFolders/{folder}/messages",
             params={
                 "$top": limit,
                 "$select": (
@@ -248,38 +238,11 @@ async def get_email(
         dict with: id, subject, body (plain text), from, toRecipients,
         ccRecipients, receivedDateTime, attachments (list of {name, size, contentType})
     """
-    return await _get_email_authorized(email_id=email_id)
-
-
-@require_access_token(
-    provider_name=EMAIL_PROVIDER,
-    into="access_token",
-    scopes=list(EMAIL_SCOPES),
-    auth_flow=EMAIL_AUTH_FLOW,
-    on_auth_url=handle_auth_url,
-)
-async def _get_email_authorized(
-    *,
-    email_id: str,
-    access_token: str | None = None,
-) -> dict[str, Any]:
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete(EMAIL_PROVIDER)
-    return await _get_email_impl(email_id=email_id, access_token=access_token)
-
-
-async def _get_email_impl(
-    *,
-    email_id: str,
-    access_token: str,
-) -> dict[str, Any]:
     try:
-        client = _get_client()
-        resp = await client.get(
-            f"{GRAPH_BASE_URL}/messages/{email_id}",
+        resp = await _m365_email_request(
+            "GET",
+            f"/messages/{email_id}",
             headers={
-                "Authorization": f"Bearer {access_token}",
                 "Prefer": 'outlook.body-content-type="text"',
             },
             params={
@@ -338,44 +301,11 @@ async def search_emails(
         dict with keys: results (list of {id, subject, from, receivedDateTime, isRead}),
         count (int), query (str)
     """
-    return await _search_emails_authorized(query=query, limit=limit)
-
-
-@require_access_token(
-    provider_name=EMAIL_PROVIDER,
-    into="access_token",
-    scopes=list(EMAIL_SCOPES),
-    auth_flow=EMAIL_AUTH_FLOW,
-    on_auth_url=handle_auth_url,
-)
-async def _search_emails_authorized(
-    *,
-    query: str,
-    limit: int,
-    access_token: str | None = None,
-) -> dict[str, Any]:
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete(EMAIL_PROVIDER)
-    return await _search_emails_impl(
-        query=query,
-        limit=limit,
-        access_token=access_token,
-    )
-
-
-async def _search_emails_impl(
-    *,
-    query: str,
-    limit: int = 10,
-    access_token: str,
-) -> dict[str, Any]:
     try:
         escaped_query = query.replace('"', '\\"')
-        client = _get_client()
-        resp = await client.get(
-            f"{GRAPH_BASE_URL}/messages",
-            headers={"Authorization": f"Bearer {access_token}"},
+        resp = await _m365_email_request(
+            "GET",
+            "/messages",
             params={
                 "$search": f'"{escaped_query}"',
                 "$top": limit,
@@ -429,49 +359,6 @@ async def send_email(
             "message_id": None,
             "error": "At least one recipient is required",
         }
-    return await _send_email_authorized(
-        to=to,
-        subject=subject,
-        body=body,
-        cc=cc,
-    )
-
-
-@require_access_token(
-    provider_name=EMAIL_PROVIDER,
-    into="access_token",
-    scopes=list(EMAIL_SCOPES),
-    auth_flow=EMAIL_AUTH_FLOW,
-    on_auth_url=handle_auth_url,
-)
-async def _send_email_authorized(
-    *,
-    to: list[str],
-    subject: str,
-    body: str,
-    cc: list[str] | None,
-    access_token: str | None = None,
-) -> dict[str, Any]:
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete(EMAIL_PROVIDER)
-    return await _send_email_impl(
-        to=to,
-        subject=subject,
-        body=body,
-        cc=cc,
-        access_token=access_token,
-    )
-
-
-async def _send_email_impl(
-    *,
-    to: list[str],
-    subject: str,
-    body: str,
-    cc: list[str] | None = None,
-    access_token: str,
-) -> dict[str, Any]:
     try:
         message: dict[str, Any] = {
             "subject": subject,
@@ -486,13 +373,10 @@ async def _send_email_impl(
                 {"emailAddress": {"address": addr}} for addr in cc
             ]
 
-        client = _get_client()
-        resp = await client.post(
-            f"{GRAPH_BASE_URL}/sendMail",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            },
+        resp = await _m365_email_request(
+            "POST",
+            "/sendMail",
+            headers={"Content-Type": "application/json"},
             json={"message": message, "saveToSentItems": True},
         )
         if resp.status_code == 202:
@@ -543,46 +427,11 @@ async def reply_to_email(
         return {"sent": False, "error": "email_id is required for reply_to_email"}
     if not body or not body.strip():
         return {"sent": False, "error": "reply body is required"}
-    return await _reply_to_email_authorized(email_id=email_id, body=body)
-
-
-@require_access_token(
-    provider_name=EMAIL_PROVIDER,
-    into="access_token",
-    scopes=list(EMAIL_SCOPES),
-    auth_flow=EMAIL_AUTH_FLOW,
-    on_auth_url=handle_auth_url,
-)
-async def _reply_to_email_authorized(
-    *,
-    email_id: str,
-    body: str,
-    access_token: str | None = None,
-) -> dict[str, Any]:
-    if not access_token:
-        return _auth_required_response()
-    _push_auth_complete(EMAIL_PROVIDER)
-    return await _reply_to_email_impl(
-        email_id=email_id,
-        body=body,
-        access_token=access_token,
-    )
-
-
-async def _reply_to_email_impl(
-    *,
-    email_id: str,
-    body: str,
-    access_token: str,
-) -> dict[str, Any]:
     try:
-        client = _get_client()
-        resp = await client.post(
-            f"{GRAPH_BASE_URL}/messages/{email_id}/reply",
-            headers={
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/json",
-            },
+        resp = await _m365_email_request(
+            "POST",
+            f"/messages/{email_id}/reply",
+            headers={"Content-Type": "application/json"},
             json={"message": {"body": {"contentType": "Text", "content": body}}},
         )
         if resp.status_code == 202:

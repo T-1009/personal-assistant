@@ -69,16 +69,6 @@ def _push_auth_complete() -> None:
         )
 
 
-def _auth_required_response() -> dict[str, Any]:
-    """Return a tool result indicating authorization is pending."""
-    return {
-        "auth_required": True,
-        "error": (
-            "GitHub authorization pending. Please follow the authorization link."
-        ),
-    }
-
-
 # ---------------------------------------------------------------------------
 # Data models
 # ---------------------------------------------------------------------------
@@ -183,7 +173,6 @@ async def _raw_github_request(
 
 @require_access_token(
     provider_name=get_github_provider_name(),
-    into="access_token",
     scopes=get_github_scopes_list(),
     on_auth_url=_handle_auth_url,
     auth_flow="USER_FEDERATION",
@@ -196,7 +185,7 @@ async def _github_request(
     access_token: str | None = None,
 ) -> Any:
     if not access_token:
-        return _auth_required_response()
+        raise RuntimeError("access_token was not injected by require_access_token")
     _push_auth_complete()
     return await _raw_github_request(access_token, method, path, params=params)
 
@@ -210,8 +199,6 @@ async def list_repositories() -> list[dict[str, Any]] | dict[str, Any]:
     """List repositories visible to the current end user."""
     try:
         data = await _github_request("GET", "/user/repos")
-        if isinstance(data, dict) and data.get("auth_required"):
-            return data
         return [_repo_item_to_dict(_normalize_repo_item(item)) for item in data]
     except Exception as e:
         logger.exception("list_repositories failed")
@@ -230,8 +217,6 @@ async def list_repo_contents(
         api_path = f"{api_path}/{encoded_path}"
     try:
         data = await _github_request("GET", api_path)
-        if isinstance(data, dict) and data.get("auth_required"):
-            return data
         if isinstance(data, list):
             items = [
                 _content_item_to_dict(_normalize_content_item(item)) for item in data
@@ -267,8 +252,6 @@ async def get_file_content(
     )
     try:
         data = await _github_request("GET", api_path, params=params)
-        if isinstance(data, dict) and data.get("auth_required"):
-            return data
         return _content_item_to_dict(_normalize_content_item(data))
     except Exception as e:
         logger.exception("get_file_content failed")
@@ -279,8 +262,6 @@ async def search_code(query: str) -> list[dict[str, Any]] | dict[str, Any]:
     """Search GitHub code with the delegated end-user token."""
     try:
         data = await _github_request("GET", "/search/code", params={"q": query})
-        if isinstance(data, dict) and data.get("auth_required"):
-            return data
         return list(data.get("items", []))
     except Exception as e:
         logger.exception("search_code failed")
@@ -315,11 +296,7 @@ async def star_repository(
     encoded_owner = quote(owner, safe="")
     encoded_repo = quote(repo, safe="")
     try:
-        data = await _github_request(
-            "PUT", f"/user/starred/{encoded_owner}/{encoded_repo}"
-        )
-        if isinstance(data, dict) and data.get("auth_required"):
-            return data
+        await _github_request("PUT", f"/user/starred/{encoded_owner}/{encoded_repo}")
         return {"starred": True, "repository": repository, "error": None}
     except Exception as e:
         logger.exception("star_repository failed")

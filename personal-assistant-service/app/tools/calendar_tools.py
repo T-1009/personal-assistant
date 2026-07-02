@@ -58,15 +58,6 @@ def _push_auth_complete() -> None:
         logger.warning("Calendar auth_complete not streamed outside graph context.")
 
 
-def _auth_required_response() -> dict[str, Any]:
-    return {
-        "auth_required": True,
-        "error": (
-            "Calendar authorization pending. Please follow the authorization link."
-        ),
-    }
-
-
 def _format_tool_error(e: Exception, tool_name: str) -> dict[str, Any]:
     if isinstance(e, httpx.TimeoutException):
         return {"error": f"日历请求超时，请稍后再试。（{tool_name}）"}
@@ -164,7 +155,7 @@ async def _list_calendar_events_authorized(
     access_token: str | None = None,
 ) -> dict[str, Any]:
     if not access_token:
-        return _auth_required_response()
+        raise RuntimeError("access_token was not injected by require_access_token")
     _push_auth_complete()
     return await _list_calendar_events_impl(
         start_time=start_time,
@@ -243,7 +234,7 @@ async def _get_calendar_event_authorized(
     access_token: str | None = None,
 ) -> dict[str, Any]:
     if not access_token:
-        return _auth_required_response()
+        raise RuntimeError("access_token was not injected by require_access_token")
     _push_auth_complete()
     return await _get_calendar_event_impl(
         event_id=event_id,
@@ -304,7 +295,7 @@ async def _search_calendar_events_authorized(
     access_token: str | None = None,
 ) -> dict[str, Any]:
     if not access_token:
-        return _auth_required_response()
+        raise RuntimeError("access_token was not injected by require_access_token")
     _push_auth_complete()
     return await _search_calendar_events_impl(
         query=query,

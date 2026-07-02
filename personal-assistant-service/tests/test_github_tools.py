@@ -8,6 +8,7 @@ import inspect
 import pytest
 from httpx import Request, Response
 
+import app.tools.github_tools as gh
 from app.tools.github_tools import (
     GITHUB_API_BASE_URL,
     _raw_github_request,
@@ -186,20 +187,11 @@ async def test_raw_github_request_handles_put_no_content(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auth_required_returns_structured_response(monkeypatch):
-    """When _github_request signals auth is pending, tools propagate it."""
+async def test_github_request_without_token_is_programming_error():
+    """Raw auth boundary requires decorator-injected token."""
+    raw_request = gh._github_request
+    while hasattr(raw_request, "__wrapped__"):
+        raw_request = raw_request.__wrapped__
 
-    async def fake_request(method, path, *, params=None):
-        return {
-            "auth_required": True,
-            "error": (
-                "GitHub authorization pending. Please follow the authorization link."
-            ),
-        }
-
-    monkeypatch.setattr("app.tools.github_tools._github_request", fake_request)
-
-    result = await list_repositories()
-    assert isinstance(result, dict)
-    assert result["auth_required"] is True
-    assert "authorization" in result["error"].lower()
+    with pytest.raises(RuntimeError, match="access_token"):
+        await raw_request("GET", "/user/repos", access_token=None)

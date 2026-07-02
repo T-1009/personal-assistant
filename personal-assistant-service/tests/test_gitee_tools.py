@@ -107,10 +107,9 @@ async def test_list_repositories_rejects_conflicting_filters(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_auth_required_response_when_no_token(monkeypatch):
-    result = await gt._gitee_request("GET", "/user/repos", access_token=None)
-    assert result["auth_required"] is True
-    assert "Authorization pending" in result["error"]
+async def test_gitee_request_without_token_is_programming_error():
+    with pytest.raises(RuntimeError, match="access_token"):
+        await gt._gitee_request("GET", "/user/repos", access_token=None)
 
 
 def test_list_repositories_public_signature_excludes_access_token():
@@ -126,14 +125,3 @@ def test_list_repositories_public_signature_excludes_access_token():
         "page",
         "per_page",
     ]
-
-
-@pytest.mark.asyncio
-async def test_list_repositories_propagates_auth_required(monkeypatch):
-    async def fake_request(method, path, *, params=None):
-        return gt._auth_required_response()
-
-    monkeypatch.setattr("app.tools.gitee_tools._gitee_request", fake_request)
-
-    result = await gt.list_repositories()
-    assert result["auth_required"] is True

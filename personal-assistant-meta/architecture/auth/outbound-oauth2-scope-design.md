@@ -66,10 +66,10 @@ flowchart TD
 
 落地规则：
 
-- `@require_access_token` 只放在 private authorized boundary，例如 `_github_request()`、`_gitee_request()`、`_send_email_authorized()`、`_list_calendar_events_authorized()`。
+- `@require_access_token` 只放在 private authorized boundary，例如 `_github_request()`、`_gitee_request()`、`_m365_email_request()`、`_list_calendar_events_authorized()`。
 - 同一 Domain 的 `provider_name`、`scopes`、`auth_flow`、`on_auth_url` 使用集中常量或集中 helper，避免重复声明产生 drift。
 - public tool 必须先执行业务参数校验和确认流；只有需要真实外部 API 调用时，才进入 private authorized boundary。
-- 未授权或授权 pending 时，private boundary 返回统一 `auth_required` 结果；public tool 只负责透传或按 Domain 标准格式包装。
+- 未授权或授权 pending 时，由 `require_access_token` 和 `on_auth_url` callback 触发授权流程；public tool 不做二次 `auth_required` 判别，也不以 `auth_required` result 作为新设计目标。
 
 ### 3.3 权限控制上移：依赖 Guardrail 而非 Identity
 既然为了架构妥协向用户超额申请了 `Mail.Send` 权限，系统应当如何在不打断连贯对话的前提下，保障高危操作的安全性？

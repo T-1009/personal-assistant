@@ -78,8 +78,8 @@ Agent：已为该仓库点星。
 
 - GitHub token 不进入 LLM prompt、浏览器 storage 或日志。
 - public GitHub tool schema 不包含 `access_token`；LLM 只填写 `owner`、`repo`、`path`、`query`、`confirm` 等业务参数。
-- GitHub token 只由 Identity SDK 注入到 private `_github_request()` boundary，public tools 只透传 `auth_required` 或处理业务响应。
+- GitHub token 只由 Identity SDK 注入到 private `_github_request()` boundary；public tools 只处理业务响应，不做二次 `auth_required` 判别。
 - 读取仓库内容时，Agent 只能访问用户 OAuth token 可访问的仓库。
 - `github_star_repository` 必须先预览，确认后才执行。
-- 如果用户未授权，tool 返回 `auth_required` 并通过 AuthCard 引导授权。
+- 如果用户未授权，`require_access_token` 通过 `_handle_auth_url` 推送 AuthCard 并等待授权。
 

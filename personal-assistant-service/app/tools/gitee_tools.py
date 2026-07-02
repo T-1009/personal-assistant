@@ -123,16 +123,6 @@ def _repo_item_to_dict(item: GiteeRepositoryItem) -> dict[str, Any]:
     return asdict(item)
 
 
-def _auth_required_response() -> dict[str, Any]:
-    """Return a tool result indicating authorization is pending."""
-    return {
-        "auth_required": True,
-        "error": (
-            "Authorization pending. Please follow the authorization link sent to you."
-        ),
-    }
-
-
 async def _raw_gitee_request(
     access_token: str,
     method: str,
@@ -153,7 +143,6 @@ async def _raw_gitee_request(
 
 @require_access_token(
     provider_name=get_gitee_provider_name(),
-    into="access_token",
     scopes=list(DEFAULT_GITEE_SCOPES),
     on_auth_url=handle_auth_url,
     auth_flow="USER_FEDERATION",
@@ -166,7 +155,7 @@ async def _gitee_request(
     access_token: str | None = None,
 ) -> Any:
     if not access_token:
-        return _auth_required_response()
+        raise RuntimeError("access_token was not injected by require_access_token")
     _push_auth_complete(get_gitee_provider_name())
     return await _raw_gitee_request(access_token, method, path, params=params)
 
@@ -203,8 +192,6 @@ async def list_repositories(
     }
     try:
         data = await _gitee_request("GET", "/user/repos", params=params)
-        if isinstance(data, dict) and data.get("auth_required"):
-            return data
         items = [
             _repo_item_to_dict(_normalize_repo_item(item))
             for item in data

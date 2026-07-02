@@ -520,22 +520,32 @@ sequenceDiagram
                yield token_sse(token_chunk.content)
    ```
 
-4. **Tool function guard**：各 tool function body 顶部添加正常控制流 guard，替代异常跳转：
+4. **Private token boundary**：public tool 先完成参数校验、确认流和业务 guardrail，再调用 private authorized boundary。`@require_access_token` 只放在 private boundary 上，避免 injected credential 出现在 public tool schema：
    ```python
-   def _auth_required_response() -> dict:
-       return {"auth_required": True, "error": "Authorization pending. Please follow the authorization link sent to you."}
+   async def list_emails(folder: str = "inbox", limit: int = 10) -> dict:
+       resp = await _m365_email_request(
+           "GET",
+           f"/mailFolders/{folder}/messages",
+           params={"$top": limit},
+       )
+       # ... normal tool logic ...
 
    @require_access_token(...)
-   async def list_emails(..., access_token: str | None = None):
+   async def _m365_email_request(
+       method: str,
+       path: str,
+       *,
+       access_token: str | None = None,
+   ):
        if not access_token:
-           return _auth_required_response()
-       # ... normal tool logic ...
+           raise RuntimeError("access_token was not injected by require_access_token")
+       # ... private HTTP request logic ...
    ```
 
 **关键设计决策**：
 - 使用 LangGraph 原生 custom stream，不维护 module-level queue 或并发 drain
   lifecycle。
-- 不使用 `@_handle_provider_error` 装饰器——正常的 Identity Service 错误（如 provider 未配置、500 内部错误）改为在各 tool function 顶部统一 guard 处理，不再需要包装层。
+- 不使用 `@_handle_provider_error` 装饰器——授权流程由 `require_access_token` 与 `on_auth_url` callback 负责；业务错误由 public tool 按各自 domain 的返回结构处理。
 - `AuthUrlRequired` 异常类被删除——鉴权 URL 通过 custom stream 直接推送给用户，不再作为异常抛出。
 
 <!-- updated by issues: refactor-email-auth-normal-control-flow, bug-16-auth-card-system-message-duplicated-in-chat -->

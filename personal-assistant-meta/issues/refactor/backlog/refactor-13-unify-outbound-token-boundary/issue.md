@@ -1,5 +1,5 @@
 ---
-status: backlog
+status: done
 ---
 
 # Refactor 13: 统一 Outbound OAuth2 Token 注入边界
@@ -45,7 +45,7 @@ flowchart TD
 - `@require_access_token` 只允许放在 private authorized boundary 上，例如 `_github_request()`、`_m365_email_request()`、`_calendar_authorized()`、`_gitee_authorized_request()`。
 - 同一 outbound domain 的 provider/scopes/callback 配置必须集中声明，且使用稳定常量。
 - Public tool 先执行参数校验、确认流、业务 guardrail，再进入授权边界。
-- 授权失败或 pending 时，private boundary 返回统一的 `auth_required` result，public tool 只负责透传或包装为该 domain 的标准返回结构。
+- 未授权或授权 pending 时，由 `require_access_token` 和 `on_auth_url` callback 触发授权流程；public tool 不应通过额外 helper 事后判断 `auth_required`，也不以 `auth_required` result 作为新设计目标。
 
 ---
 
@@ -55,13 +55,13 @@ flowchart TD
 
 | 文件 | 目标改造 |
 |------|----------|
-| `personal-assistant-service/app/tools/email_tools.py` | 移除 public Email tools 签名中的 `access_token`，新增统一的 private authorized boundary 或 per-tool private authorized wrappers |
+| `personal-assistant-service/app/tools/email_tools.py` | 移除 public Email tools 签名中的 `access_token`，采用单一 `_m365_email_request()` private authorized request boundary |
 | `personal-assistant-service/app/tools/calendar_tools.py` | 保留当前 public wrapper + `_impl` 的测试友好结构，但将 token 注入下移到 private authorized boundary |
 | `personal-assistant-service/app/tools/gitee_tools.py` | 改为 public `gitee_list_repositories` 不含 token，private request/helper 持有 `@require_access_token` |
 | `personal-assistant-service/app/tools/github_tools.py` | 作为目标模式基线，检查是否需要命名、返回结构和测试方式对齐 |
-| `personal-assistant-service/tests/test_email_tools.py` | 不再通过 unwrap public tool decorator 测业务逻辑，改为 mock private authorized boundary 或 private HTTP client |
+| `personal-assistant-service/tests/test_email_tools.py` | 不再通过 unwrap public tool decorator 测业务逻辑，改为直接测试 public tools 并 mock `_m365_email_request()` |
 | `personal-assistant-service/tests/test_calendar_tools.py` | 更新 token 注入边界相关测试 |
-| `personal-assistant-service/tests/test_gitee_tools.py` | 更新 public tool schema 和 auth_required 传播测试 |
+| `personal-assistant-service/tests/test_gitee_tools.py` | 更新 public tool schema 和 request boundary defensive guard 测试 |
 | `personal-assistant-service/tests/test_github_tools.py` | 补充 public schema 不含 credential 参数的回归测试 |
 | `personal-assistant-service/tests/test_tools_init.py` | 验证注册后的 tools 中 credential 参数不可见 |
 
@@ -86,7 +86,7 @@ Client 和 Infra 预期不需要代码变更。Auth Card 的 SSE custom event �
 - 不改变 Auth Card 的前端展示协议。
 - 不引入新的 credential cache。
 - 不重写 Microsoft Graph、GitHub 或 Gitee HTTP API 业务逻辑。
-- 不改变 public tool 的业务能力和返回语义，除非是为了统一 `auth_required` 传播格式。
+- 不改变 public tool 的业务能力和返回语义，除非是为了对齐既有 domain 的授权流程兼容行为。
 
 ---
 
@@ -98,7 +98,7 @@ Client 和 Infra 预期不需要代码变更。Auth Card 的 SSE custom event �
 2. 若任何目标返回 HIGH 或 CRITICAL risk，先向用户报告 blast radius，再进入编辑。
 3. 对每个 outbound domain 明确选择 private authorized boundary：
    - GitHub：复用或整理 `_github_request()`。
-   - Email：建议新增 `_m365_email_request()` 或 per-operation `_send_email_authorized()` 等 private wrappers。
+   - Email：已选择单一 `_m365_email_request()` private boundary；不保留 per-operation authorized wrappers，也不保留同签名 `_xxx_impl` 转发层。
    - Calendar：建议保持 public wrapper + private `_impl` 测试结构，在 `_impl` 上游增加 authorized boundary。
    - Gitee：将 `@require_access_token` 从 public `list_repositories()` 下移到 private helper。
 4. 明确 public tool schema 验证方式，确保注册到 `build_tools()` 后没有 `access_token` 参数。
@@ -121,7 +121,7 @@ Client 和 Infra 预期不需要代码变更。Auth Card 的 SSE custom event �
 - [ ] 未授权用户首次调用 Email/Calendar/Gitee/GitHub tool 时，仍能收到 provider-scoped Auth Card。
 - [ ] 授权完成后，后续 tool 调用仍能发送 `auth_complete` custom event。
 - [ ] 业务参数错误时，不应先触发 OAuth2 授权。
-- [ ] OAuth2 pending result 能被 public tool 正常传播给 Agent/前端。
+- [ ] OAuth2 pending 状态能通过 provider-scoped Auth Card 正常传递给 Agent/前端；public tool 不暴露 injected credential，也不做二次 `auth_required` 判别。
 - [ ] GitHub 现有行为不回退。
 
 ### Tests
@@ -131,6 +131,38 @@ Client 和 Infra 预期不需要代码变更。Auth Card 的 SSE custom event �
 - [ ] Service: `uv run pytest tests/test_email_tools.py tests/test_calendar_tools.py tests/test_gitee_tools.py tests/test_github_tools.py tests/test_tools_init.py`
 - [ ] 如修改 tool registration 或 agent orchestration，追加运行 `uv run pytest tests/test_agent_handler.py`
 - [ ] E2E: 至少覆盖一个未授权触发 Auth Card 的 outbound OAuth2 场景，或在无法本地完成真实 Identity 流时记录 AgentArts staging 验证步骤。
+
+---
+
+## 实施结果
+
+- Email tools 已收敛为 `public tool -> _m365_email_request() -> Microsoft Graph`：
+  - public tool 只暴露业务参数；
+  - `_m365_email_request()` 是唯一持有 `@require_access_token` 的 Email private boundary；
+  - `require_access_token` 的 `into` 参数使用 SDK 默认值 `access_token`，不再显式声明；
+  - 删除 per-operation `_xxx_authorized` wrappers 和同签名 `_xxx_impl` 转发层。
+- `send_email` 和 `reply_to_email` 先完成业务参数 validation，再调用 `_m365_email_request()`，无效参数不会触发 OAuth2。
+- Email 单测改为直接测试 public tools，并 mock `_m365_email_request()` 验证 Graph request 构造；request boundary 测试保留 token 注入、Authorization header 和缺少注入 token 时的 defensive guard。
+- GitHub/Gitee 已删除 `_auth_required_response()` fallback、public tool 的 `auth_required` 事后判别，以及显式 `into="access_token"`；缺少 decorator 注入 token 时视为 request boundary 的 programming error。
+- Calendar 已删除 `_auth_required_response()` fallback；三个 authorized boundaries 在缺少 decorator 注入 token 时统一抛出 programming error。
+- `personal-assistant-meta/architecture/auth/outbound-oauth2-scope-design.md` 与 `personal-assistant-meta/specs/use-cases/email-tools.md` 已同步到 `_m365_email_request()` 单一边界描述。
+
+已执行验证：
+
+- [x] `uv run ruff check app/tools/email_tools.py tests/test_email_tools.py tests/test_tools_init.py`
+- [x] `uv run ruff format --check app/tools/email_tools.py tests/test_email_tools.py tests/test_tools_init.py`
+- [x] `uv run ruff check app/tools/github_tools.py app/tools/gitee_tools.py app/tools/calendar_tools.py tests/test_github_tools.py tests/test_gitee_tools.py tests/test_calendar_tools.py tests/test_tools_init.py`
+- [x] `uv run ruff format --check app/tools/github_tools.py app/tools/gitee_tools.py app/tools/calendar_tools.py tests/test_github_tools.py tests/test_gitee_tools.py tests/test_calendar_tools.py tests/test_tools_init.py`
+- [x] `uv run pytest tests/test_email_tools.py tests/test_tools_init.py`
+- [x] `uv run pytest tests/test_github_tools.py tests/test_gitee_tools.py tests/test_calendar_tools.py tests/test_tools_init.py`
+- [x] `uv run pytest tests/test_email_tools.py tests/test_calendar_tools.py tests/test_gitee_tools.py tests/test_github_tools.py tests/test_tools_init.py`
+- [x] `uv run --project personal-assistant-e2e ruff check personal-assistant-e2e/tests/features/test_feature_10a_outbound_email.py`
+- [x] `uv run --project personal-assistant-e2e ruff format --check personal-assistant-e2e/tests/features/test_feature_10a_outbound_email.py`
+- [x] `uv run --project personal-assistant-service pytest personal-assistant-e2e/tests/features/test_feature_10a_outbound_email.py -q`
+- [x] `build_tools()` schema leak check: no public tool exposes `access_token` or `api_key`
+- [x] `gitnexus detect-changes -r personal-assistant --scope staged`（14 files / 81 symbols / 38 affected processes / critical，范围为预期 Email/GitHub/Gitee/Calendar tool、refactor E2E 和 meta 文档变更）
+
+验证备注：`uv run ruff format --check .` 仍会报告既有未格式化文件，范围不包含本次触碰文件；本次 touched files 的 format check 已通过。
 
 ---
 

@@ -75,7 +75,7 @@ Agent 应先用 `get_email` 获取上下文，再展示回复内容。用户确�
 
 | 能力 | 在 Email Tools 中的使用 |
 |---|---|
-| OAuth2 User Federation | Email public tools 只接收业务参数，内部调用 `_..._authorized` private boundary；该 boundary 通过 `@require_access_token(provider_name="m365-email-provider", auth_flow="USER_FEDERATION")` 获取用户委托 token |
+| OAuth2 User Federation | Email public tools 只接收业务参数，内部通过 `_m365_email_request()` private boundary 调用 Microsoft Graph；该 boundary 通过 `@require_access_token(provider_name="m365-email-provider", auth_flow="USER_FEDERATION")` 获取用户委托 token |
 | Token Vault | Microsoft Graph access token 由 AgentArts Identity 保存，不写入 Service 数据库、日志或浏览器 storage |
 | AuthCard | 用户首次使用邮件功能且未授权时，`handle_auth_url` 通过 SSE custom stream 推送授权卡片 |
 | Upfront Consent | 邮件领域统一使用 `Mail.Read`、`Mail.ReadWrite`、`Mail.Send`，避免读写工具切换时反复触发授权 |
@@ -98,7 +98,7 @@ https://graph.microsoft.com/Mail.Send
 
 - Agent 不接触用户密码或 Microsoft refresh token。
 - public Email tool schema 不包含 `access_token`、`api_key` 或其他 injected credential；LLM 只填写 `folder`、`query`、`email_id`、`to`、`subject`、`body`、`cc` 等业务参数。
-- access token 只在 `_list_emails_authorized`、`_get_email_authorized`、`_search_emails_authorized`、`_send_email_authorized`、`_reply_to_email_authorized` 等 private boundary 内由 Identity SDK 注入，并传给私有 HTTP implementation。
+- access token 只在 `_m365_email_request()` private boundary 内由 Identity SDK 注入，并传给私有 HTTP request implementation。
 - 邮件发送和回复必须先展示预览，再等待用户确认。
-- 未授权时 tool 返回 `auth_required`，用户通过 AuthCard 完成授权后再重试。
+- 未授权时 `require_access_token` 通过 `handle_auth_url` 推送 AuthCard 并等待授权；public tool 不再做二次 `auth_required` 结果判别。
 

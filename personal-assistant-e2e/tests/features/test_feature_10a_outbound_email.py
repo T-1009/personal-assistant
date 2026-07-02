@@ -767,6 +767,7 @@ def _mock_graph_client():
     mock_client = MagicMock()
     mock_client.post = AsyncMock(return_value=mock_resp)
     mock_client.get = AsyncMock(return_value=mock_resp)
+    mock_client.request = AsyncMock(return_value=mock_resp)
     return mock_client
 
 
@@ -790,17 +791,18 @@ def test_email_public_tool_signatures_exclude_access_token():
 
 
 @pytest.mark.feature
-def test_send_email_public_tool_calls_authorized_boundary():
-    """E2E-12: send_email delegates to the private OAuth2 boundary."""
+def test_send_email_calls_m365_request_boundary():
+    """E2E-12: send_email calls the M365 request boundary directly."""
     email_tools = _import_email_tools()
+    mock_client = _mock_graph_client()
 
     import asyncio
 
     with patch.object(
         email_tools,
-        "_send_email_authorized",
-        AsyncMock(return_value={"sent": True, "error": None}),
-    ) as boundary:
+        "_m365_email_request",
+        AsyncMock(return_value=mock_client.request.return_value),
+    ) as request:
         result = asyncio.run(
             email_tools.send_email(
                 to=["test@example.com"],
@@ -809,57 +811,27 @@ def test_send_email_public_tool_calls_authorized_boundary():
             )
         )
 
-    assert result["sent"] is True
-    boundary.assert_awaited_once_with(
-        to=["test@example.com"],
-        subject="Hello",
-        body="This is a test email",
-        cc=None,
-    )
-
-
-@pytest.mark.feature
-def test_send_email_impl_sends_with_authorized_token():
-    """E2E-13: private Email impl calls Graph API when a token is present."""
-    email_tools = _import_email_tools()
-    mock_client = _mock_graph_client()
-
-    import asyncio
-
-    with patch.object(email_tools, "_get_client", return_value=mock_client):
-        result = asyncio.run(
-            email_tools._send_email_impl(
-                to=["test@example.com"],
-                subject="Hello",
-                body="This is a test email",
-                access_token="fake-token",
-            )
-        )
-
     assert result["sent"] is True, (
-        f"Expected sent=True with authorized token, got: {result}"
+        f"Expected sent=True via request boundary, got: {result}"
     )
     assert result["error"] is None, f"Expected no error, got: {result}"
-    # Verify Graph API was called (POST to /sendMail)
-    mock_client.post.assert_called_once()
-    call_args = mock_client.post.call_args
-    assert "/sendMail" in str(call_args), (
-        f"Expected POST to /sendMail, got: {call_args}"
-    )
+    request.assert_awaited_once()
+    call_args = request.call_args
+    assert call_args.args[:2] == ("POST", "/sendMail")
 
 
 @pytest.mark.feature
 def test_send_email_input_validation():
-    """E2E-14: send_email validates 'to' before OAuth2 boundary.
+    """E2E-13: send_email validates 'to' before request boundary.
 
     Calling send_email with an empty to list should return an error dict
-    immediately, without calling Graph API or the OAuth2 boundary.
+    immediately, without calling Graph API or the request boundary.
     """
     email_tools = _import_email_tools()
 
     import asyncio
 
-    with patch.object(email_tools, "_send_email_authorized", AsyncMock()) as boundary:
+    with patch.object(email_tools, "_m365_email_request", AsyncMock()) as request:
         result = asyncio.run(
             email_tools.send_email(
                 to=[],
@@ -873,15 +845,15 @@ def test_send_email_input_validation():
     assert "recipient" in result["error"].lower(), (
         f"Expected error about recipients, got: {result['error']}"
     )
-    boundary.assert_not_awaited()
+    request.assert_not_awaited()
 
 
 @pytest.mark.feature
 def test_reply_to_email_input_validation():
-    """E2E-15: reply_to_email validates input before OAuth2 boundary.
+    """E2E-14: reply_to_email validates input before request boundary.
 
     Empty/whitespace-only email_id or body should return error dicts
-    immediately, without calling Graph API or the OAuth2 boundary.
+    immediately, without calling Graph API or the request boundary.
     """
     email_tools = _import_email_tools()
 
@@ -889,9 +861,9 @@ def test_reply_to_email_input_validation():
 
     with patch.object(
         email_tools,
-        "_reply_to_email_authorized",
+        "_m365_email_request",
         AsyncMock(),
-    ) as boundary:
+    ) as request:
         # Empty email_id
         result = asyncio.run(
             email_tools.reply_to_email(
@@ -930,7 +902,7 @@ def test_reply_to_email_input_validation():
         assert result["sent"] is False
         assert "body" in result.get("error", "").lower()
 
-    boundary.assert_not_awaited()
+    request.assert_not_awaited()
 
 
 @pytest.mark.feature

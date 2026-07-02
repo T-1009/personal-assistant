@@ -155,16 +155,41 @@ async def test_search_calendar_events_with_time_window_filters_locally():
 
 
 @pytest.mark.asyncio
-async def test_calendar_tools_return_auth_required_without_access_token():
-    result = await ct._list_calendar_events_authorized(
-        start_time="2026-06-22T00:00:00",
-        end_time="2026-06-23T00:00:00",
-        calendar_id="primary",
-        limit=20,
-        access_token=None,
-    )
-
-    assert result["auth_required"] is True
+@pytest.mark.parametrize(
+    ("boundary_name", "kwargs"),
+    [
+        (
+            "_list_calendar_events_authorized",
+            {
+                "start_time": "2026-06-22T00:00:00",
+                "end_time": "2026-06-23T00:00:00",
+                "calendar_id": "primary",
+                "limit": 20,
+            },
+        ),
+        (
+            "_get_calendar_event_authorized",
+            {"event_id": "event-1", "calendar_id": "primary"},
+        ),
+        (
+            "_search_calendar_events_authorized",
+            {
+                "query": "design",
+                "start_time": None,
+                "end_time": None,
+                "calendar_id": "primary",
+                "limit": 20,
+            },
+        ),
+    ],
+)
+async def test_calendar_authorized_boundaries_without_token_are_programming_errors(
+    boundary_name,
+    kwargs,
+):
+    boundary = getattr(ct, boundary_name)
+    with pytest.raises(RuntimeError, match="access_token"):
+        await boundary(**kwargs, access_token=None)
 
 
 @pytest.mark.asyncio
