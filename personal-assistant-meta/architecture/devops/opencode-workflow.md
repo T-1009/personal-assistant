@@ -23,24 +23,18 @@ graph TD
     MM["<b>personal-assistant-meta-manager</b><br/>Meta Phase Orchestrator<br/>架构更新 · 计划设计 · 专家评审"]
     DM["<b>personal-assistant-dev-manager</b><br/>Dev Phase Orchestrator<br/>API 契约更新 · 领域实现 · E2E 闭环"]
     AM_C["<b>personal-assistant-committer</b><br/>统一提交<br/>git add 全仓库"]
+    MG["<b>personal-assistant-merger</b><br/>统一合并<br/>merge main → feature"]
     HUMAN["👤 Human in the Loop<br/>Plan Approval Gate"]
 
     subgraph META["<b>Meta 领域</b> — personal-assistant-meta/"]
-        MD["personal-assistant-meta-dev<br/>Issue 评估 · 架构/specs 更新"]
-        PC["<b>panel-chair</b><br/>专家评审面板 · Issue 分析<br/>检视、评审并合成 Plan"]
-    end
-
-    subgraph META_PLANNERS["<b>Meta Planners</b> — meta-manager 调度 ∥"]
-        MSP["personal-assistant-meta-service-planner<br/>service-plan.md"]
-        MCP["personal-assistant-meta-client-planner<br/>client-plan.md"]
-        MIP["personal-assistant-meta-infra-planner<br/>infra-plan.md"]
-        MTP["personal-assistant-meta-test-planner<br/>test-plan.md (after above 3)"]
+        MD["personal-assistant-meta-dev<br/>Issue 评估 · 架构/specs 更新 · 统一 plan.md"]
+        PC["<b>panel-chair</b><br/>专家评审面板 · Issue 分析<br/>检视并评审统一 Plan"]
     end
 
     subgraph PANEL["<b>Panel 成员</b> — panel-chair 调度"]
         DS["panelist-deepseek<br/>DeepSeek V4 Flash"]
-        GM["panelist-gemini<br/>Gemini 3.5 Flash"]
-        GT["panelist-gpt<br/>GPT 5.5 Fast"]
+        GM["panelist-gemini<br/>Gemini 3.1 Pro Preview"]
+        ZP["panelist-zhipu<br/>Zhipu GLM-5.1"]
         HR["panelist-hermes<br/>DeepSeek V4 Pro + CLI"]
     end
 
@@ -81,14 +75,9 @@ graph TD
     MM --> AM_C
     MM -.-> HUMAN
 
-    MM --> MSP
-    MM --> MCP
-    MM --> MIP
-    MM --> MTP
-
     PC --> DS
     PC --> GM
-    PC --> GT
+    PC --> ZP
     PC --> HR
 
     DM --> SD_API
@@ -98,6 +87,7 @@ graph TD
     DM --> IM
     DM --> EM
     DM --> AM_C
+    DM --> MG
 
     SD_API --> CD_API
 
@@ -117,14 +107,14 @@ graph TD
     EM --> ER
 ```
 
-共 26 个 Agent。Meta 领域下 meta-dev 负责 Issue 评估与架构/specs 更新，四个专职 planner（service/client/infra/test）并行撰写分部计划。meta-service-dev / meta-client-dev 位于 Dev 阶段开头，与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：personal-assistant-e2e-manager 调度 personal-assistant-e2e-tester 编写测试、personal-assistant-e2e-reviewer 审查测试代码。Issue 分析与评审已合并到 `panel-chair`，不再有独立的 Issue Analyzer。
+当前工作流共 27 个 Agent（不含 `personal-assistant-cleanup` 辅助 Agent）。Meta 领域下 meta-dev 负责 Issue 评估、架构/specs 更新，并直接撰写一个统一的 `plan.md`；该计划必须同时覆盖 Service、Client、Infra、Test 四个方面，不再拆分输出 `service-plan.md`、`client-plan.md`、`infra-plan.md`、`test-plan.md`，也不再设置四个专职 planner。meta-service-dev / meta-client-dev 位于 Dev 阶段开头，与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：personal-assistant-e2e-manager 调度 personal-assistant-e2e-tester 编写测试、personal-assistant-e2e-reviewer 审查测试代码。Issue 分析与评审已合并到 `panel-chair`，不再有独立的 Issue Analyzer。
 
 ### 与 AnyWear 的结构差异
 
 | | AnyWear | personal-assistant |
 |---|---|---|
 | 仓库模型 | Root + 3 Submodule | 单仓库，3 个目录 |
-| Agent 总数 | 19 | 26（+4 Meta Planner + 4 Panelist） |
+| Agent 总数 | 19 | 27（含 4 Panelist；无 Meta Planner） |
 | 分支管理 | 4 个 repo 需同步分支 | 1 个分支 |
 | Commit 方式 | 每个 submodule 独立 commit | 统一 Committer 在三阶段完成后执行对应的 commit |
 | Commit 时机 | 每个领域 loop 内各自 commit | Plan 完成、所有开发领域完成、以及 E2E 完毕后统一 commit |
@@ -138,7 +128,7 @@ graph TD
 
 ### 1. Meta 阶段流程图（meta-manager）
 
-首先更新 architecture 架构文件与 specs 业务设计规范（主要是 `personal-assistant-meta/specs/` 目录下的业务/技术规格书与领域词典）；随后 Service Plan、Client Plan、Infra Plan 三个计划并行编写；在前三者完成后再编写 Test Plan。一旦所有的分部计划编写完毕，在 `panel-chair` 会商合成之前，**立即调度 Committer 执行 Plan Commit**，确保专家面板评审的是已经被版本化管理的确定产物。最后由 `panel-chair` 进行会商并合成最终的 `plan.md`。
+首先更新 architecture 架构文件与 specs 业务设计规范（主要是 `personal-assistant-meta/specs/` 目录下的业务/技术规格书与领域词典）；随后由 `personal-assistant-meta-dev` 直接撰写一个统一的 `plan.md`。该计划不再拆成四个分部计划，但必须在同一份文档中覆盖 Service、Client、Infra、Test 四个方面，确保 Dev 阶段可以按领域分发实现与验证工作。`panel-chair` 对统一计划进行专家评审与必要修订后，再调度 Committer 执行 Plan Commit，确保进入 Human Plan Approval Gate 的是已版本化的最终计划。
 
 ```mermaid
 flowchart TD
@@ -148,33 +138,21 @@ flowchart TD
 
     subgraph META_PHASE["<b>Meta 阶段 (meta-manager)</b>"]
         S1 --> S1a["② 调度 personal-assistant-meta-dev<br/>更新架构文档与设计规范 architecture/ specs/"]
-        
-        subgraph S2_PARALLEL["③ 并行撰写三领域 Plan Drafts  ∥"]
-            S2_SVC["Service Plan<br/>后端服务计划"]
-            S2_CLI["Client Plan<br/>前端界面计划"]
-            S2_INF["Infra Plan<br/>基础设施计划"]
-        end
-        
-        S1a --> S2_SVC
-        S1a --> S2_CLI
-        S1a --> S2_INF
-        
-        S2_TST["④ 撰写 Test Plan<br/>测试用例设计"]
-        
-        S2_SVC --> S2_TST
-        S2_CLI --> S2_TST
-        S2_INF --> S2_TST
-        
+
+        S2["③ personal-assistant-meta-dev<br/>撰写统一 plan.md<br/>覆盖 Service / Client / Infra / Test"]
+
+        S1a --> S2
+
+        S3["④ panel-chair 专家会商<br/>检视并评审统一 plan.md"]
+
+        S2 --> S3
+
         S4["⑤ 调度 personal-assistant-committer<br/>Plan Commit"]
-        
-        S2_TST --> S4
-        
-        S3["⑥ panel-chair 专家会商与合成<br/>检视、评审并合成为统一 plan.md"]
-        
-        S4 --> S3
+
+        S3 --> S4
     end
 
-    S3 --> DONE(["Meta 阶段结束"])
+    S4 --> DONE(["Meta 阶段结束"])
 ```
 
 ### 2. Dev 阶段流程图（dev-manager）
@@ -249,8 +227,8 @@ flowchart TD
 
 - **两阶段物理隔离**：摒弃了单一的顶层 manager。整个流程切分为 Meta 阶段（由 `personal-assistant-meta-manager` 管理）和 Dev 阶段（由 `personal-assistant-dev-manager` 管理），由两阶段独立调度。
 - **架构文档与设计规范在 Plan 前更新**：要求在撰写具体实现计划前，先由 `meta-dev` 更新 `personal-assistant-meta/architecture/` 下的架构文件以及 `personal-assistant-meta/specs/` 下的业务与技术规格书，确保后续计划有高保真的设计依据。
-- **分部计划串并行**：仅让 Service、Client、Infra Plan 并行设计，随后在前三者产出后再由 `meta-dev` 撰写 Test Plan，提高测试用例设计的准确性。
-- **Plan Commit 纳入 Control Loop**：步骤 ⑤ 的 Plan Commit 动作移至了 Test Plan 完成后、`panel-chair` 会商合成之前。这使得专家评审面板拿到的直接就是已经提交到 feature branch 上的版本化草稿，提高了评审和版本锁定的严密性。
+- **统一 Plan 输出**：不再调度四个 planner 输出分部计划，而是由 `meta-dev` 在一份 `plan.md` 中统一覆盖 Service、Client、Infra、Test 四个方面，减少文档碎片和跨计划同步成本。
+- **Plan Commit 纳入 Control Loop**：步骤 ⑤ 的 Plan Commit 动作位于 `panel-chair` 专家评审之后。这使得 Human Plan Approval Gate 拿到的直接就是已经提交到 feature branch 上的最终计划，提高了评审和版本锁定的严密性。
 - **API 同步移动 to Dev 阶段**：原在 Meta 阶段（对实际代码文件产生修改），现移动到 Dev 阶段的开头，使 Meta 阶段真正做到"设计不落地、代码零修改"，所有实际代码改动均局限在 Dev 阶段内部。
 - **E2E 联调、会商与提交**：开发都完成后进行一次 Implementation Commit 再开始联调。E2E 领域内部完成测试编写和初审后，**由 Dev 阶段的顶层编排器 `personal-assistant-dev-manager` 调度 `panel-chair` 组织专家对 Dev 阶段全量代码修改（Service + Client + Infra + E2E）进行深度会商评审**，确保整体交付质量合格。全部通过后再由 Committer 统一进行 **E2E Tests & Final Fixes Commit（E2E 测试与最终修复提交）**，以确保联调测试中发现的任何缺陷修复与测试用例一同合入版本库。
 
@@ -301,7 +279,7 @@ Worker (Dev / Reviewer / Tester / Committer / E2E-Tester / E2E-Reviewer)
 |------|-----------|--------|
 | Worker | 自身职责范围内的实现/审查/测试 | 任何超出 scope 的异常、不确定项、或需要跨 Agent 协调的问题 |
 | Domain Manager | 领域内的三级决策：回退 Dev 修复、接受 known issue | 跨领域影响、设计缺陷、API 语义错误、自身 loop 内无法闭合的问题 |
-| personal-assistant-meta-manager | Meta 阶段内各分部计划的调整与重新分配 | 设计矛盾、需求冲突、需要 Human 裁决的事项（例如方案重大调整） |
+| personal-assistant-meta-manager | Meta 阶段内统一计划的调整与重新分配 | 设计矛盾、需求冲突、需要 Human 裁决的事项（例如方案重大调整） |
 | personal-assistant-dev-manager | 跨领域的协调和重新分配、异常重试、测试决策 | 需要 Human 输入或裁决的事项（需求模糊、约束冲突、合并决策） |
 
 ### 上报规范
@@ -374,18 +352,14 @@ permission:
 
 其他未列出的内置工具（如 `read`、`grep`、`glob`、`write`、`question`）为所有 subagent 默认可用，无需显式声明。
 
-### 完整权限矩阵（26 个 Pipeline Agent + 4 个 Panel Member）
+### 完整权限矩阵（27 个工作流 Agent，不含 cleanup 辅助 Agent）
 
 | Agent | task | edit | bash | skill | todowrite | webfetch | websearch | 设计理由 |
 |-------|:----:|:----:|:----:|:-----:|:---------:|:--------:|:---------:|---------|
 | `personal-assistant-meta-manager` | allow | — | allow | — | allow | — | — | Meta 阶段 Orchestrator；bash 用于 `git checkout` |
 | `personal-assistant-dev-manager` | allow | — | allow | — | allow | — | — | Dev 阶段 Orchestrator；bash 用于 `git checkout`/`git merge` |
-| `personal-assistant-meta-dev` | — | allow | — | — | — | allow | allow | Issue 评估 + 架构/specs 文档更新；webfetch/websearch 用于引用外部文档 |
-| `personal-assistant-meta-service-planner` | — | allow | — | — | — | allow | allow | 撰写 service-plan.md；webfetch/websearch 用于引用后端框架文档 |
-| `personal-assistant-meta-client-planner` | — | allow | — | — | — | allow | allow | 撰写 client-plan.md；webfetch/websearch 用于引用前端框架文档 |
-| `personal-assistant-meta-infra-planner` | — | allow | — | — | — | allow | allow | 撰写 infra-plan.md；webfetch/websearch 用于引用云平台/IaC 文档 |
-| `personal-assistant-meta-test-planner` | — | allow | — | — | — | allow | allow | 撰写 test-plan.md（基于三个领域 plan）；webfetch/websearch 用于引用测试框架文档 |
-| `panel-chair` | allow | allow | allow | allow | allow | allow | allow | 专家评审面板主席。task 用于调度各模型 panelist；edit/bash/skill 用于 panelist-hermes 做本地代码/命令执行及合成最终 plan.md |
+| `personal-assistant-meta-dev` | — | allow | — | — | — | allow | allow | Issue 评估 + 架构/specs 文档更新 + 撰写统一 plan.md；webfetch/websearch 用于引用外部文档 |
+| `panel-chair` | allow | allow | allow | allow | allow | allow | allow | 专家评审面板主席。task 用于调度各模型 panelist；edit/bash/skill 用于 panelist-hermes 做本地代码/命令执行及评审/修订统一 plan.md |
 | `personal-assistant-meta-service-dev` | — | allow | allow | — | — | — | — | 更新 API schema（edit）+ 生成 OpenAPI spec（bash） |
 | `personal-assistant-meta-client-dev` | — | allow | allow | — | — | — | — | 生成 TypeScript 类型（bash）+ commit（bash） |
 | `personal-assistant-service-manager` | allow | — | — | — | allow | — | — | 纯调度 |
@@ -407,7 +381,7 @@ permission:
 | `personal-assistant-e2e-reviewer` | — | deny | — | — | — | — | — | 审查 E2E 测试代码；审计 stale 测试移除 |
 | `panelist-deepseek` | — | — | — | — | — | allow | allow | DeepSeek 模型 panelist，只读。webfetch/websearch 用于外部文档 |
 | `panelist-gemini` | — | — | — | — | — | allow | allow | Gemini 模型 panelist，只读。webfetch/websearch 用于外部文档 |
-| `panelist-gpt` | — | — | — | — | — | allow | allow | GPT 模型 panelist，只读。webfetch/websearch 用于外部文档 |
+| `panelist-zhipu` | — | — | — | — | — | allow | allow | Zhipu 模型 panelist，只读。webfetch/websearch 用于外部文档 |
 | `panelist-hermes` | — | allow | — | — | — | allow | allow | Hermes CLI panelist，本地实证验证。edit 用于写入合成报告；webfetch/websearch 用于外部参考 |
 
 
@@ -417,7 +391,6 @@ permission:
 |------|---------|----------|------|
 | Manager（Orchestrator） | `task: allow` | — | 只调度，不操作文件和命令 |
 | Dev（实现者） | `edit: allow`, `bash: allow` | — | 写代码 + 运行命令 |
-| Planner（计划撰写者） | `edit: allow`, `webfetch: allow`, `websearch: allow` | — | 撰写分部计划文档（plan.md），引用外部文档和最佳实践 |
 | Reviewer（审查者） | — | `edit: deny` | 审查业务代码 + 测试代码；审计 stale 测试移除，防止误删 |
 | Tester（测试者） | `edit: allow`, `bash: allow` | — | 写测试文件、移除 stale 测试 + 运行测试套件 |
 | Committer（提交者） | `bash: allow` | `edit: deny` | `git add/commit/push`，禁止修改源码 |
@@ -497,7 +470,7 @@ personal-assistant-e2e-reviewer 审查 E2E 测试代码，确保测试覆盖和�
 
 | 层级 | 应该知道 | 不应该知道 |
 |------|---------|-----------|
-| personal-assistant-meta-manager | 3 个直属：personal-assistant-meta-dev、panel-chair、personal-assistant-committer | personal-assistant-meta-dev 具体怎么撰写各个分部计划 |
+| personal-assistant-meta-manager | 3 个直属：personal-assistant-meta-dev、panel-chair、personal-assistant-committer | personal-assistant-meta-dev 具体怎么撰写统一 plan.md |
 | personal-assistant-dev-manager | 7 个直属：personal-assistant-meta-service-dev (API)、personal-assistant-meta-client-dev (API)、service/client/infra-manager、e2e-manager、committer | personal-assistant-service-manager 内部有 personal-assistant-service-dev/tester 等 |
 | personal-assistant-service-manager | 3 个直属：personal-assistant-service-dev/personal-assistant-service-tester/personal-assistant-service-reviewer | Tester 跑 `pytest` 还是 `pytest --cov` |
 | personal-assistant-client-manager | 3 个直属：personal-assistant-client-dev/personal-assistant-client-tester/personal-assistant-client-reviewer | Tester 跑 `vitest` 还是 `jest` |
@@ -576,14 +549,10 @@ OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_ta
 | personal-assistant-meta-manager | `personal-assistant-meta-manager.md` |
 | personal-assistant-dev-manager | `personal-assistant-dev-manager.md` |
 | personal-assistant-meta-dev | `personal-assistant-meta-dev.md` |
-| personal-assistant-meta-service-planner | `personal-assistant-meta-service-planner.md` |
-| personal-assistant-meta-client-planner | `personal-assistant-meta-client-planner.md` |
-| personal-assistant-meta-infra-planner | `personal-assistant-meta-infra-planner.md` |
-| personal-assistant-meta-test-planner | `personal-assistant-meta-test-planner.md` |
 | panel-chair | `panel-chair.md` |
 | panelist-deepseek | `panelist-deepseek.md` |
 | panelist-gemini | `panelist-gemini.md` |
-| panelist-gpt | `panelist-gpt.md` |
+| panelist-zhipu | `panelist-zhipu.md` |
 | panelist-hermes | `panelist-hermes.md` |
 | personal-assistant-meta-service-dev（API） | `personal-assistant-meta-service-dev.md` |
 | personal-assistant-meta-client-dev（API） | `personal-assistant-meta-client-dev.md` |
@@ -606,4 +575,4 @@ OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_ta
 | personal-assistant-e2e-reviewer | `personal-assistant-e2e-reviewer.md` |
 
 
-命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester, planner}。例外：`personal-assistant-committer.md`（统一 Committer，无 domain 限定）、`personal-assistant-merger.md`（统一 Merger，无 domain 限定）、`panelist-*.md`（panel-chair 的 4 个专家 panelist）。
+命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester}。例外：`personal-assistant-committer.md`（统一 Committer，无 domain 限定）、`personal-assistant-merger.md`（统一 Merger，无 domain 限定）、`panelist-*.md`（panel-chair 的 4 个专家 panelist）。
