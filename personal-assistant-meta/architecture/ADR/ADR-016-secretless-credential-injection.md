@@ -36,44 +36,27 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 
 **所有敏感凭据通过 AgentArts Identity 存储与管理。代码通过 `agentarts-sdk` 装饰器声明依赖，运行时由平台注入解密后的凭据。代码仓库、CI/CD 流水线、容器环境变量中不得出现任何明文凭据。**
 
-### 三层分离架构
+### Secretless trust boundaries
 
+这里的分离不是运行时调用链的三层架构，而是三个互相隔离的信任边界：
+
+```mermaid
+flowchart LR
+    Code["Code / typed Settings<br/>只保存 provider name 和非密配置"]
+    CICD["CI/CD / .agentarts_config.yaml<br/>只部署 artifact 和 runtime settings<br/>不携带 credential value"]
+    Runtime["AgentArts Runtime<br/>SDK decorator 按 provider name 声明凭据需求"]
+    Identity["AgentArts Identity<br/>唯一保存 secret value 的可信源"]
+
+    Code -->|"provider name / decorator"| Runtime
+    CICD -->|"image + non-secret settings"| Runtime
+    Runtime -->|"require_api_key / require_access_token / require_sts_token"| Identity
+    Identity -->|"runtime credential injection"| Runtime
 ```
-┌─────────────────────────────────────────────────┐
-│  Layer 1: Platform (AgentArts Identity)          │
-│  ┌─────────────────────────────────────────────┐ │
-│  │ DEEPSEEK_API_KEY  provider (API Key)        │ │
-│  │ m365-provider       provider (OAuth2)       │ │
-│  │ github-provider     provider (OAuth2)       │ │
-│  │ iam-users-readonly  provider (STS)          │ │
-│  └─────────────────────────────────────────────┘ │
-│  唯一可信源。密钥明文仅在此层。                      │
-└─────────────────────────────────────────────────┘
-                        │
-                        │ @require_api_key / @require_access_token
-                        ▼
-┌─────────────────────────────────────────────────┐
-│  Layer 2: Code (typed Settings + Python catalog) │
-│  ┌─────────────────────────────────────────────┐ │
-│  │ credential_provider_name: DEEPSEEK_API_KEY   │ │
-│  │ base_url: https://api.deepseek.com           │ │
-│  │ model: deepseek-chat                         │ │
-│  └─────────────────────────────────────────────┘ │
-│  只存指针（provider name），不存密钥明文。           │
-└─────────────────────────────────────────────────┘
-                        │
-                        │ agentarts deploy
-                        ▼
-┌─────────────────────────────────────────────────┐
-│  Layer 3: CI/CD (GitHub Actions)                 │
-│  ┌─────────────────────────────────────────────┐ │
-│  │ .agentarts_config.yaml 只注入 canonical       │ │
-│  │ Runtime Settings，不包含 credential value     │ │
-│  │   （无 API Key）                              │ │
-│  └─────────────────────────────────────────────┘ │
-│  GitHub 完全不知道 API Key 是什么。                │
-└─────────────────────────────────────────────────┘
-```
+
+- **AgentArts Identity** 是唯一保存 secret value 的地方。
+- **Code** 只保存 provider name、base URL、model name 等非密配置。
+- **CI/CD** 只负责部署 artifact 和 canonical Runtime Settings，不传递 credential value。
+- Runtime 真正需要凭据时，由 SDK decorator 根据 provider name 向 Identity 获取并注入；CI/CD 不参与凭据读取链路。
 
 ### 装饰器体系
 
