@@ -68,8 +68,53 @@ flowchart TD
 
 - `@require_access_token` 只放在 private authorized boundary，例如 `_github_request()`、`_gitee_request()`、`_m365_email_request()`、`_list_calendar_events_authorized()`。
 - 同一 Domain 的 `provider_name`、`scopes`、`auth_flow`、`on_auth_url` 使用集中常量或集中 helper，避免重复声明产生 drift。
+- `require_access_token` 的 `into` 参数使用 SDK 默认值 `access_token`；不要显式写 `into="access_token"`，避免把默认约定误读成每个 tool 都要重复声明的配置项。
 - public tool 必须先执行业务参数校验和确认流；只有需要真实外部 API 调用时，才进入 private authorized boundary。
 - 未授权或授权 pending 时，由 `require_access_token` 和 `on_auth_url` callback 触发授权流程；public tool 不做二次 `auth_required` 判别，也不以 `auth_required` result 作为新设计目标。
+- private boundary 缺少 decorator 注入 token 时应抛出 programming error，例如 `RuntimeError("access_token was not injected by require_access_token")`；这表示代码绕过了 SDK boundary，不是正常用户授权状态。
+
+**推荐写法：**
+
+```python
+from typing import Any
+
+
+async def search_code(query: str) -> list[dict]:
+    data = await _github_request("GET", "/search/code", params={"q": query})
+    return list(data.get("items", []))
+
+
+@require_access_token(
+    provider_name=get_github_provider_name(),
+    scopes=get_github_scopes_list(),
+    auth_flow="USER_FEDERATION",
+    on_auth_url=_handle_auth_url,
+)
+async def _github_request(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    access_token: str | None = None,
+) -> Any:
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
+    return await _raw_github_request(access_token, method, path, params=params)
+```
+
+**禁止写法：**
+
+```python
+@require_access_token(
+    provider_name=get_github_provider_name(),
+    into="access_token",
+    scopes=get_github_scopes_list(),
+)
+async def search_code(query: str, access_token: str | None = None) -> dict:
+    if not access_token:
+        return {"auth_required": True}
+    return await _raw_github_request(access_token, "GET", "/search/code")
+```
 
 ### 3.3 权限控制上移：依赖 Guardrail 而非 Identity
 既然为了架构妥协向用户超额申请了 `Mail.Send` 权限，系统应当如何在不打断连贯对话的前提下，保障高危操作的安全性？

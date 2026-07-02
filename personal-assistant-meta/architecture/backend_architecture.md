@@ -411,19 +411,34 @@ class PersonalAssistantMemory:
 ### 5.2 Identity（Outbound 认证）
 
 通过 `agentarts.sdk.identity` 提供的装饰器，Agent 以用户委托身份调用外部服务：
+OAuth2 public tool 只暴露业务参数；`@require_access_token` 放在 private
+authorized boundary。详细约定见
+[ADR-016](ADR/ADR-016-secretless-credential-injection.md) 和
+[Outbound OAuth2 Scope 设计规范](auth/outbound-oauth2-scope-design.md)。
 
 ```python
 from agentarts.sdk import require_access_token
+
+async def list_github_issues(owner: str, repo: str):
+    return await _github_request("GET", f"/repos/{owner}/{repo}/issues")
 
 @require_access_token(
     provider_name="github-provider",
     scopes=["repo", "read:user"],
     auth_flow="USER_FEDERATION"
 )
-async def list_github_issues(owner: str, repo: str, access_token: str = None):
+async def _github_request(
+    method: str,
+    path: str,
+    *,
+    access_token: str | None = None,
+):
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"https://api.github.com/repos/{owner}/{repo}/issues",
+        resp = await client.request(
+            method,
+            f"https://api.github.com{path}",
             headers={"Authorization": f"Bearer {access_token}"}
         )
         return resp.json()

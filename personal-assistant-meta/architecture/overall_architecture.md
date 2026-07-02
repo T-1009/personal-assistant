@@ -249,6 +249,11 @@ sts_provider = client.create_sts_credential_provider(
 
 #### 4.2.2 凭据装饰器使用
 
+OAuth2 User Federation tools 必须使用 private authorized boundary：public tool
+不暴露 injected credential，`@require_access_token` 不直接装饰 public tool。
+详细约定见 [ADR-016](ADR/ADR-016-secretless-credential-injection.md) 和
+[Outbound OAuth2 Scope 设计规范](auth/outbound-oauth2-scope-design.md)。
+
 ```python
 from agentarts.sdk import require_access_token, require_api_key, require_sts_token
 from agentarts.sdk.identity import StsCredentials
@@ -256,29 +261,54 @@ from typing import Optional
 import httpx
 
 # === User Federation: 以用户身份调用 GitHub ===
+async def get_github_issues(owner: str, repo: str):
+    return await _github_request("GET", f"/repos/{owner}/{repo}/issues")
+
 @require_access_token(
     provider_name="github-provider",
     scopes=["repo", "read:user"],
     auth_flow="USER_FEDERATION"
 )
-async def get_github_issues(owner: str, repo: str, access_token: Optional[str] = None):
+async def _github_request(
+    method: str,
+    path: str,
+    *,
+    access_token: str | None = None,
+):
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            f"https://api.github.com/repos/{owner}/{repo}/issues",
+        resp = await client.request(
+            method,
+            f"https://api.github.com{path}",
             headers={"Authorization": f"Bearer {access_token}"}
         )
         return resp.json()
 
 # === User Federation: 以用户身份调用 Outlook Calendar ===
+async def get_outlook_calendar_events():
+    return await _m365_calendar_request(
+        "GET",
+        "/me/calendar/events",
+    )
+
 @require_access_token(
     provider_name="m365-provider",
     scopes=["https://graph.microsoft.com/Calendars.Read"],
     auth_flow="USER_FEDERATION"
 )
-async def get_outlook_calendar_events(access_token: Optional[str] = None):
+async def _m365_calendar_request(
+    method: str,
+    path: str,
+    *,
+    access_token: str | None = None,
+):
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
     async with httpx.AsyncClient() as client:
-        resp = await client.get(
-            "https://graph.microsoft.com/v1.0/me/calendar/events",
+        resp = await client.request(
+            method,
+            f"https://graph.microsoft.com/v1.0{path}",
             headers={"Authorization": f"Bearer {access_token}"}
         )
         return resp.json()

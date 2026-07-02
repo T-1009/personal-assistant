@@ -6,6 +6,10 @@
 > Pydantic Settings 管理，Provider metadata 位于 typed Python catalog。下文
 > `config.yaml` 和旧 Runtime variable 图示仅保留为历史背景。
 
+> **2026-07-02 修订**：明确 Outbound OAuth2 decorator placement convention：
+> `@require_access_token` 只放在 private authorized boundary，public tool
+> 不暴露 injected credential，也不处理 `auth_required` fallback result。
+
 ---
 
 ## 背景
@@ -78,6 +82,56 @@ Personal Assistant 作为 AI Agent 应用，需要多种凭据来调用外部服
 | `@require_api_key` | 静态 API Key（M2M） | LLM 推理、企业内部 API |
 | `@require_access_token` | OAuth2 Access Token（User Federation） | Microsoft Graph、GitHub API |
 | `@require_sts_token` | 云平台临时凭证（M2M） | 华为云 IAM、OBS |
+
+### Outbound OAuth2 decorator placement
+
+对于注册给 Agent / ToolNode 的 OAuth2 public tool，`access_token` 是
+Runtime credential，不是 LLM 可填写的业务参数。public tool 只能表达用户意图
+和业务参数；`@require_access_token` 必须下沉到 private authorized boundary。
+
+落地约定：
+
+- public tool 签名和 tool schema 不得包含 `access_token`、`api_key` 或其他
+  injected credential 参数。
+- `@require_access_token` 只放在 private boundary，例如 `_github_request()`、
+  `_gitee_request()`、`_m365_email_request()` 或 Calendar 的
+  `_..._authorized()` boundary。
+- `require_access_token` 的 `into` 使用 SDK 默认值 `access_token`；除非 SDK
+  contract 发生变化，不显式写 `into="access_token"`。
+- 缺少 decorator 注入的 token 是 boundary 的 programming error，应抛出
+  `RuntimeError`，不返回 `auth_required` tool result。
+- 未授权或授权 pending 由 `on_auth_url` callback 通过 AuthCard 呈现；public
+  tool 不做二次 `auth_required` 判别。
+- public tool 必须先完成 validation、preview、confirmation 和业务 guardrail，
+  再进入 private authorized boundary，避免无效业务参数触发 OAuth2。
+
+推荐结构：
+
+```python
+from typing import Any
+
+
+async def list_repositories() -> list[dict]:
+    data = await _github_request("GET", "/user/repos")
+    return [_normalize_repo(item) for item in data]
+
+
+@require_access_token(
+    provider_name=get_github_provider_name(),
+    scopes=get_github_scopes_list(),
+    auth_flow="USER_FEDERATION",
+    on_auth_url=_handle_auth_url,
+)
+async def _github_request(
+    method: str,
+    path: str,
+    *,
+    access_token: str | None = None,
+) -> Any:
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
+    return await _raw_github_request(access_token, method, path)
+```
 
 ### 运行时流程（以 LLM API Key 为例）
 
@@ -167,6 +221,7 @@ API Key 不写入 `os.environ`、Settings、日志或 metric label。
 
 - [ADR-003](ADR-003-agentarts-platform.md) — AgentArts 平台选型（提供 Identity Service）
 - [ADR-011](ADR-011-multi-llm-provider.md) — 多 LLM Provider 可配置架构（`credential_provider_name` 字段的设计基础）
+- [Outbound OAuth2 Scope 设计规范](../auth/outbound-oauth2-scope-design.md) — OAuth2 scopes、private boundary 和 AuthCard 授权流程的落地规则
 
 ### 当前凭据清单
 
