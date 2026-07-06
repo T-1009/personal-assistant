@@ -80,8 +80,8 @@ cp .env.example .env
 ### 3. 配置本地 JWT Workload Identity
 
 本地普通对话可以只用 mock header；如果要跑 Calendar OAuth2 full flow，并让
-Service 使用真实 Microsoft `Authorization: Bearer <id_token>` 主动 mint
-JWT-mode WAT，首次本地 setup 需要先创建 customer-owned
+Service 使用真实 Microsoft Entra `Authorization: Bearer <id_token>` 主动
+mint JWT-mode WAT，首次本地 setup 需要先创建 customer-owned
 `pa-local-jwt-workload`：
 
 ```bash

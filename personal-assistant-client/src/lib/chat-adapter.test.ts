@@ -6,12 +6,13 @@ import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/reac
 import type { ThreadMessage, ThreadUserMessagePart } from "@assistant-ui/core";
 
 // Mock the auth module to control acquireIdTokenSilently behavior
-const { mockAcquireIdTokenSilently, mockClearInboundAuthSession } = vi.hoisted(
-  () => ({
+const {
+  mockAcquireIdTokenSilently,
+  mockClearInboundAuthSession,
+} = vi.hoisted(() => ({
     mockAcquireIdTokenSilently: vi.fn(),
     mockClearInboundAuthSession: vi.fn(),
-  }),
-);
+  }));
 vi.mock("@/lib/auth", () => ({
   acquireIdTokenSilently: () => mockAcquireIdTokenSilently(),
   clearInboundAuthSession: () => mockClearInboundAuthSession(),
@@ -524,7 +525,7 @@ describe("chatAdapter", () => {
   });
 
   describe("auth header", () => {
-    it("includes Authorization: Bearer header when idToken is set", async () => {
+    it("includes Authorization: Bearer header when signed in", async () => {
       // Set idToken in the zustand store
       const idToken = makeTestJWT();
       useAuthStore.getState().setIdToken(idToken);
@@ -616,7 +617,7 @@ describe("chatAdapter", () => {
       expect(mockClearInboundAuthSession).toHaveBeenCalledTimes(1);
     });
 
-    it("on 401: calls acquireIdTokenSilently, updates store with fresh token, still throws auth error", async () => {
+    it("on 401: refreshes ID token and retries with the fresh ID token", async () => {
       useAuthStore.getState().setIdToken(makeTestJWT());
       mockAcquireIdTokenSilently.mockResolvedValue("fresh-token-456");
 
@@ -665,7 +666,7 @@ describe("chatAdapter", () => {
       // The fresh token should be in the store
       expect(useAuthStore.getState().idToken).toBe("fresh-proactive-token");
 
-      // The Authorization header should contain the fresh token
+      // The Authorization header should contain the refreshed ID token
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       const headers = init.headers as Record<string, string>;
       expect(headers).toHaveProperty("Authorization");

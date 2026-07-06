@@ -77,11 +77,11 @@ uv run python scripts/configure_calendar_oauth_return_url.py \
 customer-owned `CUSTOM_JWT` Workload Identity 来主动 mint JWT-mode WAT。
 默认名称为 `pa-local-jwt-workload`，对应 Service 默认配置
 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload`。
-该 workload 的 `allowed_audience` 必须包含本地前端
-`VITE_ENTRA_CLIENT_ID` 使用的 Microsoft Entra Application (client) ID。
-`allowed_clients` 默认保持为空；Microsoft Entra `id_token` 通常只有 `aud`，
-没有 `azp` / `appid` / `client_id`，配置 `allowed_clients` 反而会导致
-`AgentIdentityDirectoryService.2007 invalid JWT client ID`。
+本地前端发送 Microsoft Entra ID token 作为 inbound `Authorization` token。
+因此该 workload 默认使用 Microsoft Entra v2 discovery URL，校验
+`allowed_audience=<VITE_ENTRA_CLIENT_ID>`，并保持 `allowed_clients=[]`。
+Microsoft Entra ID token 通常没有 `appid` / `azp` / `client_id` claim，
+不要在默认本地配置里要求 client-id claim。
 
 查看当前可见 workload identities：
 
@@ -102,11 +102,11 @@ uv run python scripts/ensure_local_jwt_workload_identity.py \
   --apply
 ```
 
-拿到 Microsoft Entra ID `id_token` 后，可以 smoke-test JWT WAT exchange。
+拿到本地前端使用的 Microsoft Entra ID token 后，可以 smoke-test JWT WAT exchange。
 脚本从环境变量读取 token，默认不打印 WAT：
 
 ```bash
-export AGENT_IDENTITY_USER_TOKEN="<Microsoft Entra id_token>"
+export AGENT_IDENTITY_USER_TOKEN="<Microsoft Entra ID token>"
 uv run python scripts/test_jwt_workload_access_token.py \
   --workload-identity pa-local-jwt-workload \
   --region cn-southwest-2

@@ -133,8 +133,9 @@ identity。它对 list/get 与 Console 可见，但不适合作为本地代码�
 ## 推荐处理
 
 为本地 Calendar OAuth2 / SDK 主动 WAT exchange 创建一个 customer-owned
-Workload Identity，配置与 `agent-personal-assistant` 相同的 `CUSTOM_JWT`
-authorizer：
+Workload Identity。它使用与 `agent-personal-assistant` 同类的 Microsoft Entra
+v2 ID token authorizer；关键差异是它必须是 customer-owned workload，不能是
+AgentArts / AgentNetwork service-created workload：
 
 ```text
 discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
@@ -155,11 +156,10 @@ AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload
 `X-HW-AgentGateway-Workload-Access-Token`。本文结论只约束本地开发或非 Gateway
 路径中由代码主动调用 `create_workload_access_token()` 的场景。
 
-Infra helper 默认使用 `pa-local-jwt-workload`，并配置当前项目的 Microsoft
-Entra discovery URL 与 audience。`allowed_clients` 默认保持为空，因为 Microsoft
-Entra `id_token` 通常没有 `azp` / `appid` / `client_id` claim；只有在使用的
-token 确认携带 client-id claim 时才显式配置。普通运行是 dry-run，只有 `--apply`
-会写云端：
+Infra helper 默认使用 `pa-local-jwt-workload`，并配置本地 inbound Microsoft
+Entra ID token 的验证规则：v2 discovery URL、前端应用 client ID 作为
+`allowed_audience`，并保持 `allowed_clients=[]`。普通运行是 dry-run，
+只有 `--apply` 会写云端：
 
 ```bash
 cd personal-assistant-infra
@@ -181,7 +181,7 @@ uv run python scripts/list_workload_identities.py \
 
 ```bash
 cd personal-assistant-infra
-export AGENT_IDENTITY_USER_TOKEN="<Microsoft Entra ID id_token>"
+export AGENT_IDENTITY_USER_TOKEN="<Microsoft Entra ID token>"
 uv run python scripts/test_jwt_workload_access_token.py \
   --region cn-southwest-2 \
   --workload-identity agent-personal-assistant
@@ -192,7 +192,7 @@ Windows PowerShell：
 
 ```powershell
 cd personal-assistant-infra
-$env:AGENT_IDENTITY_USER_TOKEN = Read-Host -MaskInput "Paste Entra idToken"
+$env:AGENT_IDENTITY_USER_TOKEN = Read-Host -MaskInput "Paste Microsoft Entra ID token"
 uv run python scripts/test_jwt_workload_access_token.py `
   --region cn-southwest-2 `
   --workload-identity agent-personal-assistant
@@ -215,7 +215,17 @@ Remove-Item Env:AGENT_IDENTITY_USER_TOKEN
 400 AgentIdentityDirectoryService.2007 invalid JWT client ID
 ```
 
-先解码 JWT。若 claims 里只有 `aud`，没有 `azp` / `appid` / `client_id`，
-则不要配置 `allowed_clients`；让 workload 只通过 `allowed_audience` 约束
-Microsoft Entra application。若 token 确实携带 client-id claim，再让
-`allowed_clients` 包含该 claim 的实际值。
+先解码 JWT，按 claim 对齐 workload 配置：
+
+- Microsoft Entra `id_token` 通常是
+  `iss=https://login.microsoftonline.com/.../v2.0`、`aud=<client id>`，但没有
+  `appid` / `azp` / `client_id`；local workload 应保持 `allowed_clients=[]`，
+  只用 `allowed_audience=<client id>` 约束它。
+- Microsoft Graph access token 通常是 `iss=https://sts.windows.net/.../`、
+  `aud=00000003-0000-0000-c000-000000000000`、`appid=<client id>`；如果未来
+  明确选择这类 token，才需要改成 v1 discovery URL、Graph audience 和
+  `allowed_clients=<appid>`。
+
+如果返回 `2005 failed to verify JWT claims`，优先检查 `iss` 是否匹配
+`discovery_url` 的 issuer。v1 Graph access token 不能使用 `/v2.0/.well-known`
+discovery URL。

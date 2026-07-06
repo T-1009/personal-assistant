@@ -187,7 +187,7 @@ customer-owned `CUSTOM_JWT` workload identity 主动 mint WAT：
 | 环境 | WAT 来源 | Callback Complete | 要求 |
 |------|----------|-------------------|------|
 | Remote AgentArts Runtime | AgentArts Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，等价于 JWT mode | `UserIdentifier(user_token=user_token)` | Cloudflare BFF / Gateway context 恢复原 inbound `Authorization` |
-| Local dev / manual test | Service 主动调用 `create_workload_access_token(settings.agent_identity_local_jwt_workload_name, user_token=userToken)` 并写入 `AgentArtsRuntimeContext`；`settings.agent_identity_local_jwt_workload_name` 必须指向 customer-owned `CUSTOM_JWT` workload | `UserIdentifier(user_token=user_token)` | 本地前端启用 Entra 登录，并向 Service 发送真实 `Authorization: Bearer <id_token>`；本地需先 bootstrap customer-owned workload |
+| Local dev / manual test | Service 主动调用 `create_workload_access_token(settings.agent_identity_local_jwt_workload_name, user_token=userToken)` 并写入 `AgentArtsRuntimeContext`；`settings.agent_identity_local_jwt_workload_name` 必须指向 customer-owned `CUSTOM_JWT` workload | `UserIdentifier(user_token=user_token)` | 本地前端启用 Entra 登录，并向 Service 发送真实 Microsoft Entra `Authorization: Bearer <id_token>`；本地需先 bootstrap customer-owned workload |
 | Unit / contract tests | mock DP client / Identity client | assert `UserIdentifier(user_token=...)` | 不依赖真实 Microsoft 或 AgentArts token |
 
 本 issue 确认新增 / 标准化以下配置：
@@ -289,12 +289,14 @@ client.complete_resource_token_auth(
 本方案要求本地 Calendar OAuth2 full flow 使用真实登录，而不是纯 Dev Mode：
 
 - `personal-assistant-client/.env` 需要配置 `VITE_ENTRA_CLIENT_ID` 和
-  `VITE_ENTRA_TENANT_ID`，让本地前端拿到 inbound id token。
+  `VITE_ENTRA_TENANT_ID`，让本地前端完成 Entra 登录，并取得 inbound
+  Microsoft Entra ID token。
 - `personal-assistant-infra` 需要提供 bootstrap / verification helper，创建或验证
   customer-owned `CUSTOM_JWT` local workload。默认 workload name 为
   `pa-local-jwt-workload`，也可通过 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME`
   覆盖。
-- 本地 `/invocations` 请求需要携带 `Authorization: Bearer <id_token>`。
+- 本地 `/invocations` 请求需要携带
+  `Authorization: Bearer <Microsoft Entra id_token>`。
 - 本地 callback relay / fallback 也需要把同一用户的 `Authorization` 带回 Service-owned
   callback。
 - 纯 mock header (`X-HW-AgentGateway-User-Id: dev-user`) 仍可用于不涉及 Calendar
