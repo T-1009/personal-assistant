@@ -1,10 +1,18 @@
+import logging
+
+from agentarts.sdk import IdentityClient
 from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 from agentarts.sdk.runtime.model import (
     ACCESS_TOKEN_HEADER,
     SESSION_HEADER,
     USER_ID_HEADER,
 )
+from agentarts.sdk.utils.constant import get_region
 from fastapi import HTTPException, Request
+
+from app.settings import get_settings
+
+logger = logging.getLogger(__name__)
 
 
 def extract_authorization_user_token(request: Request) -> str:
@@ -69,17 +77,54 @@ def extract_gateway_session_id(request: Request) -> str:
     return session_id
 
 
-def extract_workload_access_token(request: Request) -> None:
-    """提取并存入 AgentArts Gateway 注入的 Workload Access Token。
+def ensure_jwt_workload_access_token(
+    request: Request,
+    *,
+    required: bool,
+) -> str | None:
+    """Ensure Runtime Context has a JWT-bound AgentArts workload token.
 
-    生产环境中，AgentArts Gateway 在转发请求时通过
-    ACCESS_TOKEN_HEADER 注入短期凭证。
-    提取后存入 AgentArtsRuntimeContext，使 @require_access_token
-    等装饰器可以直接使用，跳过本地认证 fallback。
-
-    若 header 不存在或为空（本地开发环境），显式设为 None，
-    确保 context 干净。SDK 的 _get_workload_access_token() 自动
-    fallback 到本地认证。
+    Production requests receive a Gateway-injected workload token that is
+    already bound to the inbound JWT identity. Local Calendar OAuth2 requests
+    must create the same JWT-mode token from the inbound Authorization token
+    before AgentArts SDK decorators can fall back to user_id mode.
     """
-    token = request.headers.get(ACCESS_TOKEN_HEADER, "").strip()
-    AgentArtsRuntimeContext.set_workload_access_token(token or None)
+    gateway_token = request.headers.get(ACCESS_TOKEN_HEADER, "").strip()
+    if gateway_token:
+        AgentArtsRuntimeContext.set_workload_access_token(gateway_token)
+        logger.info("JWT-mode WAT ready source=gateway_wat identity_mode=jwt")
+        return gateway_token
+
+    try:
+        user_token = extract_authorization_user_token(request)
+    except HTTPException as e:
+        AgentArtsRuntimeContext.set_workload_access_token(None)
+        logger.info(
+            "JWT-mode WAT unavailable source=missing_authorization_user_token "
+            "identity_mode=jwt required=%s",
+            required,
+        )
+        if required:
+            raise HTTPException(
+                status_code=401,
+                detail="Local Calendar OAuth2 requires an Authorization user token",
+            ) from e
+        return None
+
+    settings = get_settings()
+    client = IdentityClient(region=get_region())
+    workload_token = client.create_workload_access_token(
+        settings.agent_identity_workload_name,
+        user_token=user_token,
+    )
+    AgentArtsRuntimeContext.set_workload_access_token(workload_token)
+    logger.info(
+        "JWT-mode WAT ready source=local_jwt_wat identity_mode=jwt workload_name=%s",
+        settings.agent_identity_workload_name,
+    )
+    return workload_token
+
+
+def extract_workload_access_token(request: Request) -> None:
+    """Backward-compatible Gateway/local JWT WAT preparation helper."""
+    ensure_jwt_workload_access_token(request, required=False)

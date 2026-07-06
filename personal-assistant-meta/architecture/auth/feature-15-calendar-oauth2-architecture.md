@@ -228,6 +228,18 @@ client.complete_resource_token_auth(
 )
 ```
 
+Resource Token Auth session 创建阶段和 callback complete 阶段必须使用同一种
+user identity binding。Calendar OAuth2 full flow 统一走 JWT identity：
+
+| 环境 | Runtime WAT 来源 | Callback Complete |
+|------|------------------|-------------------|
+| AgentArts Runtime / production | Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，等价于 `get_workload_access_token_for_jwt(workloadName, userToken)` | `UserIdentifier(user_token=user_token)` |
+| Local dev / manual test | Service 使用 inbound `Authorization` user token 调用 `create_workload_access_token(settings.agent_identity_workload_name, user_token=...)`，默认 workload identity name 为 `agent-personal-assistant` | `UserIdentifier(user_token=user_token)` |
+
+如果本地请求没有 Gateway WAT 且没有真实 inbound `Authorization` user token，
+Calendar Tool 必须在进入 AgentArts SDK `@require_access_token` 之前 fail-fast，
+避免 SDK local fallback 创建 user_id-mode WAT 后再用 `user_token` complete。
+
 ## 7. 已知约束：`user_id` 与 `user_token` 互斥
 
 AgentArts Identity Service 不允许在同一个 `UserIdentifier` 中同时传入 `user_id` 和 `user_token`。如果这样调用：
