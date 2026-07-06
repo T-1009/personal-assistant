@@ -114,13 +114,13 @@ def ensure_jwt_workload_access_token(
     settings = get_settings()
     client = IdentityClient(region=get_region())
     workload_token = client.create_workload_access_token(
-        settings.agent_identity_workload_name,
+        settings.agent_identity_local_jwt_workload_name,
         user_token=user_token,
     )
     AgentArtsRuntimeContext.set_workload_access_token(workload_token)
     logger.info(
         "JWT-mode WAT ready source=local_jwt_wat identity_mode=jwt workload_name=%s",
-        settings.agent_identity_workload_name,
+        settings.agent_identity_local_jwt_workload_name,
     )
     return workload_token
 

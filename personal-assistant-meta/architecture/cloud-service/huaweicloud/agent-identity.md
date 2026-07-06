@@ -48,7 +48,16 @@ JWKS `kid` 等问题。同一套凭据对 customer-owned `workload-*` identities
 
 推荐处理：为本地开发、非 Gateway 路径或手动 SDK 调试创建 customer-owned
 `CUSTOM_JWT` Workload Identity，并配置相同 Microsoft Entra ID authorizer；
-本地将 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME` 指向该 customer-owned workload。
+本地默认使用 `pa-local-jwt-workload`，也可将
+`AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME` 指向其他 customer-owned workload。
+
+Infra helper 提供该 local workload 的 read-only 检查和显式 bootstrap：
+
+```bash
+cd personal-assistant-infra
+uv run python scripts/ensure_local_jwt_workload_identity.py
+uv run python scripts/ensure_local_jwt_workload_identity.py --apply
+```
 
 Production Gateway 路径继续优先使用 Gateway 注入的
 `X-HW-AgentGateway-Workload-Access-Token`，不依赖本地代码主动 mint WAT。

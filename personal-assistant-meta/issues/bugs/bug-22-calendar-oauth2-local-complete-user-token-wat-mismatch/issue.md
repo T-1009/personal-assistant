@@ -194,7 +194,7 @@ customer-owned `CUSTOM_JWT` workload identity 主动 mint WAT：
 
 | 配置 | 默认值 | 原因 |
 |------|--------|------|
-| `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME` / `Settings.agent_identity_local_jwt_workload_name` | 无默认值；local/manual test 显式配置 customer-owned workload，例如 `pa-local-jwt-workload` | 名称明确限定为 local JWT WAT exchange，不会与 production service-created `agent-personal-assistant` 混淆；本地 JWT-mode WAT exchange 必须使用 customer-owned `CUSTOM_JWT` Workload Identity |
+| `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME` / `Settings.agent_identity_local_jwt_workload_name` | `pa-local-jwt-workload`；local/manual test 可显式覆盖到其他 customer-owned workload | 名称明确限定为 local JWT WAT exchange，不会与 production service-created `agent-personal-assistant` 混淆；本地 JWT-mode WAT exchange 必须使用 customer-owned `CUSTOM_JWT` Workload Identity |
 
 注意：`agent-personal-assistant` 是 AgentArts / AgentNetwork 为 Runtime 创建的
 service-owned Workload Identity，不是 customer-owned local WAT exchange identity。它也不是
@@ -291,8 +291,9 @@ client.complete_resource_token_auth(
 - `personal-assistant-client/.env` 需要配置 `VITE_ENTRA_CLIENT_ID` 和
   `VITE_ENTRA_TENANT_ID`，让本地前端拿到 inbound id token。
 - `personal-assistant-infra` 需要提供 bootstrap / verification helper，创建或验证
-  customer-owned `CUSTOM_JWT` local workload，并输出其 name 供
-  `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME` 使用。
+  customer-owned `CUSTOM_JWT` local workload。默认 workload name 为
+  `pa-local-jwt-workload`，也可通过 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME`
+  覆盖。
 - 本地 `/invocations` 请求需要携带 `Authorization: Bearer <id_token>`。
 - 本地 callback relay / fallback 也需要把同一用户的 `Authorization` 带回 Service-owned
   callback。
@@ -407,7 +408,7 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 |------|--------|
 | `personal-assistant-service/app/main.py` | 当前 Service-owned callback 的 `complete_resource_token_auth` 调用 |
 | `personal-assistant-service/app/auth.py` | `extract_authorization_user_token`、`extract_gateway_user_id`、`extract_workload_access_token`；需要支持 local JWT-mode WAT preparation / `ensure_jwt_workload_access_token` |
-| `personal-assistant-service/app/settings.py` | 新增 / 标准化 `agent_identity_local_jwt_workload_name`；local/manual test 必须显式指向 customer-owned `CUSTOM_JWT` workload，不能默认使用 service-created `agent-personal-assistant` |
+| `personal-assistant-service/app/settings.py` | 新增 / 标准化 `agent_identity_local_jwt_workload_name`，默认 `pa-local-jwt-workload`；local/manual test 必须指向 customer-owned `CUSTOM_JWT` workload，不能默认使用 service-created `agent-personal-assistant` |
 | `personal-assistant-infra/agent_identity.tf` | 当前只管理 service-created `agent-personal-assistant` 的 OAuth2 return URL allowlist；不能作为 local WAT exchange resource |
 | `personal-assistant-infra/scripts/` | 需要新增 / 完善 customer-owned local JWT workload bootstrap 与 WAT exchange verification helper |
 | `personal-assistant-service/tests/test_oauth2_callback.py` | Service-owned callback 当前断言 production-like user_token path |

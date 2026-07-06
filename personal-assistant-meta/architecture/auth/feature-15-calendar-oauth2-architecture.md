@@ -234,7 +234,7 @@ user identity binding。Calendar OAuth2 full flow 统一走 JWT identity：
 | 环境 | Runtime WAT 来源 | Callback Complete |
 |------|------------------|-------------------|
 | AgentArts Runtime / production | Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，等价于 `create_workload_access_token(workloadName, user_token=userToken)` | `UserIdentifier(user_token=user_token)` |
-| Local dev / manual test | Service 使用 inbound `Authorization` user token 调用 `create_workload_access_token(settings.agent_identity_local_jwt_workload_name, user_token=...)`；`settings.agent_identity_local_jwt_workload_name` 必须指向 customer-owned `CUSTOM_JWT` Workload Identity，不能使用 service-created `agent-personal-assistant` | `UserIdentifier(user_token=user_token)` |
+| Local dev / manual test | Service 使用 inbound `Authorization` user token 调用 `create_workload_access_token(settings.agent_identity_local_jwt_workload_name, user_token=...)`；`settings.agent_identity_local_jwt_workload_name` 默认 `pa-local-jwt-workload`，必须指向 customer-owned `CUSTOM_JWT` Workload Identity，不能使用 service-created `agent-personal-assistant` | `UserIdentifier(user_token=user_token)` |
 
 如果本地请求没有 Gateway WAT 且没有真实 inbound `Authorization` user token，
 Calendar Tool 必须在进入 AgentArts SDK `@require_access_token` 之前 fail-fast，

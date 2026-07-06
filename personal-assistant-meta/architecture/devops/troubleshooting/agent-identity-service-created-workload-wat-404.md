@@ -148,12 +148,21 @@ custom_claims: []
 然后将 Service 本地配置指向该 customer-owned workload：
 
 ```env
-AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=<customer-owned-custom-jwt-workload-name>
+AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload
 ```
 
 生产 Gateway 路径仍优先使用 Gateway 注入的
 `X-HW-AgentGateway-Workload-Access-Token`。本文结论只约束本地开发或非 Gateway
 路径中由代码主动调用 `create_workload_access_token()` 的场景。
+
+Infra helper 默认使用 `pa-local-jwt-workload`，并配置当前项目的 Microsoft
+Entra discovery URL 与 audience。普通运行是 dry-run，只有 `--apply` 会写云端：
+
+```bash
+cd personal-assistant-infra
+uv run python scripts/ensure_local_jwt_workload_identity.py
+uv run python scripts/ensure_local_jwt_workload_identity.py --apply
+```
 
 ## 复现命令
 

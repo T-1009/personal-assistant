@@ -218,7 +218,7 @@ class TestEnsureJwtWorkloadAccessToken:
         request = _make_request({"Authorization": "Bearer user-token"})
         settings = Settings(
             _env_file=None,
-            agent_identity_workload_name="agent-personal-assistant",
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
         )
 
         with (
@@ -236,7 +236,7 @@ class TestEnsureJwtWorkloadAccessToken:
         assert result == "local-jwt-wat"
         identity_client_cls.assert_called_once_with(region="cn-southwest-2")
         client.create_workload_access_token.assert_called_once_with(
-            "agent-personal-assistant",
+            "pa-local-jwt-workload",
             user_token="user-token",
         )
         mock_set.assert_called_once_with("local-jwt-wat")
