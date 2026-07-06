@@ -43,7 +43,7 @@ class Settings(BaseSettings):
     iam_users_region: str = "cn-southwest-2"
     iam_users_endpoint: AnyHttpUrl | None = None
 
-    agent_identity_workload_name: str = "agent-personal-assistant"
+    agent_identity_local_jwt_workload_name: str = "pa-local-jwt-workload"
 
     github_provider_name: str = "github-provider"
     github_scopes: str = "repo,read:user"
@@ -83,7 +83,7 @@ class Settings(BaseSettings):
         "gitee_provider_name",
         "github_provider_name",
         "github_scopes",
-        "agent_identity_workload_name",
+        "agent_identity_local_jwt_workload_name",
         "iam_users_provider_name",
         "iam_users_agency_session_name",
         "iam_users_region",

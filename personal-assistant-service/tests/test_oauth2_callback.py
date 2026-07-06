@@ -127,7 +127,7 @@ async def test_backend_callback_completes_identity_with_authorization_user_token
     assert kwargs["user_identifier"].user_token == "callback-user-token"
     assert kwargs["user_identifier"].user_id is None
     identity_client.create_workload_access_token.assert_called_once_with(
-        "agent-personal-assistant",
+        "pa-local-jwt-workload",
         user_token="callback-user-token",
     )
     assert len(store.begin_calls) == 1

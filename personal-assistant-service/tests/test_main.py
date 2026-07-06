@@ -308,7 +308,7 @@ class TestHeaderHandling:
         """POST without Gateway WAT but with Authorization gets JWT-mode WAT."""
         settings = Settings(
             _env_file=None,
-            agent_identity_workload_name="agent-personal-assistant",
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
         )
         with (
             patch("app.auth.IdentityClient") as identity_client_cls,
@@ -332,7 +332,7 @@ class TestHeaderHandling:
 
         assert response.status_code == 200
         identity_client.create_workload_access_token.assert_called_once_with(
-            "agent-personal-assistant",
+            "pa-local-jwt-workload",
             user_token="inbound-user-token",
         )
         mock_set.assert_called_once_with("local-jwt-wat")
