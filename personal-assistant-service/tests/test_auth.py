@@ -14,6 +14,7 @@ from agentarts.sdk.runtime.model import (
     USER_ID_HEADER,
 )
 from fastapi import HTTPException
+from huaweicloudsdkcore.exceptions.exceptions import SdkException
 from starlette.requests import Request
 
 from app.auth import (
@@ -263,3 +264,30 @@ class TestEnsureJwtWorkloadAccessToken:
             assert ensure_jwt_workload_access_token(request, required=False) is None
 
         mock_set.assert_called_once_with(None)
+
+    def test_local_wat_exchange_failure_logs_setup_hint(self) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
+
+        with (
+            patch("app.auth.IdentityClient") as identity_client_cls,
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger") as logger,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+            pytest.raises(SdkException),
+        ):
+            client = identity_client_cls.return_value
+            client.create_workload_access_token.side_effect = SdkException(
+                "workload identity not found"
+            )
+            ensure_jwt_workload_access_token(request, required=True)
+
+        mock_set.assert_called_once_with(None)
+        logger.error.assert_called_once()
+        assert "ensure_local_jwt_workload_identity.py" in logger.error.call_args.args[2]

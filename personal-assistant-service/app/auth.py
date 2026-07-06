@@ -9,6 +9,7 @@ from agentarts.sdk.runtime.model import (
 )
 from agentarts.sdk.utils.constant import get_region
 from fastapi import HTTPException, Request
+from huaweicloudsdkcore.exceptions.exceptions import SdkException
 
 from app.settings import get_settings
 
@@ -112,11 +113,25 @@ def ensure_jwt_workload_access_token(
         return None
 
     settings = get_settings()
-    client = IdentityClient(region=get_region())
-    workload_token = client.create_workload_access_token(
-        settings.agent_identity_local_jwt_workload_name,
-        user_token=user_token,
-    )
+    region = get_region()
+    client = IdentityClient(region=region)
+    try:
+        workload_token = client.create_workload_access_token(
+            settings.agent_identity_local_jwt_workload_name,
+            user_token=user_token,
+        )
+    except SdkException:
+        AgentArtsRuntimeContext.set_workload_access_token(None)
+        logger.error(
+            "JWT-mode WAT exchange failed source=local_jwt_wat identity_mode=jwt "
+            "workload_name=%s setup_hint=%s",
+            settings.agent_identity_local_jwt_workload_name,
+            "Run: cd personal-assistant-infra && uv run python "
+            "scripts/ensure_local_jwt_workload_identity.py "
+            f"--region {region} --apply",
+            exc_info=True,
+        )
+        raise
     AgentArtsRuntimeContext.set_workload_access_token(workload_token)
     logger.info(
         "JWT-mode WAT ready source=local_jwt_wat identity_mode=jwt workload_name=%s",
