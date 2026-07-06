@@ -233,12 +233,18 @@ user identity binding。Calendar OAuth2 full flow 统一走 JWT identity：
 
 | 环境 | Runtime WAT 来源 | Callback Complete |
 |------|------------------|-------------------|
-| AgentArts Runtime / production | Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，等价于 `get_workload_access_token_for_jwt(workloadName, userToken)` | `UserIdentifier(user_token=user_token)` |
-| Local dev / manual test | Service 使用 inbound `Authorization` user token 调用 `create_workload_access_token(settings.agent_identity_workload_name, user_token=...)`，默认 workload identity name 为 `agent-personal-assistant` | `UserIdentifier(user_token=user_token)` |
+| AgentArts Runtime / production | Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，等价于 `create_workload_access_token(workloadName, user_token=userToken)` | `UserIdentifier(user_token=user_token)` |
+| Local dev / manual test | Service 使用 inbound `Authorization` user token 调用 `create_workload_access_token(settings.agent_identity_local_jwt_workload_name, user_token=...)`；`settings.agent_identity_local_jwt_workload_name` 必须指向 customer-owned `CUSTOM_JWT` Workload Identity，不能使用 service-created `agent-personal-assistant` | `UserIdentifier(user_token=user_token)` |
 
 如果本地请求没有 Gateway WAT 且没有真实 inbound `Authorization` user token，
 Calendar Tool 必须在进入 AgentArts SDK `@require_access_token` 之前 fail-fast，
 避免 SDK local fallback 创建 user_id-mode WAT 后再用 `user_token` complete。
+
+已验证 `agent-personal-assistant` 可通过 list/get 与 Console 看见，但由于它是
+`created_by=SERVICE service.AgentNetwork` 的 service-created Workload Identity，本地主动
+mint WAT 会稳定返回 `404 AgentIdentityDirectoryService.1002 workload identity not found`。
+详细排障记录见
+[`cloud-service/huaweicloud/agent-identity.md`](../cloud-service/huaweicloud/agent-identity.md)。
 
 ## 7. 已知约束：`user_id` 与 `user_token` 互斥
 

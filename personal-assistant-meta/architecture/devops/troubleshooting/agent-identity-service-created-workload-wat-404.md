@@ -148,7 +148,7 @@ custom_claims: []
 然后将 Service 本地配置指向该 customer-owned workload：
 
 ```env
-AGENT_IDENTITY_WORKLOAD_NAME=<customer-owned-custom-jwt-workload-name>
+AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=<customer-owned-custom-jwt-workload-name>
 ```
 
 生产 Gateway 路径仍优先使用 Gateway 注入的
