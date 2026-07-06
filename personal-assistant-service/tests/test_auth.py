@@ -5,6 +5,7 @@ Gateway-injected headers (User-Id, Session-Id, Workload-Access-Token).
 Uses SDK header constants from agentarts.sdk.runtime.model.
 """
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -263,3 +264,55 @@ class TestEnsureJwtWorkloadAccessToken:
             assert ensure_jwt_workload_access_token(request, required=False) is None
 
         mock_set.assert_called_once_with(None)
+
+    def test_exchange_error_logs_visible_workload_identities(self) -> None:
+        class WorkloadIdentityNotFoundError(Exception):
+            status_code = 404
+            error_code = "AgentIdentityDirectoryService.1002"
+            request_id = "request-123"
+
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_workload_name="agent-personal-assistant",
+        )
+
+        with (
+            patch("app.auth.IdentityClient") as identity_client_cls,
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger.error") as mock_error,
+        ):
+            identity_client = identity_client_cls.return_value
+            identity_client.create_workload_access_token.side_effect = (
+                WorkloadIdentityNotFoundError("workload identity not found")
+            )
+            identity_client.client.list_workload_identities.return_value = (
+                SimpleNamespace(
+                    workload_identities=[
+                        SimpleNamespace(
+                            name="agent-personal-assistant",
+                            urn="agentIdentity:cn-southwest-2:project:workload",
+                            authorizer_type="OAUTH2",
+                        )
+                    ],
+                    page_info=SimpleNamespace(next_marker=None),
+                )
+            )
+
+            with pytest.raises(WorkloadIdentityNotFoundError):
+                ensure_jwt_workload_access_token(request, required=False)
+
+        identity_client.client.list_workload_identities.assert_called_once()
+        message, *args = mock_error.call_args.args
+        assert "JWT-mode WAT exchange failed" in message
+        assert "cn-southwest-2" in args
+        assert "agent-personal-assistant" in args
+        assert "AgentIdentityDirectoryService.1002" in args
+        assert "request-123" in args
+        assert any(
+            isinstance(arg, list)
+            and arg[0]["name"] == "agent-personal-assistant"
+            and arg[0]["urn"] == "agentIdentity:cn-southwest-2:project:workload"
+            for arg in args
+        )
