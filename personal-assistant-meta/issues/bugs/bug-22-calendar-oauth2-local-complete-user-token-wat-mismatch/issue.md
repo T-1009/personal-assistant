@@ -88,7 +88,16 @@ sequenceDiagram
     IdSvc-->>API: identity mismatch / complete failed
 ```
 
-## 根因假设
+## 根因 / First Principles
+
+Resource Token Auth session 的核心不变量是：
+
+> **创建 auth session 时使用的 user identity binding，必须与 callback complete
+> 时传入的 `UserIdentifier` 一致。**
+
+Bug 22 因此不是“如何判断线上 / 本地”，也不是“callback 时该读哪个 Cookie”，而是
+Service 必须在 `@require_access_token` 创建 Resource Token Auth session 之前，确保
+当前 Runtime Context 中的 WAT 已经绑定到预期 identity mode。
 
 Feature 15 架构文档已经强调 `UserIdentifier` 的 `user_id` 与 `user_token` 互斥，并倾向
 生产 Gateway JWT 路径使用 `user_token`。但本地 dev/test 没有生产 Gateway 注入的同源
@@ -102,12 +111,16 @@ Feature 15 架构文档已经强调 `UserIdentifier` 的 `user_id` 与 `user_tok
   `UserIdentifier(user_token=...)`；
 - 因此 local 路径形成 `user_id WAT -> user_token complete` 的不一致组合。
 
-正确约束应为：
+第一性约束应为：
 
 | WAT identity mode | WAT 来源 | Callback Complete |
 |-------------------|----------|-------------------|
 | JWT mode | Gateway 注入，或显式 `get_workload_access_token_for_jwt(workloadName, userToken)` | `UserIdentifier(user_token=user_token)` |
 | user_id mode | 本地显式 `get_workload_access_token_for_user_id(workloadName, userId)` | `UserIdentifier(user_id=user_id)` |
+
+本项目的 Calendar OAuth2 full flow 应选择其中一条长期主线，而不是把 callback
+实现写成 local / remote 双轨。否则本地跑通的 full flow 不再代表 production-like
+User Federation / Token Vault 行为。
 
 ## 预期行为
 
@@ -117,7 +130,8 @@ Feature 15 架构文档已经强调 `UserIdentifier` 的 `user_id` 与 `user_tok
 - Local full-flow 路径不再依赖 SDK 自动 user_id fallback；Service 在没有 Gateway WAT
   时主动用 inbound `Authorization` user token 调
   `get_workload_access_token_for_jwt(workloadName, userToken)`，并写入
-  `AgentArtsRuntimeContext`。
+  `AgentArtsRuntimeContext`。本项目的 `workloadName` 固定指向 Agent Identity
+  Workload Identity name：`agent-personal-assistant`。
 - Callback complete 不做 local 特判，继续固定使用
   `UserIdentifier(user_token=user_token)`。
 - 本地 Calendar OAuth2 full flow 如果缺少真实 inbound `Authorization` user token，应
@@ -132,8 +146,9 @@ Feature 15 架构文档已经强调 `UserIdentifier` 的 `user_id` 与 `user_tok
 | 方案 | 做法 | 优点 | 问题 | 结论 |
 |------|------|------|------|------|
 | A. Local complete 改用 `user_id` | local 继续使用 SDK fallback 的 user_id-mode WAT，callback complete 在 local 改为 `UserIdentifier(user_id=...)` | 能兼容当前 Dev Mode / mock user id；本地改动小 | 线上线下 identity model 分叉；需要 `PA_LOCATION`、`PA_STAGE`、`AGENTARTS_USER_IDENTITY_MODE` 或类似配置；callback 需要 local 特判；local full-flow 不够像 production | 不选为主方案 |
-| B. Local 主动使用 JWT-mode WAT | local 从 inbound `Authorization` 提取 user token，主动调用 `get_workload_access_token_for_jwt(workloadName, userToken)`；callback 继续 `UserIdentifier(user_token=...)` | 线上线下 identity model 一致；callback 无需特判；更接近 production；不需要新增环境矩阵配置 | local full-flow 必须启用真实 Entra 登录，不能只靠 mock user id | **选为主方案** |
+| B. Local 主动使用 JWT-mode WAT | local 从 inbound `Authorization` 提取 user token，主动调用 `get_workload_access_token_for_jwt(settings.agent_identity_workload_name, userToken)`；callback 继续 `UserIdentifier(user_token=...)` | 线上线下 identity model 一致；callback 无需特判；更接近 production；workload identity name 与 production 统一为 `agent-personal-assistant` | local full-flow 必须启用真实 Entra 登录，不能只靠 mock user id | **选为主方案** |
 | C. 双模式可配置 | 增加 `PA_LOCATION`、`PA_STAGE`、`AGENTARTS_USER_IDENTITY_MODE`，同时支持 jwt / user_id | 灵活，可覆盖多种调试方式 | 配置和 guardrail 复杂；容易形成错误组合；为一个 OAuth2 full-flow bug 引入过多长期表面积 | 暂不采用 |
+| D. Cookie 记录环境 / WAT source | `/invocations` 根据是否存在 Gateway WAT header 写 Cookie，callback 读取后选择 `user_token` 或 `user_id` complete | 能把一次 `/invocations` 的运行时信号带到 OAuth callback | Cookie 只能桥接 redirect 状态，不能改变 auth session 创建时已经选择的 WAT identity mode；会把 callback 变成 local / remote 双轨；Vite dev 与 Pages Functions dev 形态不同，Cookie 可用性不稳定；不应让浏览器持有 identity strategy 的决策权 | 不采用 |
 
 选择 B 的核心原因：**把 local 修成像 production，而不是让 callback 兼容 local**。
 Calendar OAuth2 full flow 的价值在于验证真实 User Federation / Token Vault 行为；如果
@@ -146,10 +161,20 @@ Calendar OAuth2 full flow 统一采用 JWT identity：
 | 环境 | WAT 来源 | Callback Complete | 要求 |
 |------|----------|-------------------|------|
 | Remote AgentArts Runtime | AgentArts Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，等价于 JWT mode | `UserIdentifier(user_token=user_token)` | Cloudflare BFF / Gateway context 恢复原 inbound `Authorization` |
-| Local dev / manual test | Service 主动调用 `get_workload_access_token_for_jwt(workloadName, userToken)` 并写入 `AgentArtsRuntimeContext` | `UserIdentifier(user_token=user_token)` | 本地前端启用 Entra 登录，并向 Service 发送真实 `Authorization: Bearer <id_token>` |
+| Local dev / manual test | Service 主动调用 `get_workload_access_token_for_jwt(settings.agent_identity_workload_name, userToken)` 并写入 `AgentArtsRuntimeContext` | `UserIdentifier(user_token=user_token)` | 本地前端启用 Entra 登录，并向 Service 发送真实 `Authorization: Bearer <id_token>` |
 | Unit / contract tests | mock DP client / Identity client | assert `UserIdentifier(user_token=...)` | 不依赖真实 Microsoft 或 AgentArts token |
 
-本 issue 不新增以下配置：
+本 issue 确认新增 / 标准化以下配置：
+
+| 配置 | 默认值 | 原因 |
+|------|--------|------|
+| `AGENT_IDENTITY_WORKLOAD_NAME` / `Settings.agent_identity_workload_name` | `agent-personal-assistant` | 本地 JWT-mode WAT exchange 必须使用与 production Gateway 相同的 Agent Identity Workload Identity name；该值已与 `personal-assistant-infra/agent_identity.tf` 和 return URL helper 对齐 |
+
+注意：`agent-personal-assistant` 是 Agent Identity Workload Identity name，不是
+`.agentarts_config.yaml` 中的 Runtime agent name `personal-assistant`。实现时不允许用
+Runtime agent name 替代 Workload Identity name。
+
+本 issue 不新增以下策略配置：
 
 | 配置 | 结论 | 原因 |
 |------|------|------|
@@ -160,25 +185,32 @@ Calendar OAuth2 full flow 统一采用 JWT identity：
 
 ### 3. Service implementation shape
 
-在 `app/auth.py` 或相邻 helper 中扩展 WAT hydration 逻辑。注意不要让普通本地
+在 `app/auth.py` 或相邻 helper 中扩展 JWT-mode WAT 准备逻辑。注意不要让普通本地
 Dev Mode 对话因为缺少 `Authorization` 直接失败；只有 Calendar OAuth2 full flow
 需要 JWT-mode WAT 时才 fail-fast：
 
 ```python
-def ensure_jwt_mode_workload_access_token(
+def ensure_jwt_workload_access_token(
     request: Request,
     *,
     required: bool,
 ) -> str | None:
+    settings = get_settings()
     gateway_token = request.headers.get(ACCESS_TOKEN_HEADER, "").strip()
     if gateway_token:
         AgentArtsRuntimeContext.set_workload_access_token(gateway_token)
+        logger.info("JWT-mode WAT ready source=gateway_wat identity_mode=jwt")
         return gateway_token
 
     try:
         user_token = extract_authorization_user_token(request)
     except HTTPException:
         AgentArtsRuntimeContext.set_workload_access_token(None)
+        logger.info(
+            "JWT-mode WAT unavailable source=missing_user_token "
+            "identity_mode=jwt required=%s",
+            required,
+        )
         if required:
             raise HTTPException(
                 status_code=401,
@@ -187,16 +219,17 @@ def ensure_jwt_mode_workload_access_token(
         return None
 
     workload_token = dp_client.get_workload_access_token_for_jwt(
-        workloadName,
+        settings.agent_identity_workload_name,
         user_token,
     )
     AgentArtsRuntimeContext.set_workload_access_token(workload_token)
+    logger.info("JWT-mode WAT ready source=local_jwt_wat identity_mode=jwt")
     return workload_token
 ```
 
 落点：
 
-- `/invocations` 可 best-effort 执行 JWT-mode WAT hydration：有 Gateway WAT 时使用
+- `/invocations` 可 best-effort 执行 JWT-mode WAT preparation：有 Gateway WAT 时使用
   Gateway WAT；无 Gateway WAT 但有 `Authorization` 时换取 local JWT-mode WAT；两者都
   没有时保持普通 Dev Mode 能力，但 Calendar OAuth2 full flow 不能被视为可验证。
 - Calendar tool / OAuth2 auth-required 路径需要在 SDK 可能 fallback 到 user_id mode
@@ -208,6 +241,10 @@ def ensure_jwt_mode_workload_access_token(
 - 如果没有 Gateway WAT 且没有 `Authorization` user token，Calendar OAuth2 full flow
   应 fail-fast，提示本地需要启用真实 Entra 登录；不要自动调用
   `get_workload_access_token_for_user_id`。
+
+命名上避免使用容易产生歧义的 `hydrate` / `render`。推荐使用
+`ensure_jwt_workload_access_token`：它表达的是“在 SDK 创建 auth session 前，确保
+Runtime Context 中已有 JWT-bound WAT”。
 
 Callback complete 保持当前主线：
 
@@ -234,9 +271,13 @@ client.complete_resource_token_auth(
 ### 5. Security and testing guardrails
 
 - 不允许 complete 失败后 fallback 到 `UserIdentifier(user_id=...)`。identity mismatch
-  应暴露为本地 auth / WAT hydration 问题。
+  应暴露为本地 auth / WAT preparation 问题。
 - 不允许 browser 保存、生成或传输 WAT；local 由 Service 使用 inbound user token
   server-side 换取 JWT-mode WAT。
+- Cookie 继续只作为 OAuth redirect 的 callback context bridge：保存短时
+  `Authorization` / session / user header snapshot，供 BFF 在 callback 时恢复受控
+  upstream headers。Cookie 不保存 WAT、不保存 `wat_source`，也不决定 complete
+  strategy。
 - 不同时传 `user_id` 与 `user_token`，AgentArts Identity 会返回
   `AgentIdentityTokenVault.1015`。
 - 日志记录 WAT source / identity mode，例如 `gateway_wat`、`local_jwt_wat`、
@@ -251,7 +292,7 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 
 需要在 implementation 中特别注意三点：
 
-- local WAT hydration 必须发生在 SDK 可能 fallback 到 user_id mode 之前。
+- JWT-mode WAT preparation 必须发生在 SDK 可能 fallback 到 user_id mode 之前。
 - callback request 必须恢复或携带同一个 inbound user token，否则 complete 仍应失败。
 - Dev Mode mock user id 不能被误认为 Calendar OAuth2 full-flow 成功路径。
 
@@ -261,7 +302,7 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 |------|------|----------|
 | Is it best practice? | Yes | 统一线上线下身份模型、fail-fast 缺失 user token、避免 callback fallback，符合显式认证和安全失败原则。 |
 | Is it industry standard? | Yes | 云端由 Gateway 注入可信 workload token，本地服务端使用用户 JWT 换取等价 WAT，是云 runtime 本地调试常见的 production-parity 做法。 |
-| Is it conventional? | Yes | 新成员只需要理解“Calendar OAuth2 full flow 始终用 JWT identity”；不需要理解额外 location/stage strategy matrix。 |
+| Is it conventional? | Yes | 新成员只需要理解“Calendar OAuth2 full flow 始终用 JWT identity”；不需要理解额外 location/stage strategy matrix，也不需要通过 Cookie 推断 complete 策略。 |
 | Is it modern? | Yes | 保持 OAuth callback 服务端完成、Managed Token Vault / Gateway WAT 注入、本地 server-side token exchange，避免 browser 持有 WAT、implicit flow 或隐式猜测身份策略。 |
 
 ## 修复范围
@@ -271,7 +312,10 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 - 梳理 Feature 15 Calendar OAuth2 WAT 获取阶段与 callback complete 阶段各自使用的
   identity mode。
 - 为 local dev/test 定义明确的 JWT-mode WAT 获取策略：
-  `get_workload_access_token_for_jwt(workloadName, userToken)`。
+  `get_workload_access_token_for_jwt(settings.agent_identity_workload_name, userToken)`。
+- 新增 / 标准化 `AGENT_IDENTITY_WORKLOAD_NAME`，默认
+  `agent-personal-assistant`，并与 infra 中的 Calendar OAuth2 Workload Identity
+  名称保持一致。
 - 防止 local Calendar full-flow 使用 SDK user_id fallback 后，再用 `user_token`
   complete。
 - 保持 callback complete 固定使用 `UserIdentifier(user_token=...)`。
@@ -297,14 +341,17 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 
 - [ ] Feature 15 local Calendar OAuth2 test 可以稳定通过，或明确由可重复的 mock /
       contract test 替代真实 complete。
+- [ ] `Settings.agent_identity_workload_name` 默认值为 `agent-personal-assistant`，
+      本地 WAT exchange 不使用 Runtime agent name `personal-assistant`。
 - [ ] 本地无 Gateway WAT 且存在 `Authorization` user token 时，Service 使用
-      `get_workload_access_token_for_jwt(workloadName, userToken)` 获取 WAT。
+      `get_workload_access_token_for_jwt(settings.agent_identity_workload_name, userToken)`
+      获取 WAT。
 - [ ] 本地缺少 `Authorization` user token 时，Calendar OAuth2 full flow fail-fast，
       不调用 `get_workload_access_token_for_user_id` fallback。
 - [ ] Production Gateway JWT 路径继续使用 Gateway 注入 WAT +
       `UserIdentifier(user_token=...)`，不回退为浏览器可伪造的 user id。
 - [ ] Callback complete 线上线下都使用 `UserIdentifier(user_token=...)`。
-- [ ] Service 日志包含 WAT source / identity mode 与 AgentArts
+- [ ] Service 日志包含诊断用 WAT source / identity mode 与 AgentArts
       request_id，但不泄露 token。
 - [ ] `uv run pytest tests/test_oauth2_callback.py tests/test_main.py` 通过。
 
@@ -321,6 +368,8 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 | 路径 | 关联点 |
 |------|--------|
 | `personal-assistant-service/app/main.py` | 当前 Service-owned callback 的 `complete_resource_token_auth` 调用 |
-| `personal-assistant-service/app/auth.py` | `extract_authorization_user_token`、`extract_gateway_user_id`、`extract_workload_access_token`；需要支持 local JWT-mode WAT hydration |
+| `personal-assistant-service/app/auth.py` | `extract_authorization_user_token`、`extract_gateway_user_id`、`extract_workload_access_token`；需要支持 local JWT-mode WAT preparation / `ensure_jwt_workload_access_token` |
+| `personal-assistant-service/app/settings.py` | 新增 / 标准化 `agent_identity_workload_name`，默认 `agent-personal-assistant` |
+| `personal-assistant-infra/agent_identity.tf` | 已声明 Calendar OAuth2 Workload Identity name 为 `agent-personal-assistant`，Service 默认值需与之保持一致 |
 | `personal-assistant-service/tests/test_oauth2_callback.py` | Service-owned callback 当前断言 production-like user_token path |
 | `personal-assistant-meta/architecture/auth/feature-15-calendar-oauth2-architecture.md` | `UserIdentifier` 参数约束和 production path 说明 |
