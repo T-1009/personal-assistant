@@ -100,7 +100,7 @@ def extract_gateway_session_id(request: Request) -> str:
 def ensure_jwt_workload_access_token(
     request: Request,
     *,
-    required: bool,
+    wat_required: bool,
 ) -> str | None:
     """Ensure Runtime Context has a JWT-bound AgentArts workload token.
 
@@ -108,6 +108,10 @@ def ensure_jwt_workload_access_token(
     already bound to the inbound JWT identity. Local Calendar OAuth2 requests
     must create the same JWT-mode token from the inbound Authorization token
     before AgentArts SDK decorators can fall back to user_id mode.
+
+    Args:
+        wat_required: When true, missing or invalid WAT setup fails the request.
+            Normal chat keeps this false; Calendar OAuth callback sets it true.
     """
     gateway_token = request.headers.get(ACCESS_TOKEN_HEADER, "").strip()
     if gateway_token:
@@ -121,10 +125,10 @@ def ensure_jwt_workload_access_token(
         AgentArtsRuntimeContext.set_workload_access_token(None)
         logger.info(
             "JWT-mode WAT unavailable source=missing_authorization_user_token "
-            "identity_mode=jwt required=%s",
-            required,
+            "identity_mode=jwt wat_required=%s",
+            wat_required,
         )
-        if required:
+        if wat_required:
             raise HTTPException(
                 status_code=401,
                 detail="Local Calendar OAuth2 requires an Authorization user token",
@@ -141,19 +145,19 @@ def ensure_jwt_workload_access_token(
         )
     except SdkException:
         AgentArtsRuntimeContext.set_workload_access_token(None)
-        log = logger.error if required else logger.warning
+        log = logger.error if wat_required else logger.warning
         log(
             "JWT-mode WAT exchange failed source=local_jwt_wat identity_mode=jwt "
-            "required=%s workload_name=%s jwt_claims=%s setup_hint=%s",
-            required,
+            "wat_required=%s workload_name=%s jwt_claims=%s setup_hint=%s",
+            wat_required,
             settings.agent_identity_local_jwt_workload_name,
             _decode_jwt_claims_for_log(user_token),
             "Run: cd personal-assistant-infra && uv run python "
             "scripts/ensure_local_jwt_workload_identity.py "
             f"--region {region} --apply",
-            exc_info=required,
+            exc_info=wat_required,
         )
-        if required:
+        if wat_required:
             raise
         return None
     AgentArtsRuntimeContext.set_workload_access_token(workload_token)
@@ -162,8 +166,3 @@ def ensure_jwt_workload_access_token(
         settings.agent_identity_local_jwt_workload_name,
     )
     return workload_token
-
-
-def extract_workload_access_token(request: Request) -> None:
-    """Backward-compatible Gateway/local JWT WAT preparation helper."""
-    ensure_jwt_workload_access_token(request, required=False)
