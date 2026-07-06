@@ -79,9 +79,10 @@ customer-owned `CUSTOM_JWT` Workload Identity 来主动 mint JWT-mode WAT。
 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload`。
 本地前端发送 Microsoft Entra ID token 作为 inbound `Authorization` token。
 因此该 workload 默认使用 Microsoft Entra v2 discovery URL，校验
-`allowed_audience=<VITE_ENTRA_CLIENT_ID>`，并保持 `allowed_clients=[]`。
+`allowed_audience=<VITE_ENTRA_CLIENT_ID>`，并省略 `allowed_clients`。
 Microsoft Entra ID token 通常没有 `appid` / `azp` / `client_id` claim，
-不要在默认本地配置里要求 client-id claim。
+不要在默认本地配置里要求 client-id claim；显式空数组和省略字段在
+Agent Identity 后端行为不同，默认必须省略。
 
 查看当前可见 workload identities：
 
