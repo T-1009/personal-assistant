@@ -7,7 +7,16 @@ import os
 import sys
 from typing import Any
 
+from agent_identity_common import (
+    DEFAULT_REGION,
+    as_dict,
+    build_client,
+    dedupe,
+    sdk_exception_text,
+    split_csv,
+)
 from huaweicloudsdkagentidentity.v1 import (
+    AgentIdentityClient,
     AuthorizerConfiguration,
     AuthorizerType,
     CreateWorkloadIdentityReqBody,
@@ -18,19 +27,9 @@ from huaweicloudsdkagentidentity.v1 import (
     UpdateWorkloadIdentityReqBody,
     UpdateWorkloadIdentityRequest,
 )
-from huaweicloudsdkagentidentity.v1 import AgentIdentityClient
 from huaweicloudsdkcore.exceptions.exceptions import (
     ClientRequestException,
     SdkException,
-)
-
-from agent_identity_common import (
-    DEFAULT_REGION,
-    as_dict,
-    build_client,
-    dedupe,
-    sdk_exception_text,
-    split_csv,
 )
 
 DEFAULT_LOCAL_JWT_WORKLOAD_NAME = "pa-local-jwt-workload"
@@ -99,8 +98,8 @@ def _parse_args() -> argparse.Namespace:
         default=None,
         help=(
             "Allowed JWT client. Can be passed multiple times. Defaults to "
-            "AGENT_IDENTITY_LOCAL_JWT_CLIENTS or the same values as "
-            "allowed_audience."
+            "AGENT_IDENTITY_LOCAL_JWT_CLIENTS, otherwise empty. Leave this "
+            "empty for Microsoft Entra id_tokens that only carry aud."
         ),
     )
     parser.add_argument(
@@ -152,10 +151,7 @@ def _audiences(args: argparse.Namespace) -> list[str]:
 def _clients(args: argparse.Namespace) -> list[str]:
     if args.client:
         return dedupe(args.client)
-    values = split_csv(os.getenv("AGENT_IDENTITY_LOCAL_JWT_CLIENTS"))
-    if values:
-        return dedupe(values)
-    return _audiences(args)
+    return dedupe(split_csv(os.getenv("AGENT_IDENTITY_LOCAL_JWT_CLIENTS")))
 
 
 def _scopes(args: argparse.Namespace) -> list[str]:
@@ -282,8 +278,11 @@ def _print_desired(desired: dict[str, Any]) -> None:
     for audience in desired["custom_jwt"]["allowed_audience"]:
         print(f"  - {audience}")
     print("Desired allowed_clients:")
-    for client in desired["custom_jwt"]["allowed_clients"]:
-        print(f"  - {client}")
+    if desired["custom_jwt"]["allowed_clients"]:
+        for client in desired["custom_jwt"]["allowed_clients"]:
+            print(f"  - {client}")
+    else:
+        print("  (empty; client-id claim check disabled)")
     print("Desired OAuth2 return URLs:")
     for return_url in desired["allowed_resource_oauth2_return_urls"]:
         print(f"  - {return_url}")

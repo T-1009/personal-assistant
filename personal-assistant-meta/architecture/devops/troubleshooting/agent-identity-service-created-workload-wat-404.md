@@ -140,8 +140,7 @@ authorizer：
 discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
 allowed_audience:
   - 3a99a511-926c-475c-b6bc-325a037f574d
-allowed_clients:
-  - 3a99a511-926c-475c-b6bc-325a037f574d
+allowed_clients: []
 allowed_scopes: []
 custom_claims: []
 ```
@@ -157,7 +156,9 @@ AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload
 路径中由代码主动调用 `create_workload_access_token()` 的场景。
 
 Infra helper 默认使用 `pa-local-jwt-workload`，并配置当前项目的 Microsoft
-Entra discovery URL、audience 与 client ID。普通运行是 dry-run，只有 `--apply`
+Entra discovery URL 与 audience。`allowed_clients` 默认保持为空，因为 Microsoft
+Entra `id_token` 通常没有 `azp` / `appid` / `client_id` claim；只有在使用的
+token 确认携带 client-id claim 时才显式配置。普通运行是 dry-run，只有 `--apply`
 会写云端：
 
 ```bash
@@ -214,6 +215,7 @@ Remove-Item Env:AGENT_IDENTITY_USER_TOKEN
 400 AgentIdentityDirectoryService.2007 invalid JWT client ID
 ```
 
-说明 JWT 的 `azp` / `appid` / client id 没有被 workload authorizer 的
-`allowed_clients` 放行。让 `allowed_clients` 与本地前端
-`VITE_ENTRA_CLIENT_ID` 使用同一个 Microsoft Entra Application (client) ID。
+先解码 JWT。若 claims 里只有 `aud`，没有 `azp` / `appid` / `client_id`，
+则不要配置 `allowed_clients`；让 workload 只通过 `allowed_audience` 约束
+Microsoft Entra application。若 token 确实携带 client-id claim，再让
+`allowed_clients` 包含该 claim 的实际值。
