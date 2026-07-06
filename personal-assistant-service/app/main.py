@@ -451,7 +451,8 @@ async def invocations(request: Request):
     stream = invocation.stream
     user_id = extract_gateway_user_id(request)
     session_id = extract_gateway_session_id(request)
-    ensure_jwt_workload_access_token(request, required=False)
+    # Local chat can continue when HuaweiCloud refuses to exchange the user JWT.
+    ensure_jwt_workload_access_token(request, wat_required=False)
     settings = get_settings()
     oauth2_state = create_oauth2_state(
         settings=settings,
@@ -653,7 +654,8 @@ async def calendar_oauth2_callback(request: Request):
         )
 
     try:
-        ensure_jwt_workload_access_token(request, required=True)
+        # Completing the OAuth callback needs a HuaweiCloud WAT; fail if missing.
+        ensure_jwt_workload_access_token(request, wat_required=True)
         user_token = extract_authorization_user_token(request)
         logger.info(
             "Calling Identity complete_resource_token_auth from callback. "

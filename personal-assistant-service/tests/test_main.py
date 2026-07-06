@@ -342,7 +342,7 @@ class TestHeaderHandling:
     async def test_local_jwt_wat_exchange_failure_is_best_effort_for_invocations(
         self, client, fake_handler
     ):
-        """POST /invocations should not 500 when optional local WAT exchange fails."""
+        """POST /invocations should not 500 when local WAT is not required."""
         settings = Settings(
             _env_file=None,
             agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
