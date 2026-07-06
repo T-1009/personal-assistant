@@ -290,4 +290,34 @@ class TestEnsureJwtWorkloadAccessToken:
 
         mock_set.assert_called_once_with(None)
         logger.error.assert_called_once()
-        assert "ensure_local_jwt_workload_identity.py" in logger.error.call_args.args[2]
+        assert "ensure_local_jwt_workload_identity.py" in str(logger.error.call_args)
+
+    def test_local_wat_exchange_failure_is_best_effort_when_not_required(
+        self,
+    ) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
+
+        with (
+            patch("app.auth.IdentityClient") as identity_client_cls,
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger") as logger,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+        ):
+            client = identity_client_cls.return_value
+            client.create_workload_access_token.side_effect = SdkException(
+                "invalid JWT client ID"
+            )
+            result = ensure_jwt_workload_access_token(request, required=False)
+
+        assert result is None
+        mock_set.assert_called_once_with(None)
+        logger.warning.assert_called_once()
+        logger.error.assert_not_called()
+        assert "ensure_local_jwt_workload_identity.py" in str(logger.warning.call_args)
