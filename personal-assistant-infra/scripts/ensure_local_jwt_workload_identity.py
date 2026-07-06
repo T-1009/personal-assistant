@@ -97,7 +97,11 @@ def _parse_args() -> argparse.Namespace:
         "--client",
         action="append",
         default=None,
-        help="Allowed JWT client. Can be passed multiple times. Defaults to empty.",
+        help=(
+            "Allowed JWT client. Can be passed multiple times. Defaults to "
+            "AGENT_IDENTITY_LOCAL_JWT_CLIENTS or the same values as "
+            "allowed_audience."
+        ),
     )
     parser.add_argument(
         "--scope",
@@ -148,7 +152,10 @@ def _audiences(args: argparse.Namespace) -> list[str]:
 def _clients(args: argparse.Namespace) -> list[str]:
     if args.client:
         return dedupe(args.client)
-    return dedupe(split_csv(os.getenv("AGENT_IDENTITY_LOCAL_JWT_CLIENTS")))
+    values = split_csv(os.getenv("AGENT_IDENTITY_LOCAL_JWT_CLIENTS"))
+    if values:
+        return dedupe(values)
+    return _audiences(args)
 
 
 def _scopes(args: argparse.Namespace) -> list[str]:
@@ -274,6 +281,9 @@ def _print_desired(desired: dict[str, Any]) -> None:
     print("Desired allowed_audience:")
     for audience in desired["custom_jwt"]["allowed_audience"]:
         print(f"  - {audience}")
+    print("Desired allowed_clients:")
+    for client in desired["custom_jwt"]["allowed_clients"]:
+        print(f"  - {client}")
     print("Desired OAuth2 return URLs:")
     for return_url in desired["allowed_resource_oauth2_return_urls"]:
         print(f"  - {return_url}")

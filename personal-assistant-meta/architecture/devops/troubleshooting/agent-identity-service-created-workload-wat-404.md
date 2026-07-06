@@ -140,7 +140,8 @@ authorizer：
 discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
 allowed_audience:
   - 3a99a511-926c-475c-b6bc-325a037f574d
-allowed_clients: []
+allowed_clients:
+  - 3a99a511-926c-475c-b6bc-325a037f574d
 allowed_scopes: []
 custom_claims: []
 ```
@@ -156,7 +157,8 @@ AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload
 路径中由代码主动调用 `create_workload_access_token()` 的场景。
 
 Infra helper 默认使用 `pa-local-jwt-workload`，并配置当前项目的 Microsoft
-Entra discovery URL 与 audience。普通运行是 dry-run，只有 `--apply` 会写云端：
+Entra discovery URL、audience 与 client ID。普通运行是 dry-run，只有 `--apply`
+会写云端：
 
 ```bash
 cd personal-assistant-infra
@@ -205,3 +207,13 @@ Remove-Item Env:AGENT_IDENTITY_USER_TOKEN
 创建 customer-owned `CUSTOM_JWT` workload 后，应使用同一命令验证新 workload。
 若新 workload 返回 WAT，则可确认 `created_by=SERVICE service.AgentNetwork` 是
 本地主动 WAT exchange 的根因。
+
+如果新 workload 返回：
+
+```text
+400 AgentIdentityDirectoryService.2007 invalid JWT client ID
+```
+
+说明 JWT 的 `azp` / `appid` / client id 没有被 workload authorizer 的
+`allowed_clients` 放行。让 `allowed_clients` 与本地前端
+`VITE_ENTRA_CLIENT_ID` 使用同一个 Microsoft Entra Application (client) ID。

@@ -77,6 +77,9 @@ uv run python scripts/configure_calendar_oauth_return_url.py \
 customer-owned `CUSTOM_JWT` Workload Identity 来主动 mint JWT-mode WAT。
 默认名称为 `pa-local-jwt-workload`，对应 Service 默认配置
 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload`。
+该 workload 的 `allowed_audience` 和 `allowed_clients` 都必须与本地前端
+`VITE_ENTRA_CLIENT_ID` 使用同一个 Microsoft Entra Application (client) ID；
+否则 WAT exchange 会返回 `AgentIdentityDirectoryService.2007 invalid JWT client ID`。
 
 查看当前可见 workload identities：
 
