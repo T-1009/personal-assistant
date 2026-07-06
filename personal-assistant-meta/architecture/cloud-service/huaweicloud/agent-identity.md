@@ -51,6 +51,29 @@ JWKS `kid` 等问题。同一套凭据对 customer-owned `workload-*` identities
 本地默认使用 `pa-local-jwt-workload`，也可将
 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME` 指向其他 customer-owned workload。
 
+已验证可工作的 local workload raw authorizer shape 是：
+
+```text
+custom_jwt:
+  discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
+  allowed_audience:
+    - 3a99a511-926c-475c-b6bc-325a037f574d
+```
+
+注意：`allowed_clients`、`allowed_scopes`、`custom_claims` 为空时必须省略字段。
+Agent Identity 后端不会把省略字段和显式空数组当成等价配置。对 Microsoft
+Entra ID token，如果发送 `allowed_clients: []`，即使 token 的 `aud`、`iss`、
+`ver` 都正确，JWT WAT exchange 仍会返回：
+
+```text
+status_code: 400
+error_code: AgentIdentityDirectoryService.2007
+error_msg: invalid JWT client ID
+```
+
+因此 helper 构造 `CustomJWTAuthorizerConfiguration` 时，optional list 为空必须传
+`None`，不能传 `[]`。
+
 Infra helper 提供该 local workload 的 read-only 检查和显式 bootstrap：
 
 ```bash
