@@ -17,13 +17,21 @@ export const loginRequest = {
   scopes: ["openid", "profile", "email", "User.Read"],
 };
 
+const ID_TOKEN_SCOPES = ["openid", "profile", "email"];
+const GRAPH_PROFILE_SCOPES = ["User.Read"];
+
+function getFirstAccount() {
+  const accounts = msalInstance.getAllAccounts();
+  return accounts[0] ?? null;
+}
+
 export async function acquireIdTokenSilently(): Promise<string | null> {
   try {
-    const accounts = msalInstance.getAllAccounts();
-    if (accounts.length === 0) return null;
+    const account = getFirstAccount();
+    if (!account) return null;
     const response = await msalInstance.acquireTokenSilent({
-      scopes: ["openid", "profile", "email"],
-      account: accounts[0],
+      scopes: ID_TOKEN_SCOPES,
+      account,
     });
     return response.idToken;
   } catch (e) {
@@ -46,12 +54,12 @@ export async function clearInboundAuthSession(): Promise<void> {
  *  Returns a data URL string, or null if the user has no photo or the call fails. */
 export async function fetchUserPhoto(): Promise<string | null> {
   try {
-    const accounts = msalInstance.getAllAccounts();
-    if (accounts.length === 0) return null;
+    const account = getFirstAccount();
+    if (!account) return null;
 
     const tokenResponse = await msalInstance.acquireTokenSilent({
-      scopes: ["User.Read"],
-      account: accounts[0],
+      scopes: GRAPH_PROFILE_SCOPES,
+      account,
     });
 
     const res = await fetch("https://graph.microsoft.com/v1.0/me/photo/$value", {

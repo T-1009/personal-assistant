@@ -35,6 +35,15 @@ def _decode_jwt_claims_for_log(token: str) -> dict[str, object]:
     }
 
 
+def _sdk_exception_details(exc: SdkException) -> dict[str, object]:
+    details = {
+        key: getattr(exc, key, None)
+        for key in ("status_code", "request_id", "error_code", "error_msg")
+        if getattr(exc, key, None)
+    }
+    return details or {"error": str(exc)}
+
+
 def extract_authorization_user_token(request: Request) -> str:
     """Extract the JWT from the Authorization header for AgentArts Identity."""
     authorization = request.headers.get("authorization", "").strip()
@@ -143,15 +152,17 @@ def ensure_jwt_workload_access_token(
             settings.agent_identity_local_jwt_workload_name,
             user_token=user_token,
         )
-    except SdkException:
+    except SdkException as exc:
         AgentArtsRuntimeContext.set_workload_access_token(None)
         log = logger.error if wat_required else logger.warning
         log(
             "JWT-mode WAT exchange failed source=local_jwt_wat identity_mode=jwt "
-            "wat_required=%s workload_name=%s jwt_claims=%s setup_hint=%s",
+            "wat_required=%s workload_name=%s jwt_claims=%s sdk_error=%s "
+            "setup_hint=%s",
             wat_required,
             settings.agent_identity_local_jwt_workload_name,
             _decode_jwt_claims_for_log(user_token),
+            _sdk_exception_details(exc),
             "Run: cd personal-assistant-infra && uv run python "
             "scripts/ensure_local_jwt_workload_identity.py "
             f"--region {region} --apply",
