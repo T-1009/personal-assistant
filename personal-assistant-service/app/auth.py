@@ -1,3 +1,5 @@
+import base64
+import json
 import logging
 
 from agentarts.sdk import IdentityClient
@@ -14,6 +16,23 @@ from huaweicloudsdkcore.exceptions.exceptions import SdkException
 from app.settings import get_settings
 
 logger = logging.getLogger(__name__)
+
+
+def _decode_jwt_claims_for_log(token: str) -> dict[str, object]:
+    """Decode non-sensitive JWT claims for local auth troubleshooting logs."""
+    try:
+        encoded_payload = token.split(".")[1]
+        padded_payload = encoded_payload + "=" * (-len(encoded_payload) % 4)
+        payload = base64.urlsafe_b64decode(padded_payload.encode())
+        claims = json.loads(payload)
+    except (IndexError, ValueError, json.JSONDecodeError):
+        return {"decode_error": "invalid_jwt_payload"}
+
+    return {
+        key: claims.get(key)
+        for key in ("aud", "azp", "appid", "client_id", "tid", "iss", "ver")
+        if claims.get(key)
+    }
 
 
 def extract_authorization_user_token(request: Request) -> str:
@@ -122,16 +141,21 @@ def ensure_jwt_workload_access_token(
         )
     except SdkException:
         AgentArtsRuntimeContext.set_workload_access_token(None)
-        logger.error(
+        log = logger.error if required else logger.warning
+        log(
             "JWT-mode WAT exchange failed source=local_jwt_wat identity_mode=jwt "
-            "workload_name=%s setup_hint=%s",
+            "required=%s workload_name=%s jwt_claims=%s setup_hint=%s",
+            required,
             settings.agent_identity_local_jwt_workload_name,
+            _decode_jwt_claims_for_log(user_token),
             "Run: cd personal-assistant-infra && uv run python "
             "scripts/ensure_local_jwt_workload_identity.py "
             f"--region {region} --apply",
-            exc_info=True,
+            exc_info=required,
         )
-        raise
+        if required:
+            raise
+        return None
     AgentArtsRuntimeContext.set_workload_access_token(workload_token)
     logger.info(
         "JWT-mode WAT ready source=local_jwt_wat identity_mode=jwt workload_name=%s",
