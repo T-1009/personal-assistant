@@ -1,5 +1,5 @@
 ---
-status: open
+status: implemented
 related: ["feature-15-calendar-agentarts-full-oauth2", "bug-21-calendar-oauth2-complete-session-identity-mismatch"]
 ---
 

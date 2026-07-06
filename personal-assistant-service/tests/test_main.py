@@ -16,7 +16,7 @@ from starlette.routing import Mount  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.oauth2_state import verify_oauth2_state
-from app.settings import get_settings
+from app.settings import Settings, get_settings
 
 
 class FakeAgentHandler:
@@ -300,6 +300,42 @@ class TestHeaderHandling:
             )
             assert response.status_code == 200
             mock_set.assert_called_once_with(None)
+
+    @pytest.mark.asyncio
+    async def test_authorization_token_exchanged_for_local_jwt_wat(
+        self, client, fake_handler
+    ):
+        """POST without Gateway WAT but with Authorization gets JWT-mode WAT."""
+        settings = Settings(
+            _env_file=None,
+            agent_identity_workload_name="agent-personal-assistant",
+        )
+        with (
+            patch("app.auth.IdentityClient") as identity_client_cls,
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.get_settings", return_value=settings),
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+        ):
+            identity_client = identity_client_cls.return_value
+            identity_client.create_workload_access_token.return_value = "local-jwt-wat"
+            response = await client.post(
+                "/invocations",
+                json={"message": "Hi"},
+                headers={
+                    USER_ID_HEADER: "test-user",
+                    SESSION_HEADER: "sess-test",
+                    "Authorization": "Bearer inbound-user-token",
+                },
+            )
+
+        assert response.status_code == 200
+        identity_client.create_workload_access_token.assert_called_once_with(
+            "agent-personal-assistant",
+            user_token="inbound-user-token",
+        )
+        mock_set.assert_called_once_with("local-jwt-wat")
 
 
 @pytest.mark.asyncio
