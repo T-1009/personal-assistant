@@ -141,7 +141,7 @@ AgentArts / AgentNetwork service-created workload：
 discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
 allowed_audience:
   - 3a99a511-926c-475c-b6bc-325a037f574d
-allowed_clients: []
+# allowed_clients omitted
 allowed_scopes: []
 custom_claims: []
 ```
@@ -158,7 +158,7 @@ AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload
 
 Infra helper 默认使用 `pa-local-jwt-workload`，并配置本地 inbound Microsoft
 Entra ID token 的验证规则：v2 discovery URL、前端应用 client ID 作为
-`allowed_audience`，并保持 `allowed_clients=[]`。普通运行是 dry-run，
+`allowed_audience`，并省略 `allowed_clients`。普通运行是 dry-run，
 只有 `--apply` 会写云端：
 
 ```bash
@@ -219,8 +219,9 @@ Remove-Item Env:AGENT_IDENTITY_USER_TOKEN
 
 - Microsoft Entra `id_token` 通常是
   `iss=https://login.microsoftonline.com/.../v2.0`、`aud=<client id>`，但没有
-  `appid` / `azp` / `client_id`；local workload 应保持 `allowed_clients=[]`，
-  只用 `allowed_audience=<client id>` 约束它。
+  `appid` / `azp` / `client_id`；local workload 应省略 `allowed_clients`，
+  只用 `allowed_audience=<client id>` 约束它。不要显式写
+  `allowed_clients: []`，该形态仍会触发 Agent Identity client-id 校验。
 - Microsoft Graph access token 通常是 `iss=https://sts.windows.net/.../`、
   `aud=00000003-0000-0000-c000-000000000000`、`appid=<client id>`；如果未来
   明确选择这类 token，才需要改成 v1 discovery URL、Graph audience 和

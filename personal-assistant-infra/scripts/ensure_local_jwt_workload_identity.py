@@ -188,9 +188,9 @@ def _authorizer_configuration(custom_jwt: dict[str, Any]) -> AuthorizerConfigura
         custom_jwt=CustomJWTAuthorizerConfiguration(
             discovery_url=custom_jwt["discovery_url"],
             allowed_audience=custom_jwt["allowed_audience"],
-            allowed_clients=custom_jwt["allowed_clients"],
-            allowed_scopes=custom_jwt["allowed_scopes"],
-            custom_claims=custom_jwt["custom_claims"],
+            allowed_clients=custom_jwt["allowed_clients"] or None,
+            allowed_scopes=custom_jwt["allowed_scopes"] or None,
+            custom_claims=custom_jwt["custom_claims"] or None,
         )
     )
 
@@ -262,10 +262,19 @@ def _diffs(
     desired_jwt = desired["custom_jwt"]
     if custom_jwt.get("discovery_url") != desired_jwt["discovery_url"]:
         changes.append("custom_jwt.discovery_url")
-    for field in ("allowed_audience", "allowed_clients", "allowed_scopes"):
-        if not _same_strings(custom_jwt.get(field), desired_jwt[field]):
+    if not _same_strings(
+        custom_jwt.get("allowed_audience"), desired_jwt["allowed_audience"]
+    ):
+        changes.append("custom_jwt.allowed_audience")
+    for field in ("allowed_clients", "allowed_scopes"):
+        if desired_jwt[field]:
+            if not _same_strings(custom_jwt.get(field), desired_jwt[field]):
+                changes.append(f"custom_jwt.{field}")
+        elif field in custom_jwt:
             changes.append(f"custom_jwt.{field}")
-    if custom_jwt.get("custom_claims") not in (None, []):
+    if custom_jwt.get("custom_claims") or (
+        not desired_jwt["custom_claims"] and "custom_claims" in custom_jwt
+    ):
         changes.append("custom_jwt.custom_claims")
     return changes
 
@@ -282,7 +291,7 @@ def _print_desired(desired: dict[str, Any]) -> None:
         for client in desired["custom_jwt"]["allowed_clients"]:
             print(f"  - {client}")
     else:
-        print("  (empty; client-id claim check disabled)")
+        print("  (omitted; client-id claim check disabled)")
     print("Desired OAuth2 return URLs:")
     for return_url in desired["allowed_resource_oauth2_return_urls"]:
         print(f"  - {return_url}")
