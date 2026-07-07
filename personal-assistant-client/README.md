@@ -113,8 +113,8 @@ npm run pages:dev:local
 该脚本会构建前端，并在 `http://localhost:5173` 启动 Wrangler Pages dev：
 
 ```text
-/invocations -> http://127.0.0.1:8080/invocations
-/auth/callback/m365-calendar -> http://127.0.0.1:8080/auth/oauth2/callback/m365-calendar
+/invocations -> http://localhost:8080/invocations
+/auth/callback/m365-calendar -> http://localhost:8080/auth/oauth2/callback/m365-calendar
 ```
 
 ### 5. 打开浏览器
