@@ -185,6 +185,42 @@ ID。它只在 Conversation 需要运行动态代码、处理文件或保存临�
 Sandbox Session 不是 Runtime Session，也不是 LangGraph `thread_id`。其创建、
 复用和销毁必须由应用显式管理，不能假设 AgentArts 会根据 `thread_id` 自动绑定。
 
+### Runtime Session 与 Sandbox Session 的区别
+
+Runtime Session 和 Sandbox Session 都是临时资源，但解决的问题完全不同：
+
+| 维度 | Runtime Session | Sandbox Session |
+|------|-----------------|-----------------|
+| 用途 | 承载 Agent Runtime 调用入口，让 Personal Assistant 服务可以被 Gateway 路由和执行 | 隔离运行代码、命令、文件处理和临时工作区 |
+| 什么时候需要 | 普通聊天请求也需要 | 只有 Tool 需要代码执行、文件处理或临时 workspace 时才需要 |
+| 默认归属 | **User-scoped** | **Conversation-scoped** |
+| 是否跨 Conversation 共享 | 同一用户的多个 Conversation 默认共享一个 active Runtime Session | 不跨 Conversation 共享，避免文件和代码执行上下文串扰 |
+| 是否保存聊天历史 | 不保存 | 不保存 |
+| 是否决定 LangGraph state key | 不决定；不得派生 `thread_id` | 不决定；不得派生 `thread_id` |
+| 失效后的影响 | 创建 replacement Runtime Session 后，同一 Conversation 仍可用稳定 `thread_id` 恢复 | 沙箱临时文件/执行环境可能需要重建或清理 |
+
+普通聊天只经过 Runtime Session：
+
+```mermaid
+flowchart LR
+    User["用户"] --> Runtime["Runtime Session<br/>user-scoped"]
+    Runtime --> Agent["FastAPI + LangGraph"]
+    Agent --> CP["Checkpoint<br/>thread_id = user_id:conversation_id"]
+```
+
+需要代码或文件执行时，Agent 再按需创建 Sandbox Session：
+
+```mermaid
+flowchart LR
+    User["用户"] --> Runtime["Runtime Session<br/>user-scoped"]
+    Runtime --> Agent["FastAPI + LangGraph"]
+    Agent --> Sandbox["Sandbox Session<br/>conversation-scoped"]
+    Sandbox --> Files["临时文件 / 代码执行结果"]
+```
+
+因此 Runtime Session 的复用目标是减少用户级执行资源冷启动；Sandbox Session
+的隔离目标是避免不同 Conversation 的文件、代码和临时工作区互相污染。
+
 ## Cardinality 与生命周期
 
 ```mermaid
@@ -345,6 +381,53 @@ resource lease 表，保留 lifecycle history：
 - 两者写入必须具有明确的一致性策略。首选由 Service 在 invocation transaction/
   completion boundary 写入 message read model，禁止由不可信客户端单方面声明
   assistant message。
+
+### Lease 概念与持久化策略
+
+`lease` 表示“应用认为某个用户或 Conversation 当前临时占用了一个外部资源”的记录。
+它不是业务永久身份，也不是平台真实状态的完整镜像，而是 Personal Assistant 用来
+协调临时资源复用、并发和清理的 application-side resource ledger。
+
+对 Runtime Session 来说，持久化 lease 的根本目的可以简化为：
+
+```text
+user_id -> 当前可复用的 runtime_session_id
+```
+
+也就是说，同一个用户在一段时间内应稳定复用同一个 active Runtime Session，而不是
+每条消息、每个 Conversation、每个浏览器 Tab 都重新创建一个 Runtime Session。
+
+持久化 lease 主要解决以下问题：
+
+- **复用**：用户刷新页面、切换 Conversation 或打开新 Tab 时，可以找到已经预热好的
+  Runtime Session；
+- **并发协调**：多 Tab 同时进入 Chat 时，由 server-side store + unique constraint
+  保证同一个用户默认最多一个 active Runtime Session；
+- **可替换资源建模**：平台回收、`sessions-stop`、404 或 timeout 后，可以将旧 lease
+  标记失效并创建 replacement，而 Conversation 与 `thread_id` 不受影响；
+- **清理依据**：后续 idle cleanup 需要知道哪个 Runtime Session 最近使用过、是否应
+  调用 `sessions-stop`；
+- **可观测与排障**：记录 pre-warm 成功、失败、fallback、expired 和 stop 失败原因，
+  便于分析首条消息延迟和平台资源问题。
+
+不能只依赖“直接查询 AgentArts”替代应用侧 lease，原因是 AgentArts 平台管理的是临时
+execution resource，而不是 Personal Assistant 的产品语义。即使平台能查询 Session，
+它也未必按本项目的 `user_id`、Conversation、pre-warm/fallback 状态、multi-Tab
+single-flight 或数据隔离规则返回我们需要的视图。因此 lease 是本应用对平台临时资源的
+协调记录，不是平台 Session 状态的唯一事实源。
+
+完整 lease history 的维护成本较高，不要求 Feature 14 首版一次性做满。Implementation
+Plan 应按风险分阶段落地：
+
+| 阶段 | 字段/能力 | 目标 |
+|------|-----------|------|
+| Phase 1：current active lease | `user_id`, `runtime_session_id`, `status`, `updated_at` | 解决 Runtime 复用、多 Tab 防重复创建、pre-warm degraded fallback |
+| Phase 2：operable lease | `started_at`, `ready_at`, `last_used_at`, `failure_reason` | 支持 idle cleanup、pre-warm latency 观测和失败排障 |
+| Phase 3：history ledger | `id`, `ended_at`, `replaced_by_lease_id`, stop retry metadata | 支持完整 lifecycle history、审计、资源治理和 reconciliation |
+
+因此目标架构保留 `runtime_session_leases` / `sandbox_session_leases` 作为 resource
+lease 模型；但 Feature 14 Phase 1 可以先实现“当前 active Runtime Session 指针”，
+并在 schema 和文档中预留演进到完整 history ledger 的空间。
 
 ### assistant-ui 集成
 
@@ -596,6 +679,10 @@ Runtime Session 只在用户登出、长期 idle、Session 失效或显式资源
 
 ## AgentArts API 验证任务
 
+> 2026-07-07 spike 记录见 [`spike.md`](./spike.md)。本次已确认 PDF contract 与
+> BFF 边界，但 live `sessions-start` 成功路径被当前环境缺少有效 CUSTOM_JWT
+> 阻塞。
+
 官方 PDF（文档版本 03，2026-06-11）确认存在：
 
 - `POST /runtimes/{runtime_name}/sessions-start`；
@@ -844,7 +931,8 @@ Implementation 完成后至少更新：
 
 ## 参考
 
-- `personal-assistant-meta/architecture/cloud-service/agentarts-api-pdf.pdf`
+- [`spike.md`](./spike.md) — Runtime Session lifecycle 与 BFF 边界 spike
+- `personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts-api-pdf.pdf`
   - §4.7.1.1 `StartRuntimeSession`
   - §4.7.1.3 `ExecuteRuntime`
   - §4.7.1.7 `StopRuntimeSession`
