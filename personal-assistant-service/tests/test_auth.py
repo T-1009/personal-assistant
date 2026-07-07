@@ -22,6 +22,8 @@ from app.auth import (
     extract_authorization_user_token,
     extract_gateway_session_id,
     extract_gateway_user_id,
+    prepare_jwt_workload_access_token,
+    require_jwt_workload_access_token,
 )
 from app.settings import Settings
 
@@ -200,7 +202,7 @@ class TestEnsureJwtWorkloadAccessToken:
         with patch(
             "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
         ) as mock_set:
-            assert ensure_jwt_workload_access_token(request, wat_required=False) is None
+            assert prepare_jwt_workload_access_token(request) is None
 
         mock_set.assert_called_once_with(None)
 
@@ -260,3 +262,53 @@ class TestEnsureJwtWorkloadAccessToken:
         logger.warning.assert_called_once()
         logger.error.assert_not_called()
         assert "ensure_local_jwt_workload_identity.py" in str(logger.warning.call_args)
+
+    def test_identity_client_construction_failure_is_best_effort_when_wat_not_required(
+        self,
+    ) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
+
+        with (
+            patch("app.auth.IdentityClient", side_effect=ValueError("missing creds")),
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger") as logger,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+        ):
+            result = prepare_jwt_workload_access_token(request)
+
+        assert result is None
+        mock_set.assert_called_once_with(None)
+        logger.warning.assert_called_once()
+        logger.error.assert_not_called()
+        assert "missing creds" in str(logger.warning.call_args)
+
+    def test_identity_client_construction_failure_raises_when_wat_required(
+        self,
+    ) -> None:
+        request = _make_request({"Authorization": "Bearer user-token"})
+        settings = Settings(
+            _env_file=None,
+            agent_identity_local_jwt_workload_name="pa-local-jwt-workload",
+        )
+
+        with (
+            patch("app.auth.IdentityClient", side_effect=ValueError("missing creds")),
+            patch("app.auth.get_settings", return_value=settings),
+            patch("app.auth.get_region", return_value="cn-southwest-2"),
+            patch("app.auth.logger") as logger,
+            patch(
+                "app.auth.AgentArtsRuntimeContext.set_workload_access_token"
+            ) as mock_set,
+            pytest.raises(ValueError, match="missing creds"),
+        ):
+            require_jwt_workload_access_token(request)
+
+        mock_set.assert_called_once_with(None)
+        logger.error.assert_called_once()

@@ -32,10 +32,11 @@ from pydantic import (  # noqa: E402
 
 from app.agent_handler import AgentHandler, get_agent_handler  # noqa: E402
 from app.auth import (  # noqa: E402
-    ensure_jwt_workload_access_token,
     extract_authorization_user_token,
     extract_gateway_session_id,
     extract_gateway_user_id,
+    prepare_jwt_workload_access_token,
+    require_jwt_workload_access_token,
 )
 from app.logging_config import RequestLoggingMiddleware  # noqa: E402
 from app.oauth2_callback_store import OAuth2CallbackStore  # noqa: E402
@@ -452,7 +453,7 @@ async def invocations(request: Request):
     user_id = extract_gateway_user_id(request)
     session_id = extract_gateway_session_id(request)
     # Local chat can continue when HuaweiCloud refuses to exchange the user JWT.
-    ensure_jwt_workload_access_token(request, wat_required=False)
+    prepare_jwt_workload_access_token(request)
     settings = get_settings()
     oauth2_state = create_oauth2_state(
         settings=settings,
@@ -655,7 +656,7 @@ async def calendar_oauth2_callback(request: Request):
 
     try:
         # Completing the OAuth callback needs a HuaweiCloud WAT; fail if missing.
-        ensure_jwt_workload_access_token(request, wat_required=True)
+        require_jwt_workload_access_token(request)
         user_token = extract_authorization_user_token(request)
         logger.info(
             "Calling Identity complete_resource_token_auth from callback. "
