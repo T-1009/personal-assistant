@@ -6,9 +6,8 @@ description: >-
   findings into a single cohesive recommendation with Mermaid diagrams, and runs
   an iterative control loop to resolve disagreements and reach consensus.
 mode: all
-model: deepseek/deepseek-v4-pro
 options:
-  reasoningEffort: max
+  reasoningEffort: xhigh
 permission:
   task: allow
   edit: allow
