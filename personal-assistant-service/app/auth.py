@@ -35,13 +35,13 @@ def _decode_jwt_claims_for_log(token: str) -> dict[str, object]:
     }
 
 
-def _sdk_exception_details(exc: SdkException) -> dict[str, object]:
+def _exception_details(exc: BaseException) -> dict[str, object]:
     details = {
         key: getattr(exc, key, None)
         for key in ("status_code", "request_id", "error_code", "error_msg")
         if getattr(exc, key, None)
     }
-    return details or {"error": str(exc)}
+    return details or {"error_type": type(exc).__name__, "error": str(exc)}
 
 
 def extract_authorization_user_token(request: Request) -> str:
@@ -146,13 +146,13 @@ def ensure_jwt_workload_access_token(
 
     settings = get_settings()
     region = get_region()
-    client = IdentityClient(region=region)
     try:
+        client = IdentityClient(region=region)
         workload_token = client.create_workload_access_token(
             settings.agent_identity_local_jwt_workload_name,
             user_token=user_token,
         )
-    except SdkException as exc:
+    except (SdkException, ValueError) as exc:
         AgentArtsRuntimeContext.set_workload_access_token(None)
         log = logger.error if wat_required else logger.warning
         log(
@@ -162,7 +162,7 @@ def ensure_jwt_workload_access_token(
             wat_required,
             settings.agent_identity_local_jwt_workload_name,
             _decode_jwt_claims_for_log(user_token),
-            _sdk_exception_details(exc),
+            _exception_details(exc),
             "Run: cd personal-assistant-infra && uv run python "
             "scripts/ensure_local_jwt_workload_identity.py "
             f"--region {region} --apply",
@@ -176,4 +176,20 @@ def ensure_jwt_workload_access_token(
         "JWT-mode WAT ready source=local_jwt_wat identity_mode=jwt workload_name=%s",
         settings.agent_identity_local_jwt_workload_name,
     )
+    return workload_token
+
+
+def prepare_jwt_workload_access_token(request: Request) -> str | None:
+    """Best-effort JWT-mode WAT preparation for normal chat requests."""
+    return ensure_jwt_workload_access_token(request, wat_required=False)
+
+
+def require_jwt_workload_access_token(request: Request) -> str:
+    """Require JWT-mode WAT for OAuth flows that must not fall back to user_id."""
+    workload_token = ensure_jwt_workload_access_token(request, wat_required=True)
+    if workload_token is None:  # Defensive; required mode raises instead.
+        raise HTTPException(
+            status_code=401,
+            detail="Local Calendar OAuth2 requires a workload access token",
+        )
     return workload_token

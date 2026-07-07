@@ -142,8 +142,8 @@ discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0
 allowed_audience:
   - 3a99a511-926c-475c-b6bc-325a037f574d
 # allowed_clients omitted
-allowed_scopes: []
-custom_claims: []
+# allowed_scopes omitted
+# custom_claims omitted
 ```
 
 然后将 Service 本地配置指向该 customer-owned workload：
@@ -208,6 +208,52 @@ Remove-Item Env:AGENT_IDENTITY_USER_TOKEN
 创建 customer-owned `CUSTOM_JWT` workload 后，应使用同一命令验证新 workload。
 若新 workload 返回 WAT，则可确认 `created_by=SERVICE service.AgentNetwork` 是
 本地主动 WAT exchange 的根因。
+
+## 最终根因与验证结果
+
+2026-07-06 20:05 本地 `/invocations` 已验证成功：
+
+```text
+Getting workload access token for JWT...
+Successfully retrieved workload access token
+Retrieved workload access token from context
+```
+
+最终根因分两层：
+
+1. `agent-personal-assistant` 是 service-created workload。它可见，但不能作为
+   本地代码主动调用 `create_workload_access_token()` 的目标，因此返回
+   `404 AgentIdentityDirectoryService.1002 workload identity not found`。
+2. `pa-local-jwt-workload` 必须是 customer-owned workload，但它的 JWT
+   authorizer 需要和 Microsoft Entra ID token 精确匹配。Entra ID token 只有
+   `aud=<client id>`，没有 `appid` / `azp` / `client_id`。因此不能配置
+   `allowed_clients`。
+
+关键坑：在 Agent Identity 后端，**省略 optional list 字段** 和 **显式传空数组**
+不是等价配置。下面这种 raw config 可以成功：
+
+```text
+custom_jwt:
+  discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
+  allowed_audience:
+    - 3a99a511-926c-475c-b6bc-325a037f574d
+```
+
+下面这种看起来等价，但会导致 JWT WAT exchange 返回
+`400 AgentIdentityDirectoryService.2007 invalid JWT client ID`：
+
+```text
+custom_jwt:
+  discovery_url: https://login.microsoftonline.com/2a1d3739-88c5-4314-b921-acbeac0abbfa/v2.0/.well-known/openid-configuration
+  allowed_audience:
+    - 3a99a511-926c-475c-b6bc-325a037f574d
+  allowed_clients: []
+  allowed_scopes: []
+  custom_claims: []
+```
+
+因此 infra helper 必须在 optional list 为空时传 `None`，让 SDK 请求省略字段，
+不能传 `[]`。
 
 如果新 workload 返回：
 
