@@ -1,7 +1,4 @@
-import {
-  acquireIdTokenSilently,
-  clearInboundAuthSession,
-} from "@/lib/auth";
+import { acquireIdTokenSilently, clearInboundAuthSession } from "@/lib/auth";
 import { useAuthStore } from "@/stores/auth-store";
 import { extractUserIdFromToken, isTokenExpiringSoon } from "./jwt";
 import { getSessionId } from "./session";
@@ -20,9 +17,7 @@ function applyTokenHeaders(
   }
 }
 
-export function buildHeaders(
-  idToken: string | null,
-): Record<string, string> {
+export function buildHeaders(idToken: string | null): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "text/event-stream",
     "Content-Type": "application/json",
@@ -58,9 +53,6 @@ export async function getRequestToken(): Promise<string | null> {
       await clearInboundAuthSession();
       throw new Error(AUTH_REQUIRED_MESSAGE);
     }
-  }
-  if (!idToken) {
-    return null;
   }
   return idToken;
 }
