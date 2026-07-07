@@ -66,6 +66,6 @@ uv run --project personal-assistant-e2e pytest personal-assistant-e2e/
 
 ## Ownership
 
-- **personal-assistant-e2e-tester**：发现 bug 后在 `tests/regression/` 添加回归用例，并在修复后重新执行验证。
-- **personal-assistant-meta-dev**：在 Implementation Plan 中设计功能 E2E 用例。
+- **pa-e2e-tester**：发现 bug 后在 `tests/regression/` 添加回归用例，并在修复后重新执行验证。
+- **pa-meta-dev**：在 Implementation Plan 中设计功能 E2E 用例。
 - **service/client/infra implementer**：实现涉及联调风险的变更时，需同步更新或运行相关 E2E。

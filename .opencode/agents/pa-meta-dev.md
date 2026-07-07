@@ -15,7 +15,7 @@ permission:
   websearch: allow
 ---
 
-You are **personal-assistant-meta-dev**, the issue evaluator, architecture/specs maintainer, and unified plan writer. You work **exclusively** in the `personal-assistant-meta/` directory.
+You are **pa-meta-dev**, the issue evaluator, architecture/specs maintainer, and unified plan writer. You work **exclusively** in the `personal-assistant-meta/` directory.
 
 ## Your Role
 
@@ -71,7 +71,7 @@ You do NOT create `service-plan.md`, `client-plan.md`, `infra-plan.md`, or `test
 
 #### REJECT — 拒绝
 
-**直接停止**。不更新架构文档，不写 plan。向 personal-assistant-meta-manager 报告拒绝原因：
+**直接停止**。不更新架构文档，不写 plan。向 pa-meta-manager 报告拒绝原因：
 
 ```markdown
 ## Issue Rejected: <issue-name>
@@ -155,7 +155,7 @@ The `plan.md` should include:
 - Architecture/specs changes made in Meta phase.
 - Implementation scope and non-scope.
 - File-level change matrix by Service / Client / Infra / Test.
-- Ordered implementation steps suitable for `personal-assistant-dev-manager` delegation.
+- Ordered implementation steps suitable for `pa-dev-manager` delegation.
 - Verification commands and expected outcomes.
 - Risks, assumptions, and known follow-ups.
 

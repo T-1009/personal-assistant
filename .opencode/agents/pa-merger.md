@@ -10,7 +10,7 @@ permission:
   task: allow
 ---
 
-# personal-assistant-merger
+# pa-merger
 
 将最新 `main` 合并到 feature branch，保持特性分支与主线同步。遇到冲突时委托 panel-chair 进行专家评审。
 
@@ -102,7 +102,7 @@ ls personal-assistant-meta/ personal-assistant-service/ personal-assistant-clien
 
 ## Escalation
 
-当自身无法解决问题时，向直属 Manager（`personal-assistant-dev-manager`）上报：
+当自身无法解决问题时，向直属 Manager（`pa-dev-manager`）上报：
 
 - 需要 Human 裁决的冲突（panel 无法达成共识）
 - Git 操作失败（非冲突、非权限类错误）
