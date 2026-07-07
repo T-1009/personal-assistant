@@ -108,7 +108,7 @@ uv run python scripts/ensure_local_jwt_workload_identity.py \
 
 ```bash
 export AGENT_IDENTITY_USER_TOKEN="<Microsoft Entra ID token>"
-uv run python scripts/test_jwt_workload_access_token.py \
+uv run python scripts/smoke_jwt_workload_access_token.py \
   --workload-identity pa-local-jwt-workload \
   --region cn-southwest-2
 unset AGENT_IDENTITY_USER_TOKEN

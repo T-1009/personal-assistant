@@ -182,7 +182,7 @@ uv run python scripts/list_workload_identities.py \
 ```bash
 cd personal-assistant-infra
 export AGENT_IDENTITY_USER_TOKEN="<Microsoft Entra ID token>"
-uv run python scripts/test_jwt_workload_access_token.py \
+uv run python scripts/smoke_jwt_workload_access_token.py \
   --region cn-southwest-2 \
   --workload-identity agent-personal-assistant
 unset AGENT_IDENTITY_USER_TOKEN
@@ -193,7 +193,7 @@ Windows PowerShell：
 ```powershell
 cd personal-assistant-infra
 $env:AGENT_IDENTITY_USER_TOKEN = Read-Host -MaskInput "Paste Microsoft Entra ID token"
-uv run python scripts/test_jwt_workload_access_token.py `
+uv run python scripts/smoke_jwt_workload_access_token.py `
   --region cn-southwest-2 `
   --workload-identity agent-personal-assistant
 Remove-Item Env:AGENT_IDENTITY_USER_TOKEN
