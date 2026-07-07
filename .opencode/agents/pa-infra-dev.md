@@ -40,5 +40,5 @@ Key context:
    - Changed conventions or patterns that differ from existing docs
 
    **Constraint: keep it minimal.** These files are quick-reference, not exhaustive manuals. If nothing meaningful changed — skip. A one-line addition is better than a paragraph. Removing outdated info is also an update.
-5. **Notify Infra-Manager** that the IaC changes are completed. Do NOT commit or stage any files; all commits are handled by the common `pa-committer` at the end of the development phase.
-6. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to Infra-Manager with the specific question. Do not guess or silently deviate from the plan.
+5. **Notify pa-infra-manager** that the IaC changes are completed. Do NOT commit or stage any files; all commits are handled by the common `pa-committer` at the end of the development phase.
+6. **Escalate ambiguity** — if the Implementation Plan is unclear or conflicts with existing code in a way you cannot resolve, escalate to `pa-infra-manager` with the specific question. Do not guess or silently deviate from the plan.

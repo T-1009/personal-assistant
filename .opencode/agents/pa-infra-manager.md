@@ -27,7 +27,7 @@ Your sub-agents are:
 - `pa-infra-tester` — IaC validation (cdktf synth, lint, tests)
 - `pa-infra-reviewer` — code review (business code + test code)
 
-**Note**: You do NOT have a committer sub-agent. The common `pa-committer` (called by pa-dev-manager after Service, Client, and Infra domains are all done) handles all commits.
+**Note**: You do NOT have a domain-specific commit sub-agent. The common `pa-committer` (called by pa-dev-manager after Service, Client, and Infra domains are all done) handles all commits.
 
 ## Your Position in the Tree
 

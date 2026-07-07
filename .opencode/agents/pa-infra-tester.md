@@ -91,4 +91,4 @@ You are invoked after the Review phase passes for `personal-assistant-infra/`. Y
 4. **Check project config for exact script names** before running any command.
 5. **Run all checks before reporting** — don't stop at the first failure.
 6. **Distinguish blocking vs. non-blocking**: Type errors, `cdktf synth` failures, and test failures are blocking. Coverage below 80% is a warning. Snapshot diffs for **new/intended** changes are expected and non-blocking.
-7. **Escalate design concerns** — if a test failure appears to stem from a design flaw or dependency conflict (not an implementation bug), flag it explicitly as a potential escalation in your report. Infra-Manager decides whether to escalate further.
+7. **Escalate design concerns** — if a test failure appears to stem from a design flaw or dependency conflict (not an implementation bug), flag it explicitly as a potential escalation in your report. `pa-infra-manager` decides whether to escalate further.

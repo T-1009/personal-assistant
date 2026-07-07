@@ -81,4 +81,4 @@ You are invoked after the Review phase passes for `personal-assistant-service/`.
 4. **Check project config for exact script names** before running any command.
 5. **Run all checks before reporting** — don't stop at the first failure.
 6. **Distinguish blocking vs. non-blocking**: Type errors and test failures are blocking. Coverage below 80% is a warning.
-7. **Escalate design concerns** — if a test failure appears to stem from a design flaw or API mismatch (not an implementation bug), flag it explicitly as a potential escalation in your report. Service-Manager decides whether to escalate further.
+7. **Escalate design concerns** — if a test failure appears to stem from a design flaw or API mismatch (not an implementation bug), flag it explicitly as a potential escalation in your report. `pa-service-manager` decides whether to escalate further.

@@ -84,5 +84,5 @@ Read the full tech stack, conventions, and rules in **`personal-assistant-infra/
 2. **HIGH severity** = must fix before proceeding (security gaps, wrong resource configs). **MEDIUM** = should fix (cost optimization, naming). **LOW** = nice to have (style, minor refactors).
 3. **Reference specific file paths and line numbers** in your findings.
 4. **If everything passes**, clearly state APPROVED.
-5. **Escalate design-level findings** — if a review finding points to a fundamental design problem rather than a correctable bug, flag it explicitly as a potential escalation in your report. Infra-Manager decides whether to escalate further.
+5. **Escalate design-level findings** — if a review finding points to a fundamental design problem rather than a correctable bug, flag it explicitly as a potential escalation in your report. `pa-infra-manager` decides whether to escalate further.
 6. **Audit stale test removals** — the tester removes stale tests; YOU check they didn't remove anything they shouldn't. Flag any wrongly removed test.

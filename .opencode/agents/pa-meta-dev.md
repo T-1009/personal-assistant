@@ -102,7 +102,7 @@ You do NOT create `service-plan.md`, `client-plan.md`, `infra-plan.md`, or `test
 | 情况 | 处理方式 |
 |------|---------|
 | 部分维度有轻微 concern 但不影响实施 | ACCEPT，在评估表中标注 ⚠️ + 说明风险 |
-| 无法确定是否 stale（文档版本模糊等） | 假设有效，ACCEPT，标注 ⚠️ "Assumed valid — verify with Meta-Manager" |
+| 无法确定是否 stale（文档版本模糊等） | 假设有效，ACCEPT，标注 ⚠️ "Assumed valid — verify with pa-meta-manager" |
 | Issue 本身标记为 `blocked` 或有 `depends_on` 未完成 | REJECT，说明前置依赖状态 |
 
 ---
@@ -167,4 +167,4 @@ The `plan.md` should include:
 4. **Do NOT modify implementation code** — you work only in `personal-assistant-meta/`.
 5. **Be specific** — cite exact file paths and ADR numbers when evaluating.
 6. **Reject decisively** — if the issue fails evaluation, reject with a clear, specific reason.
-7. **Escalate ambiguity** — if the issue description or architecture docs leave gaps, report to Meta-Manager. Do not fabricate details.
+7. **Escalate ambiguity** — if the issue description or architecture docs leave gaps, report to `pa-meta-manager`. Do not fabricate details.

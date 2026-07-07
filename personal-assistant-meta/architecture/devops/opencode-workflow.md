@@ -107,7 +107,7 @@ graph TD
     EM --> ER
 ```
 
-当前工作流共 27 个 Agent（不含 `pa-cleanup` 辅助 Agent）。Meta 领域下 meta-dev 负责 Issue 评估、架构/specs 更新，并直接撰写一个统一的 `plan.md`；该计划必须同时覆盖 Service、Client、Infra、Test 四个方面，不再拆分输出 `service-plan.md`、`client-plan.md`、`infra-plan.md`、`test-plan.md`，也不再设置四个专职 planner。meta-service-dev / meta-client-dev 位于 Dev 阶段开头，与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：pa-e2e-manager 调度 pa-e2e-tester 编写测试、pa-e2e-reviewer 审查测试代码。Issue 分析与评审已合并到 `panel-chair`，不再有独立的 Issue Analyzer。
+当前工作流共 27 个 Agent（不含 `pa-cleanup` 辅助 Agent）。Meta 领域下 `pa-meta-dev` 负责 Issue 评估、架构/specs 更新，并直接撰写一个统一的 `plan.md`；该计划必须同时覆盖 Service、Client、Infra、Test 四个方面，不再拆分输出 `service-plan.md`、`client-plan.md`、`infra-plan.md`、`test-plan.md`，也不再设置四个专职 planner。`pa-meta-service-dev` / `pa-meta-client-dev` 位于 Dev 阶段开头，与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：`pa-e2e-manager` 调度 `pa-e2e-tester` 编写测试、`pa-e2e-reviewer` 审查测试代码。Issue 分析与评审已合并到 `panel-chair`，不再有独立的 Issue Analyzer。
 
 ### 与 AnyWear 的结构差异
 
@@ -126,7 +126,7 @@ graph TD
 
 **相同序号 = 并行执行**。整个流水线显式拆分为 **Meta 阶段**（由 `pa-meta-manager` 管理）与 **Dev 阶段**（由 `pa-dev-manager` 管理）。
 
-### 1. Meta 阶段流程图（meta-manager）
+### 1. Meta 阶段流程图（pa-meta-manager）
 
 首先更新 architecture 架构文件与 specs 业务设计规范（主要是 `personal-assistant-meta/specs/` 目录下的业务/技术规格书与领域词典）；随后由 `pa-meta-dev` 直接撰写一个统一的 `plan.md`。该计划不再拆成四个分部计划，但必须在同一份文档中覆盖 Service、Client、Infra、Test 四个方面，确保 Dev 阶段可以按领域分发实现与验证工作。`panel-chair` 对统一计划进行专家评审与必要修订后，再调度 Committer 执行 Plan Commit，确保进入 Human Plan Approval Gate 的是已版本化的最终计划。
 
@@ -136,7 +136,7 @@ flowchart TD
 
     START --> S1["① pa-meta-manager<br/>启动 Meta 阶段"]
 
-    subgraph META_PHASE["<b>Meta 阶段 (meta-manager)</b>"]
+    subgraph META_PHASE["<b>Meta 阶段 (pa-meta-manager)</b>"]
         S1 --> S1a["② 调度 pa-meta-dev<br/>更新架构文档与设计规范 architecture/ specs/"]
 
         S2["③ pa-meta-dev<br/>撰写统一 plan.md<br/>覆盖 Service / Client / Infra / Test"]
@@ -155,7 +155,7 @@ flowchart TD
     S4 --> DONE(["Meta 阶段结束"])
 ```
 
-### 2. Dev 阶段流程图（dev-manager）
+### 2. Dev 阶段流程图（pa-dev-manager）
 
 进入开发阶段，首先执行 API 接口契约更新及 TypeScript 类型同步。之后启动 Service, Client, Infra 三领域的并行开发。开发完成后进行统一的 Implementation Commit，最后进入 E2E 验证、E2E Commit 及请求 Merge。
 
@@ -163,7 +163,7 @@ flowchart TD
 flowchart TD
     START(["Issue + Approved plan.md"]) --> S5["① pa-dev-manager<br/>启动 Dev 阶段"]
 
-    subgraph DEV_PHASE["<b>Dev 阶段 (dev-manager)</b>"]
+    subgraph DEV_PHASE["<b>Dev 阶段 (pa-dev-manager)</b>"]
         subgraph API_SYNC["API 同步阶段"]
             S6["② 调度 pa-meta-service-dev<br/>更新 API 契约与 spec"]
             S7["③ 调度 pa-meta-client-dev<br/>同步 API TypeScript 类型"]
@@ -226,8 +226,8 @@ flowchart TD
 **与 AnyWear 执行顺序的差异**：
 
 - **两阶段物理隔离**：摒弃了单一的顶层 manager。整个流程切分为 Meta 阶段（由 `pa-meta-manager` 管理）和 Dev 阶段（由 `pa-dev-manager` 管理），由两阶段独立调度。
-- **架构文档与设计规范在 Plan 前更新**：要求在撰写具体实现计划前，先由 `meta-dev` 更新 `personal-assistant-meta/architecture/` 下的架构文件以及 `personal-assistant-meta/specs/` 下的业务与技术规格书，确保后续计划有高保真的设计依据。
-- **统一 Plan 输出**：不再调度四个 planner 输出分部计划，而是由 `meta-dev` 在一份 `plan.md` 中统一覆盖 Service、Client、Infra、Test 四个方面，减少文档碎片和跨计划同步成本。
+- **架构文档与设计规范在 Plan 前更新**：要求在撰写具体实现计划前，先由 `pa-meta-dev` 更新 `personal-assistant-meta/architecture/` 下的架构文件以及 `personal-assistant-meta/specs/` 下的业务与技术规格书，确保后续计划有高保真的设计依据。
+- **统一 Plan 输出**：不再调度四个 planner 输出分部计划，而是由 `pa-meta-dev` 在一份 `plan.md` 中统一覆盖 Service、Client、Infra、Test 四个方面，减少文档碎片和跨计划同步成本。
 - **Plan Commit 纳入 Control Loop**：步骤 ⑤ 的 Plan Commit 动作位于 `panel-chair` 专家评审之后。这使得 Human Plan Approval Gate 拿到的直接就是已经提交到 feature branch 上的最终计划，提高了评审和版本锁定的严密性。
 - **API 同步移动 to Dev 阶段**：原在 Meta 阶段（对实际代码文件产生修改），现移动到 Dev 阶段的开头，使 Meta 阶段真正做到"设计不落地、代码零修改"，所有实际代码改动均局限在 Dev 阶段内部。
 - **E2E 联调、会商与提交**：开发都完成后进行一次 Implementation Commit 再开始联调。E2E 领域内部完成测试编写和初审后，**由 Dev 阶段的顶层编排器 `pa-dev-manager` 调度 `panel-chair` 组织专家对 Dev 阶段全量代码修改（Service + Client + Infra + E2E）进行深度会商评审**，确保整体交付质量合格。全部通过后再由 Committer 统一进行 **E2E Tests & Final Fixes Commit（E2E 测试与最终修复提交）**，以确保联调测试中发现的任何缺陷修复与测试用例一同合入版本库。
@@ -250,7 +250,7 @@ Tester 报告失败时，Manager 做三级决策：
 
 ### E2E Control Loop
 
-pa-e2e-manager 管理 E2E 领域的质量闭环：调度 pa-e2e-tester 编写 E2E 测试 → pa-e2e-reviewer 审查测试代码。E2E-Manager 的决策逻辑与领域 Manager 一致：Tester 产出后 Reviewer 审查，Reviewer 发现问题时 Manager 根据问题类型决定回退 Tester 修复或上报 pa-dev-manager。Tester 负责识别并移除当前 issue 范围内不再有意义的回归测试，Reviewer 审计确保无误删。
+pa-e2e-manager 管理 E2E 领域的质量闭环：调度 pa-e2e-tester 编写 E2E 测试 → pa-e2e-reviewer 审查测试代码。`pa-e2e-manager` 的决策逻辑与领域 Manager 一致：Tester 产出后 Reviewer 审查，Reviewer 发现问题时 Manager 根据问题类型决定回退 Tester 修复或上报 pa-dev-manager。Tester 负责识别并移除当前 issue 范围内不再有意义的回归测试，Reviewer 审计确保无误删。
 
 ## Exceptional Control Flow
 
@@ -258,14 +258,14 @@ pa-e2e-manager 管理 E2E 领域的质量闭环：调度 pa-e2e-tester 编写 E2
 
 **Meta 阶段上报链路**：
 ```
-Worker (meta-dev / panel-chair)
+Worker (`pa-meta-dev` / `panel-chair`)
   → pa-meta-manager
     → 👤 Human (root)
 ```
 
 **Dev 阶段上报链路**：
 ```
-Worker (Dev / Reviewer / Tester / Committer / E2E-Tester / E2E-Reviewer)
+Worker (Dev / Reviewer / Tester / Committer / `pa-e2e-tester` / `pa-e2e-reviewer`)
   → Domain Manager (Service / Client / Infra / E2E)
     → pa-dev-manager
       → 👤 Human (root)
@@ -471,7 +471,7 @@ pa-e2e-reviewer 审查 E2E 测试代码，确保测试覆盖和代码质量。�
 | 层级 | 应该知道 | 不应该知道 |
 |------|---------|-----------|
 | pa-meta-manager | 3 个直属：pa-meta-dev、panel-chair、pa-committer | pa-meta-dev 具体怎么撰写统一 plan.md |
-| pa-dev-manager | 7 个直属：pa-meta-service-dev (API)、pa-meta-client-dev (API)、service/client/infra-manager、e2e-manager、committer | pa-service-manager 内部有 pa-service-dev/tester 等 |
+| pa-dev-manager | 7 个直属：pa-meta-service-dev (API)、pa-meta-client-dev (API)、pa-service-manager、pa-client-manager、pa-infra-manager、pa-e2e-manager、pa-committer | pa-service-manager 内部有 pa-service-dev/pa-service-tester 等 |
 | pa-service-manager | 3 个直属：pa-service-dev/pa-service-tester/pa-service-reviewer | Tester 跑 `pytest` 还是 `pytest --cov` |
 | pa-client-manager | 3 个直属：pa-client-dev/pa-client-tester/pa-client-reviewer | Tester 跑 `vitest` 还是 `jest` |
 | pa-infra-manager | 3 个直属：pa-infra-dev/pa-infra-tester/pa-infra-reviewer | Tester 跑 `tofu validate` 和只读 `tofu plan` |

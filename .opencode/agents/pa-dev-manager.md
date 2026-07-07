@@ -45,9 +45,9 @@ Each domain Manager runs its own independent control loop. How they do that is t
 flowchart TD
     START(["Issue + Approved plan.md"])
 
-    START --> S1["1. API Update (service-dev API scope)<br/>input: plan.md API changes"]
+    START --> S1["1. API Update (pa-meta-service-dev API scope)<br/>input: plan.md API changes"]
     
-    S1 -- "returns: spec generated" --> S2["2. API Type Sync (client-dev API scope)<br/>input: OpenAPI spec"]
+    S1 -- "returns: spec generated" --> S2["2. API Type Sync (pa-meta-client-dev API scope)<br/>input: OpenAPI spec"]
 
     S2 -- "returns: TS types synced" --> S3["3. delegate_parallel()<br/>├ pa-service-manager(issue, plan, branch)<br/>├ pa-client-manager(issue, plan, branch)<br/>└ pa-infra-manager(issue, plan, branch)"]
 
@@ -114,7 +114,7 @@ Delegate to **`pa-service-manager`**, **`pa-client-manager`**, and **`pa-infra-m
 
 **Record the returned `task_id`** for each Manager.
 
-**Wait for ALL THREE to complete.** No domain commits on its own — the committer handles that next.
+**Wait for ALL THREE to complete.** No domain commits on its own — `pa-committer` handles that next.
 
 ### 4. IMPLEMENTATION COMMIT — Delegate to pa-committer
 

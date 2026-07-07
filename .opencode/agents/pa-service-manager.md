@@ -27,7 +27,7 @@ Your sub-agents are:
 - `pa-service-tester` — unit/integration tests
 - `pa-service-reviewer` — code review (business code + test code)
 
-**Note**: You do NOT have a committer sub-agent. The common `pa-committer` (called by pa-dev-manager after Service, Client, and Infra domains are done) handles all commits.
+**Note**: You do NOT have a domain-specific commit sub-agent. The common `pa-committer` (called by pa-dev-manager after Service, Client, and Infra domains are done) handles all commits.
 
 ## Your Position in the Tree
 

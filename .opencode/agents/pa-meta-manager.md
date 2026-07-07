@@ -56,11 +56,11 @@ As orchestrator, you make decisions at phase boundaries:
 | Situation | Your Decision | Action |
 |-----------|--------------|--------|
 | pa-meta-dev reports REJECT on Issue Evaluation | Abort or Refactor | Escalate to human immediately with rejection report |
-| pa-meta-dev reports insufficient information | Collect missing info | Route back to meta-dev for architecture clarification and plan update |
-| panel-chair reports design gaps or omissions | Fixable | Re-delegate corresponding plan modifications to meta-dev, then re-review |
+| pa-meta-dev reports insufficient information | Collect missing info | Route back to pa-meta-dev for architecture clarification and plan update |
+| panel-chair reports design gaps or omissions | Fixable | Re-delegate corresponding plan modifications to pa-meta-dev, then re-review |
 | panel-chair reports fundamental architectural flaws | Escalate | Report conflict details to human, wait for direction |
 | pa-committer fails | Investigate | Verify branch, check for conflicts, retry |
-| Human rejects plan | Collect feedback | Route back to meta-dev via its task_id, re-review, re-commit, and re-present |
+| Human rejects plan | Collect feedback | Route back to pa-meta-dev via its task_id, re-review, re-commit, and re-present |
 
 ### Escalation
 
@@ -95,7 +95,7 @@ Delegate to **`pa-meta-dev`** in **evaluation & architecture/specs mode**:
 
 **Record the returned `task_id`**. Reuse on re-delegation.
 
-**If meta-dev rejects the issue (REJECT)**: Halt the pipeline and escalate the rejection report to the human immediately. Do NOT write plans or continue.
+**If pa-meta-dev rejects the issue (REJECT)**: Halt the pipeline and escalate the rejection report to the human immediately. Do NOT write plans or continue.
 
 **If ACCEPTED and design/spec files are updated and `plan.md` is written**: Proceed to Phase 2.
 

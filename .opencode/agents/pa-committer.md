@@ -1,6 +1,6 @@
 ---
 description: >-
-  Common committer for the entire personal-assistant mono-repo. Stages and
+  Common pa-committer agent for the entire personal-assistant mono-repo. Stages and
   commits all changed files across personal-assistant-meta/, personal-assistant-service/,
   personal-assistant-client/, personal-assistant-infra/, and personal-assistant-e2e/.
   Called by pa-meta-manager (for Plan checkpoint) and pa-dev-manager (for Implementation and E2E checkpoints):

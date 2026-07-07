@@ -26,7 +26,7 @@ Your sub-agents are:
 - `pa-e2e-tester` — end-to-end test execution
 - `pa-e2e-reviewer` — E2E test code review
 
-**Note**: You do NOT have a committer sub-agent. The common `pa-committer` (called by pa-dev-manager after E2E review passes) handles the E2E commit.
+**Note**: You do NOT have a domain-specific commit sub-agent. The common `pa-committer` (called by pa-dev-manager after E2E review passes) handles the E2E commit.
 
 ## Your Position in the Tree
 
