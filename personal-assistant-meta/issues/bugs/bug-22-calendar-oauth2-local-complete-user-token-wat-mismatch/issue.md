@@ -20,6 +20,13 @@ related: ["feature-15-calendar-agentarts-full-oauth2", "bug-21-calendar-oauth2-c
 > `404 AgentIdentityDirectoryService.1002 workload identity not found`。Bug 22
 > 因此重新打开，需要新的 local WAT exchange 方案。
 
+> 2026-07-07 重新评估 local callback relay：本地 full OAuth2 不能再以
+> `npm run dev` 的 Vite-only fallback 作为主验证路径。Calendar callback 需要
+> Cloudflare Pages Function 读取前一次 `/invocations` 写入的短时 HttpOnly cookie，
+> 再 server-side 转发到 Service callback 并恢复 `Authorization` / session / user
+> headers。新的 local full-flow 主路径是 `wrangler pages dev`，即本地版
+> Cloudflare Pages；Vite dev 只保留为普通聊天/UI 快速开发路径。
+
 ## 现象
 
 Feature 15 Calendar OAuth2 线上使用正常，但本地 local test / manual test 失败。
@@ -172,6 +179,7 @@ User Federation / Token Vault 行为。
 | C. 双模式可配置 | 增加 `PA_LOCATION`、`PA_STAGE`、`AGENTARTS_USER_IDENTITY_MODE`，同时支持 jwt / user_id | 灵活，可覆盖多种调试方式 | 配置和 guardrail 复杂；容易形成错误组合；为一个 OAuth2 full-flow bug 引入过多长期表面积 | 暂不采用 |
 | D. Cookie 记录环境 / WAT source | `/invocations` 根据是否存在 Gateway WAT header 写 Cookie，callback 读取后选择 `user_token` 或 `user_id` complete | 能把一次 `/invocations` 的运行时信号带到 OAuth callback | Cookie 只能桥接 redirect 状态，不能改变 auth session 创建时已经选择的 WAT identity mode；会把 callback 变成 local / remote 双轨；Vite dev 与 Pages Functions dev 形态不同，Cookie 可用性不稳定；不应让浏览器持有 identity strategy 的决策权 | 不采用 |
 | E. Customer-owned local JWT Workload Identity | 新建一个 customer-owned `CUSTOM_JWT` Workload Identity，配置同样的 Microsoft Entra discovery URL 与 allowed audience；local/manual test 的 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME` 指向它；production Gateway path 继续用 Gateway 注入 WAT | 保留 JWT identity model；避开 service-created identity 的 WAT exchange 限制；本地完整流程仍接近 production；实现不需要 callback 双轨 | 需要额外云端资源和 bootstrap helper；必须文档化该 workload 与 Runtime service-created workload 的区别 | **新的主方案** |
+| F. Local Pages Functions dev callback relay | 本地 full OAuth2 使用 `wrangler pages dev` 跑 Cloudflare Pages Functions；`/auth/callback/m365-calendar` 由 Pages Function 读取 HttpOnly callback cookie 后转发到本地 Service；Vite dev 不再作为 full-flow 主验证路径 | 本地 callback 与 production BFF 代码一致；无需在 React callback 页面依赖 `useAuthStore` 或手写 Authorization fallback；能验证真实 cookie relay | 本地启动命令比 Vite dev 多一步 build / Wrangler；需要显式设置 `OAUTH2_CALENDAR_CALLBACK_URL=http://localhost:5173/auth/callback/m365-calendar` | **作为 E 的 local callback relay 主路径采用** |
 
 选择 E 的核心原因：**保留 JWT identity model，但不要把 service-created Runtime
 Workload Identity 当成本地 SDK 主动 mint WAT 的对象**。Calendar OAuth2 full flow 的价值
@@ -182,12 +190,13 @@ production-like 本地验证路径。
 ### 2. Selected solution
 
 Calendar OAuth2 full flow 仍统一采用 JWT identity，但 local/manual test 使用
-customer-owned `CUSTOM_JWT` workload identity 主动 mint WAT：
+customer-owned `CUSTOM_JWT` workload identity 主动 mint WAT，并通过 local
+Cloudflare Pages Functions dev 恢复 callback headers：
 
 | 环境 | WAT 来源 | Callback Complete | 要求 |
 |------|----------|-------------------|------|
 | Remote AgentArts Runtime | AgentArts Gateway 注入 `X-HW-AgentGateway-Workload-Access-Token`，等价于 JWT mode | `UserIdentifier(user_token=user_token)` | Cloudflare BFF / Gateway context 恢复原 inbound `Authorization` |
-| Local dev / manual test | Service 主动调用 `create_workload_access_token(settings.agent_identity_local_jwt_workload_name, user_token=userToken)` 并写入 `AgentArtsRuntimeContext`；`settings.agent_identity_local_jwt_workload_name` 必须指向 customer-owned `CUSTOM_JWT` workload | `UserIdentifier(user_token=user_token)` | 本地前端启用 Entra 登录，并向 Service 发送真实 Microsoft Entra `Authorization: Bearer <id_token>`；本地需先 bootstrap customer-owned workload |
+| Local dev / manual test | Service 主动调用 `create_workload_access_token(settings.agent_identity_local_jwt_workload_name, user_token=userToken)` 并写入 `AgentArtsRuntimeContext`；`settings.agent_identity_local_jwt_workload_name` 必须指向 customer-owned `CUSTOM_JWT` workload | `UserIdentifier(user_token=user_token)` | 本地前端启用 Entra 登录；使用 `npm run pages:dev:local` 跑 local Pages Functions；`OAUTH2_CALENDAR_CALLBACK_URL` 指向 `http://localhost:5173/auth/callback/m365-calendar`；本地需先 bootstrap customer-owned workload |
 | Unit / contract tests | mock DP client / Identity client | assert `UserIdentifier(user_token=...)` | 不依赖真实 Microsoft 或 AgentArts token |
 
 本 issue 确认新增 / 标准化以下配置：
@@ -297,8 +306,24 @@ client.complete_resource_token_auth(
   覆盖。
 - 本地 `/invocations` 请求需要携带
   `Authorization: Bearer <Microsoft Entra id_token>`。
-- 本地 callback relay / fallback 也需要把同一用户的 `Authorization` 带回 Service-owned
-  callback。
+- 本地 Calendar OAuth2 full flow 应使用 local Cloudflare Pages Functions dev
+  作为 callback relay，而不是 Vite-only React fallback：
+
+  ```bash
+  cd personal-assistant-client
+  npm run pages:dev:local
+  ```
+
+  对应 Service `.env`：
+
+  ```env
+  OAUTH2_CALENDAR_CALLBACK_URL=http://localhost:5173/auth/callback/m365-calendar
+  ```
+
+  `pages:dev:local` 将 `/invocations` 和
+  `/auth/callback/m365-calendar` 分别转发到本地 Service 的
+  `/invocations` 与 `/auth/oauth2/callback/m365-calendar`，复用
+  production Pages Function 的 HttpOnly cookie relay。
 - 纯 mock header (`X-HW-AgentGateway-User-Id: dev-user`) 仍可用于不涉及 Calendar
   OAuth2 full flow 的轻量本地开发，但不作为 Calendar full-flow 验证路径。
 
@@ -314,6 +339,9 @@ client.complete_resource_token_auth(
   `Authorization` / session / user header snapshot，供 BFF 在 callback 时恢复受控
   upstream headers。Cookie 不保存 WAT、不保存 `wat_source`，也不决定 complete
   strategy。
+- 不在 React callback page 中依赖 `useAuthStore`、MSAL cache 或浏览器端手写
+  Authorization fallback 来完成 full flow；本地 full-flow callback 应经过
+  Pages Function BFF，与 production 走同一段 callback relay 代码。
 - 不同时传 `user_id` 与 `user_token`，AgentArts Identity 会返回
   `AgentIdentityTokenVault.1015`。
 - 日志记录 WAT source / identity mode，例如 `gateway_wat`、`local_jwt_wat`、
@@ -329,7 +357,8 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 需要在 implementation 中特别注意三点：
 
 - JWT-mode WAT preparation 必须发生在 SDK 可能 fallback 到 user_id mode 之前。
-- callback request 必须恢复或携带同一个 inbound user token，否则 complete 仍应失败。
+- callback request 必须通过 Pages Function BFF 恢复同一个 inbound user token，否则
+  complete 仍应失败。
 - Dev Mode mock user id 不能被误认为 Calendar OAuth2 full-flow 成功路径。
 
 ### 7. Four-Question Gate
@@ -356,6 +385,9 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
   bootstrap / verify helper，或至少提供可重复手工创建步骤。
 - 防止 local Calendar full-flow 使用 SDK user_id fallback 后，再用 `user_token`
   complete。
+- 将 local Calendar OAuth2 full-flow 验证路径切到 local Pages Functions dev：
+  `npm run pages:dev:local`。Vite dev 只用于普通聊天/UI 开发，不作为 full-flow
+  callback relay 验证路径。
 - 保持 callback complete 固定使用 `UserIdentifier(user_token=...)`。
 - 不引入 `PA_LOCATION`、`PA_STAGE`、`OAUTH2_COMPLETE_USER_IDENTIFIER_STRATEGY` 或
   `AGENTARTS_USER_IDENTITY_MODE` 等策略配置。
@@ -392,6 +424,8 @@ local 添加 `user_id` 特判更少配置、更少分支，也更能代表 produ
 - [ ] Production Gateway JWT 路径继续使用 Gateway 注入 WAT +
       `UserIdentifier(user_token=...)`，不回退为浏览器可伪造的 user id。
 - [ ] Callback complete 线上线下都使用 `UserIdentifier(user_token=...)`。
+- [ ] Local full-flow 使用 `npm run pages:dev:local` 跑 Cloudflare Pages Functions，
+      callback 经 `/auth/callback/m365-calendar` BFF relay 转发到本地 Service。
 - [ ] Service 日志包含诊断用 WAT source / identity mode 与 AgentArts
       request_id，但不泄露 token。
 - [ ] `uv run pytest tests/test_oauth2_callback.py tests/test_main.py` 通过。
