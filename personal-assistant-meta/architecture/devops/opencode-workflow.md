@@ -8,11 +8,11 @@ OpenCode sub-agent 工作流采用 **三层树状结构**。工作流是 **Issue
 
 核心设计：
 
-1. **两阶段架构设计**：整个开发流水线分为 **Meta 阶段** 和 **Dev 阶段**，分别由 **`personal-assistant-meta-manager`** 和 **`personal-assistant-dev-manager`** 独立调度。不再存在单一顶层 `personal-assistant-manager`，中间通过物理的 Plan Approval Gate 作为隔离。
+1. **两阶段架构设计**：整个开发流水线分为 **Meta 阶段** 和 **Dev 阶段**，分别由 **`pa-meta-manager`** 和 **`pa-dev-manager`** 独立调度。不再存在单一顶层 Manager，中间通过物理的 Plan Approval Gate 作为隔离。
 2. **每个领域 Manager 跑独立的 Control Loop**：领域 Manager 在自己的领域内调度 Dev → Tester → Reviewer，根据反馈决定通过还是重来。Reviewer 先审查业务代码，再审查 Tester 产出的测试代码，确保一次 review 覆盖全部产出。
-3. **层级化决策**：`personal-assistant-meta-manager` 负责设计计划的闭环，`personal-assistant-dev-manager` 负责开发交付阶段的统筹和 E2E 验证，领域 Manager 管自己领域内的局部实现质量。
-4. **统一 Committer**：所有 Git 提交由 `personal-assistant-committer` 执行，分别在 Plan 完成后（Plan Commit）、Service/Client/Infra 交付后（Implementation Commit）、以及 E2E 通过后（E2E Commit）这三个检查点统一执行，领域 loop 内部不再进行局部提交。
-5. **E2E Control Loop**：`personal-assistant-e2e-manager` 管理 E2E 测试的质量闭环，调度 `personal-assistant-e2e-tester` 编写测试 → `personal-assistant-e2e-reviewer` 审查测试代码。
+3. **层级化决策**：`pa-meta-manager` 负责设计计划的闭环，`pa-dev-manager` 负责开发交付阶段的统筹和 E2E 验证，领域 Manager 管自己领域内的局部实现质量。
+4. **统一 Committer**：所有 Git 提交由 `pa-committer` 执行，分别在 Plan 完成后（Plan Commit）、Service/Client/Infra 交付后（Implementation Commit）、以及 E2E 通过后（E2E Commit）这三个检查点统一执行，领域 loop 内部不再进行局部提交。
+5. **E2E Control Loop**：`pa-e2e-manager` 管理 E2E 测试的质量闭环，调度 `pa-e2e-tester` 编写测试 → `pa-e2e-reviewer` 审查测试代码。
 
 ## Agent 组织结构
 
@@ -20,14 +20,14 @@ OpenCode sub-agent 工作流采用 **三层树状结构**。工作流是 **Issue
 
 ```mermaid
 graph TD
-    MM["<b>personal-assistant-meta-manager</b><br/>Meta Phase Orchestrator<br/>架构更新 · 计划设计 · 专家评审"]
-    DM["<b>personal-assistant-dev-manager</b><br/>Dev Phase Orchestrator<br/>API 契约更新 · 领域实现 · E2E 闭环"]
-    AM_C["<b>personal-assistant-committer</b><br/>统一提交<br/>git add 全仓库"]
-    MG["<b>personal-assistant-merger</b><br/>统一合并<br/>merge main → feature"]
+    MM["<b>pa-meta-manager</b><br/>Meta Phase Orchestrator<br/>架构更新 · 计划设计 · 专家评审"]
+    DM["<b>pa-dev-manager</b><br/>Dev Phase Orchestrator<br/>API 契约更新 · 领域实现 · E2E 闭环"]
+    AM_C["<b>pa-committer</b><br/>统一提交<br/>git add 全仓库"]
+    MG["<b>pa-merger</b><br/>统一合并<br/>merge main → feature"]
     HUMAN["👤 Human in the Loop<br/>Plan Approval Gate"]
 
     subgraph META["<b>Meta 领域</b> — personal-assistant-meta/"]
-        MD["personal-assistant-meta-dev<br/>Issue 评估 · 架构/specs 更新 · 统一 plan.md"]
+        MD["pa-meta-dev<br/>Issue 评估 · 架构/specs 更新 · 统一 plan.md"]
         PC["<b>panel-chair</b><br/>专家评审面板 · Issue 分析<br/>检视并评审统一 Plan"]
     end
 
@@ -39,35 +39,35 @@ graph TD
     end
 
     subgraph SERVICE["<b>Service 领域</b> — personal-assistant-service/"]
-        SM["<b>personal-assistant-service-manager</b><br/>领域 Orchestrator"]
-        SD["personal-assistant-service-dev<br/>后端功能实现"]
-        ST["personal-assistant-service-tester<br/>单元测试 · 集成测试"]
-        SR["personal-assistant-service-reviewer<br/>后端代码审查"]
+        SM["<b>pa-service-manager</b><br/>领域 Orchestrator"]
+        SD["pa-service-dev<br/>后端功能实现"]
+        ST["pa-service-tester<br/>单元测试 · 集成测试"]
+        SR["pa-service-reviewer<br/>后端代码审查"]
     end
 
     subgraph CLIENT["<b>Client 领域</b> — personal-assistant-client/"]
-        CM["<b>personal-assistant-client-manager</b><br/>领域 Orchestrator"]
-        CD["personal-assistant-client-dev<br/>前端功能实现"]
-        CT["personal-assistant-client-tester<br/>单元测试 · 集成测试"]
-        CR["personal-assistant-client-reviewer<br/>前端代码审查"]
+        CM["<b>pa-client-manager</b><br/>领域 Orchestrator"]
+        CD["pa-client-dev<br/>前端功能实现"]
+        CT["pa-client-tester<br/>单元测试 · 集成测试"]
+        CR["pa-client-reviewer<br/>前端代码审查"]
     end
 
     subgraph INFRA["<b>Infra 领域</b> — personal-assistant-infra/"]
-        IM["<b>personal-assistant-infra-manager</b><br/>领域 Orchestrator"]
-        ID["personal-assistant-infra-dev<br/>IaC 实现 (HCL)"]
-        IT["personal-assistant-infra-tester<br/>tofu validate · plan"]
-        IR["personal-assistant-infra-reviewer<br/>IaC 代码审查"]
+        IM["<b>pa-infra-manager</b><br/>领域 Orchestrator"]
+        ID["pa-infra-dev<br/>IaC 实现 (HCL)"]
+        IT["pa-infra-tester<br/>tofu validate · plan"]
+        IR["pa-infra-reviewer<br/>IaC 代码审查"]
     end
 
     subgraph E2E["<b>E2E 领域</b> — personal-assistant-e2e/"]
-        EM["<b>personal-assistant-e2e-manager</b><br/>领域 Orchestrator<br/>E2E 测试闭环"]
-        ET["personal-assistant-e2e-tester<br/>端到端联调测试<br/>跨 Service + Client"]
-        ER["personal-assistant-e2e-reviewer<br/>E2E 测试审查"]
+        EM["<b>pa-e2e-manager</b><br/>领域 Orchestrator<br/>E2E 测试闭环"]
+        ET["pa-e2e-tester<br/>端到端联调测试<br/>跨 Service + Client"]
+        ER["pa-e2e-reviewer<br/>E2E 测试审查"]
     end
 
     subgraph DEV_API["<b>API 阶段 (Dev 开头)</b>"]
-        SD_API["personal-assistant-meta-service-dev<br/>API 接口更新"]
-        CD_API["personal-assistant-meta-client-dev<br/>API 类型同步"]
+        SD_API["pa-meta-service-dev<br/>API 接口更新"]
+        CD_API["pa-meta-client-dev<br/>API 类型同步"]
     end
 
     MM --> MD
@@ -107,7 +107,7 @@ graph TD
     EM --> ER
 ```
 
-当前工作流共 27 个 Agent（不含 `personal-assistant-cleanup` 辅助 Agent）。Meta 领域下 meta-dev 负责 Issue 评估、架构/specs 更新，并直接撰写一个统一的 `plan.md`；该计划必须同时覆盖 Service、Client、Infra、Test 四个方面，不再拆分输出 `service-plan.md`、`client-plan.md`、`infra-plan.md`、`test-plan.md`，也不再设置四个专职 planner。meta-service-dev / meta-client-dev 位于 Dev 阶段开头，与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：personal-assistant-e2e-manager 调度 personal-assistant-e2e-tester 编写测试、personal-assistant-e2e-reviewer 审查测试代码。Issue 分析与评审已合并到 `panel-chair`，不再有独立的 Issue Analyzer。
+当前工作流共 27 个 Agent（不含 `pa-cleanup` 辅助 Agent）。Meta 领域下 `pa-meta-dev` 负责 Issue 评估、架构/specs 更新，并直接撰写一个统一的 `plan.md`；该计划必须同时覆盖 Service、Client、Infra、Test 四个方面，不再拆分输出 `service-plan.md`、`client-plan.md`、`infra-plan.md`、`test-plan.md`，也不再设置四个专职 planner。`pa-meta-service-dev` / `pa-meta-client-dev` 位于 Dev 阶段开头，与 Service/Client 领域下的同名 Agent 是**不同实例**，前者只做 API 同步，后者只做功能开发。E2E 领域独立构成 control loop：`pa-e2e-manager` 调度 `pa-e2e-tester` 编写测试、`pa-e2e-reviewer` 审查测试代码。Issue 分析与评审已合并到 `panel-chair`，不再有独立的 Issue Analyzer。
 
 ### 与 AnyWear 的结构差异
 
@@ -124,22 +124,22 @@ graph TD
 
 ## 执行顺序（Happy Path）
 
-**相同序号 = 并行执行**。整个流水线显式拆分为 **Meta 阶段**（由 `personal-assistant-meta-manager` 管理）与 **Dev 阶段**（由 `personal-assistant-dev-manager` 管理）。
+**相同序号 = 并行执行**。整个流水线显式拆分为 **Meta 阶段**（由 `pa-meta-manager` 管理）与 **Dev 阶段**（由 `pa-dev-manager` 管理）。
 
-### 1. Meta 阶段流程图（meta-manager）
+### 1. Meta 阶段流程图（pa-meta-manager）
 
-首先更新 architecture 架构文件与 specs 业务设计规范（主要是 `personal-assistant-meta/specs/` 目录下的业务/技术规格书与领域词典）；随后由 `personal-assistant-meta-dev` 直接撰写一个统一的 `plan.md`。该计划不再拆成四个分部计划，但必须在同一份文档中覆盖 Service、Client、Infra、Test 四个方面，确保 Dev 阶段可以按领域分发实现与验证工作。`panel-chair` 对统一计划进行专家评审与必要修订后，再调度 Committer 执行 Plan Commit，确保进入 Human Plan Approval Gate 的是已版本化的最终计划。
+首先更新 architecture 架构文件与 specs 业务设计规范（主要是 `personal-assistant-meta/specs/` 目录下的业务/技术规格书与领域词典）；随后由 `pa-meta-dev` 直接撰写一个统一的 `plan.md`。该计划不再拆成四个分部计划，但必须在同一份文档中覆盖 Service、Client、Infra、Test 四个方面，确保 Dev 阶段可以按领域分发实现与验证工作。`panel-chair` 对统一计划进行专家评审与必要修订后，再调度 Committer 执行 Plan Commit，确保进入 Human Plan Approval Gate 的是已版本化的最终计划。
 
 ```mermaid
 flowchart TD
     START(["Issue<br/>personal-assistant-meta/issues/"])
 
-    START --> S1["① personal-assistant-meta-manager<br/>启动 Meta 阶段"]
+    START --> S1["① pa-meta-manager<br/>启动 Meta 阶段"]
 
-    subgraph META_PHASE["<b>Meta 阶段 (meta-manager)</b>"]
-        S1 --> S1a["② 调度 personal-assistant-meta-dev<br/>更新架构文档与设计规范 architecture/ specs/"]
+    subgraph META_PHASE["<b>Meta 阶段 (pa-meta-manager)</b>"]
+        S1 --> S1a["② 调度 pa-meta-dev<br/>更新架构文档与设计规范 architecture/ specs/"]
 
-        S2["③ personal-assistant-meta-dev<br/>撰写统一 plan.md<br/>覆盖 Service / Client / Infra / Test"]
+        S2["③ pa-meta-dev<br/>撰写统一 plan.md<br/>覆盖 Service / Client / Infra / Test"]
 
         S1a --> S2
 
@@ -147,7 +147,7 @@ flowchart TD
 
         S2 --> S3
 
-        S4["⑤ 调度 personal-assistant-committer<br/>Plan Commit"]
+        S4["⑤ 调度 pa-committer<br/>Plan Commit"]
 
         S3 --> S4
     end
@@ -155,18 +155,18 @@ flowchart TD
     S4 --> DONE(["Meta 阶段结束"])
 ```
 
-### 2. Dev 阶段流程图（dev-manager）
+### 2. Dev 阶段流程图（pa-dev-manager）
 
 进入开发阶段，首先执行 API 接口契约更新及 TypeScript 类型同步。之后启动 Service, Client, Infra 三领域的并行开发。开发完成后进行统一的 Implementation Commit，最后进入 E2E 验证、E2E Commit 及请求 Merge。
 
 ```mermaid
 flowchart TD
-    START(["Issue + Approved plan.md"]) --> S5["① personal-assistant-dev-manager<br/>启动 Dev 阶段"]
+    START(["Issue + Approved plan.md"]) --> S5["① pa-dev-manager<br/>启动 Dev 阶段"]
 
-    subgraph DEV_PHASE["<b>Dev 阶段 (dev-manager)</b>"]
+    subgraph DEV_PHASE["<b>Dev 阶段 (pa-dev-manager)</b>"]
         subgraph API_SYNC["API 同步阶段"]
-            S6["② 调度 personal-assistant-meta-service-dev<br/>更新 API 契约与 spec"]
-            S7["③ 调度 personal-assistant-meta-client-dev<br/>同步 API TypeScript 类型"]
+            S6["② 调度 pa-meta-service-dev<br/>更新 API 契约与 spec"]
+            S7["③ 调度 pa-meta-client-dev<br/>同步 API TypeScript 类型"]
             S6 --> S7
         end
 
@@ -174,23 +174,23 @@ flowchart TD
 
         subgraph PARALLEL_DEV["④ 三领域并行开发  ∥"]
             subgraph SVC_PHASE["<b>Service 领域</b> — personal-assistant-service/  ∥"]
-                S8A["调度 personal-assistant-service-dev"]
-                S9A["调度 personal-assistant-service-tester"]
-                S10A["调度 personal-assistant-service-reviewer<br/>审查业务代码 + 测试代码"]
+                S8A["调度 pa-service-dev"]
+                S9A["调度 pa-service-tester"]
+                S10A["调度 pa-service-reviewer<br/>审查业务代码 + 测试代码"]
                 S8A --> S9A --> S10A
             end
 
             subgraph CLIENT_PHASE["<b>Client 领域</b> — personal-assistant-client/  ∥"]
-                S8B["调度 personal-assistant-client-dev"]
-                S9B["调度 personal-assistant-client-tester"]
-                S10B["调度 personal-assistant-client-reviewer<br/>审查业务代码 + 测试代码"]
+                S8B["调度 pa-client-dev"]
+                S9B["调度 pa-client-tester"]
+                S10B["调度 pa-client-reviewer<br/>审查业务代码 + 测试代码"]
                 S8B --> S9B --> S10B
             end
 
             subgraph INFRA_PHASE["<b>Infra 领域</b> — personal-assistant-infra/  ∥"]
-                S8C["调度 personal-assistant-infra-dev"]
-                S9C["调度 personal-assistant-infra-tester"]
-                S10C["调度 personal-assistant-infra-reviewer<br/>审查业务代码 + 测试代码"]
+                S8C["调度 pa-infra-dev"]
+                S9C["调度 pa-infra-tester"]
+                S10C["调度 pa-infra-reviewer<br/>审查业务代码 + 测试代码"]
                 S8C --> S9C --> S10C
             end
         end
@@ -203,13 +203,13 @@ flowchart TD
         S10B --> JOIN
         S10C --> JOIN
 
-        JOIN --> S11["⑥ 调度 personal-assistant-committer<br/>Implementation Commit"]
+        JOIN --> S11["⑥ 调度 pa-committer<br/>Implementation Commit"]
 
-        S11 --> S12["⑦ 调度 personal-assistant-e2e-manager"]
+        S11 --> S12["⑦ 调度 pa-e2e-manager"]
 
         subgraph E2E_PHASE["<b>E2E 领域</b> — personal-assistant-e2e/"]
-            S12A["⑧ 调度 personal-assistant-e2e-tester<br/>编写 E2E 测试"]
-            S12B["⑨ 调度 personal-assistant-e2e-reviewer<br/>审查 E2E 测试代码"]
+            S12A["⑧ 调度 pa-e2e-tester<br/>编写 E2E 测试"]
+            S12B["⑨ 调度 pa-e2e-reviewer<br/>审查 E2E 测试代码"]
             S12A --> S12B
         end
 
@@ -218,25 +218,25 @@ flowchart TD
         S12B --> S12C["⑩ 调度 panel-chair 专家会商<br/>深度评审 Dev 阶段全量代码修改"]
     end
 
-    S12C --> S13["⑪ 调度 personal-assistant-committer<br/>E2E Tests & Final Fixes Commit"]
-    S13 --> S14_MERGE["⑫ 调度 personal-assistant-merger<br/>git merge main → feature"]
+    S12C --> S13["⑪ 调度 pa-committer<br/>E2E Tests & Final Fixes Commit"]
+    S13 --> S14_MERGE["⑫ 调度 pa-merger<br/>git merge main → feature"]
     S14_MERGE --> DONE(["Done"])
 ```
 
 **与 AnyWear 执行顺序的差异**：
 
-- **两阶段物理隔离**：摒弃了单一的顶层 manager。整个流程切分为 Meta 阶段（由 `personal-assistant-meta-manager` 管理）和 Dev 阶段（由 `personal-assistant-dev-manager` 管理），由两阶段独立调度。
-- **架构文档与设计规范在 Plan 前更新**：要求在撰写具体实现计划前，先由 `meta-dev` 更新 `personal-assistant-meta/architecture/` 下的架构文件以及 `personal-assistant-meta/specs/` 下的业务与技术规格书，确保后续计划有高保真的设计依据。
-- **统一 Plan 输出**：不再调度四个 planner 输出分部计划，而是由 `meta-dev` 在一份 `plan.md` 中统一覆盖 Service、Client、Infra、Test 四个方面，减少文档碎片和跨计划同步成本。
+- **两阶段物理隔离**：摒弃了单一的顶层 manager。整个流程切分为 Meta 阶段（由 `pa-meta-manager` 管理）和 Dev 阶段（由 `pa-dev-manager` 管理），由两阶段独立调度。
+- **架构文档与设计规范在 Plan 前更新**：要求在撰写具体实现计划前，先由 `pa-meta-dev` 更新 `personal-assistant-meta/architecture/` 下的架构文件以及 `personal-assistant-meta/specs/` 下的业务与技术规格书，确保后续计划有高保真的设计依据。
+- **统一 Plan 输出**：不再调度四个 planner 输出分部计划，而是由 `pa-meta-dev` 在一份 `plan.md` 中统一覆盖 Service、Client、Infra、Test 四个方面，减少文档碎片和跨计划同步成本。
 - **Plan Commit 纳入 Control Loop**：步骤 ⑤ 的 Plan Commit 动作位于 `panel-chair` 专家评审之后。这使得 Human Plan Approval Gate 拿到的直接就是已经提交到 feature branch 上的最终计划，提高了评审和版本锁定的严密性。
 - **API 同步移动 to Dev 阶段**：原在 Meta 阶段（对实际代码文件产生修改），现移动到 Dev 阶段的开头，使 Meta 阶段真正做到"设计不落地、代码零修改"，所有实际代码改动均局限在 Dev 阶段内部。
-- **E2E 联调、会商与提交**：开发都完成后进行一次 Implementation Commit 再开始联调。E2E 领域内部完成测试编写和初审后，**由 Dev 阶段的顶层编排器 `personal-assistant-dev-manager` 调度 `panel-chair` 组织专家对 Dev 阶段全量代码修改（Service + Client + Infra + E2E）进行深度会商评审**，确保整体交付质量合格。全部通过后再由 Committer 统一进行 **E2E Tests & Final Fixes Commit（E2E 测试与最终修复提交）**，以确保联调测试中发现的任何缺陷修复与测试用例一同合入版本库。
+- **E2E 联调、会商与提交**：开发都完成后进行一次 Implementation Commit 再开始联调。E2E 领域内部完成测试编写和初审后，**由 Dev 阶段的顶层编排器 `pa-dev-manager` 调度 `panel-chair` 组织专家对 Dev 阶段全量代码修改（Service + Client + Infra + E2E）进行深度会商评审**，确保整体交付质量合格。全部通过后再由 Committer 统一进行 **E2E Tests & Final Fixes Commit（E2E 测试与最终修复提交）**，以确保联调测试中发现的任何缺陷修复与测试用例一同合入版本库。
 
 ## Control Loop
 
 ### 领域 Control Loop（Service / Client / Infra）
 
-每个领域 Manager 内部跑 control loop：Dev → Tester → Reviewer。Manager 不写代码，只做调度和决策。**领域 loop 内不再包含 commit 步骤**——commit 由顶层的 `personal-assistant-committer` 在三个检查点执行：Meta 完成后（Plan Commit）、所有领域完成后（Implementation Commit）、E2E 阶段最终通过后（E2E Tests & Final Fixes Commit）。
+每个领域 Manager 内部跑 control loop：Dev → Tester → Reviewer。Manager 不写代码，只做调度和决策。**领域 loop 内不再包含 commit 步骤**——commit 由顶层的 `pa-committer` 在三个检查点执行：Meta 完成后（Plan Commit）、所有领域完成后（Implementation Commit）、E2E 阶段最终通过后（E2E Tests & Final Fixes Commit）。
 
 Reviewer 的审查分两阶段：（1）先审查 Dev 产出的业务代码；（2）再审查 Tester 产出的测试代码。一次 review 覆盖全部产出，避免 review 遗漏测试代码。Reviewer 还需**审计 Tester 移除的 stale 测试**——Tester 负责识别并移除当前 issue 范围内不再有意义的测试，Reviewer 确保没有误删正确测试。
 
@@ -245,12 +245,12 @@ Tester 报告失败时，Manager 做三级决策：
 | 测试结果 | Manager 决策 | 动作 |
 |----------|-------------|------|
 | 实现 bug（空指针、类型错误等） | 可修复 | 带错误信息回退到 Dev |
-| 设计缺陷（API 语义不对等） | 需重新设计 | 上报 personal-assistant-dev-manager，等 Meta 侧调整 |
+| 设计缺陷（API 语义不对等） | 需重新设计 | 上报 pa-dev-manager，等 Meta 侧调整 |
 | 非阻塞问题（覆盖率略低等） | 接受 | 记录 known issue，验收通过 |
 
 ### E2E Control Loop
 
-personal-assistant-e2e-manager 管理 E2E 领域的质量闭环：调度 personal-assistant-e2e-tester 编写 E2E 测试 → personal-assistant-e2e-reviewer 审查测试代码。E2E-Manager 的决策逻辑与领域 Manager 一致：Tester 产出后 Reviewer 审查，Reviewer 发现问题时 Manager 根据问题类型决定回退 Tester 修复或上报 personal-assistant-dev-manager。Tester 负责识别并移除当前 issue 范围内不再有意义的回归测试，Reviewer 审计确保无误删。
+pa-e2e-manager 管理 E2E 领域的质量闭环：调度 pa-e2e-tester 编写 E2E 测试 → pa-e2e-reviewer 审查测试代码。`pa-e2e-manager` 的决策逻辑与领域 Manager 一致：Tester 产出后 Reviewer 审查，Reviewer 发现问题时 Manager 根据问题类型决定回退 Tester 修复或上报 pa-dev-manager。Tester 负责识别并移除当前 issue 范围内不再有意义的回归测试，Reviewer 审计确保无误删。
 
 ## Exceptional Control Flow
 
@@ -258,16 +258,16 @@ personal-assistant-e2e-manager 管理 E2E 领域的质量闭环：调度 persona
 
 **Meta 阶段上报链路**：
 ```
-Worker (meta-dev / panel-chair)
-  → personal-assistant-meta-manager
+Worker (`pa-meta-dev` / `panel-chair`)
+  → pa-meta-manager
     → 👤 Human (root)
 ```
 
 **Dev 阶段上报链路**：
 ```
-Worker (Dev / Reviewer / Tester / Committer / E2E-Tester / E2E-Reviewer)
+Worker (Dev / Reviewer / Tester / Committer / `pa-e2e-tester` / `pa-e2e-reviewer`)
   → Domain Manager (Service / Client / Infra / E2E)
-    → personal-assistant-dev-manager
+    → pa-dev-manager
       → 👤 Human (root)
 ```
 
@@ -279,8 +279,8 @@ Worker (Dev / Reviewer / Tester / Committer / E2E-Tester / E2E-Reviewer)
 |------|-----------|--------|
 | Worker | 自身职责范围内的实现/审查/测试 | 任何超出 scope 的异常、不确定项、或需要跨 Agent 协调的问题 |
 | Domain Manager | 领域内的三级决策：回退 Dev 修复、接受 known issue | 跨领域影响、设计缺陷、API 语义错误、自身 loop 内无法闭合的问题 |
-| personal-assistant-meta-manager | Meta 阶段内统一计划的调整与重新分配 | 设计矛盾、需求冲突、需要 Human 裁决的事项（例如方案重大调整） |
-| personal-assistant-dev-manager | 跨领域的协调和重新分配、异常重试、测试决策 | 需要 Human 输入或裁决的事项（需求模糊、约束冲突、合并决策） |
+| pa-meta-manager | Meta 阶段内统一计划的调整与重新分配 | 设计矛盾、需求冲突、需要 Human 裁决的事项（例如方案重大调整） |
+| pa-dev-manager | 跨领域的协调和重新分配、异常重试、测试决策 | 需要 Human 输入或裁决的事项（需求模糊、约束冲突、合并决策） |
 
 ### 上报规范
 
@@ -293,7 +293,7 @@ Manager 收到子 Agent 的异常报告后，先判断是否在自身决策权�
 
 ## Committer 规范（Mono-Repo 三检查点提交）
 
-`personal-assistant-committer` 是**唯一的提交 Agent**，分别由 `personal-assistant-meta-manager`（第 ① 检查点）及 `personal-assistant-dev-manager`（第 ②、③ 检查点）进行调度：
+`pa-committer` 是**唯一的提交 Agent**，分别由 `pa-meta-manager`（第 ① 检查点）及 `pa-dev-manager`（第 ②、③ 检查点）进行调度：
 
 | 检查点 | 调用时机 | Commit 消息前缀 | 内容 |
 |--------|---------|---------------|------|
@@ -356,29 +356,29 @@ permission:
 
 | Agent | task | edit | bash | skill | todowrite | webfetch | websearch | 设计理由 |
 |-------|:----:|:----:|:----:|:-----:|:---------:|:--------:|:---------:|---------|
-| `personal-assistant-meta-manager` | allow | — | allow | — | allow | — | — | Meta 阶段 Orchestrator；bash 用于 `git checkout` |
-| `personal-assistant-dev-manager` | allow | — | allow | — | allow | — | — | Dev 阶段 Orchestrator；bash 用于 `git checkout`/`git merge` |
-| `personal-assistant-meta-dev` | — | allow | — | — | — | allow | allow | Issue 评估 + 架构/specs 文档更新 + 撰写统一 plan.md；webfetch/websearch 用于引用外部文档 |
+| `pa-meta-manager` | allow | — | allow | — | allow | — | — | Meta 阶段 Orchestrator；bash 用于 `git checkout` |
+| `pa-dev-manager` | allow | — | allow | — | allow | — | — | Dev 阶段 Orchestrator；bash 用于 `git checkout`/`git merge` |
+| `pa-meta-dev` | — | allow | — | — | — | allow | allow | Issue 评估 + 架构/specs 文档更新 + 撰写统一 plan.md；webfetch/websearch 用于引用外部文档 |
 | `panel-chair` | allow | allow | allow | allow | allow | allow | allow | 专家评审面板主席。task 用于调度各模型 panelist；edit/bash/skill 用于 panelist-hermes 做本地代码/命令执行及评审/修订统一 plan.md |
-| `personal-assistant-meta-service-dev` | — | allow | allow | — | — | — | — | 更新 API schema（edit）+ 生成 OpenAPI spec（bash） |
-| `personal-assistant-meta-client-dev` | — | allow | allow | — | — | — | — | 生成 TypeScript 类型（bash）+ commit（bash） |
-| `personal-assistant-service-manager` | allow | — | — | — | allow | — | — | 纯调度 |
-| `personal-assistant-service-dev` | — | allow | allow | — | — | — | — | 写后端代码 + 运行 type check/test/commit |
-| `personal-assistant-service-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
-| `personal-assistant-service-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 pytest/mypy |
-| `personal-assistant-client-manager` | allow | — | — | — | allow | — | — | 纯调度 |
-| `personal-assistant-client-dev` | — | allow | allow | — | — | — | — | 写前端代码 + 运行 tsc/lint/test/commit |
-| `personal-assistant-client-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
-| `personal-assistant-client-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 tsc/lint/test/build |
-| `personal-assistant-infra-manager` | allow | — | — | — | allow | — | — | 纯调度 |
-| `personal-assistant-infra-dev` | — | allow | allow | — | — | — | — | 写 HCL + 运行 tofu fmt/validate |
-| `personal-assistant-infra-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
-| `personal-assistant-infra-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 tofu validate/plan |
-| `personal-assistant-committer` | — | deny | allow | — | — | — | — | bash 用于 git 操作；显式 deny edit 防止意外修改源码 |
-| `personal-assistant-merger` | allow | allow | allow | — | — | — | — | 执行 git merge main → feature；task 用于委托 panel-chair 解决冲突；edit 用于冲突文件修改 |
-| `personal-assistant-e2e-manager` | allow | — | — | — | allow | — | — | 纯调度，管理 E2E Tester → Reviewer 闭环 |
-| `personal-assistant-e2e-tester` | — | allow | allow | allow | — | — | — | primary agent（mode: all），需要完整工具链；skill 用于加载 hermes-e2e-testing。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
-| `personal-assistant-e2e-reviewer` | — | deny | — | — | — | — | — | 审查 E2E 测试代码；审计 stale 测试移除 |
+| `pa-meta-service-dev` | — | allow | allow | — | — | — | — | 更新 API schema（edit）+ 生成 OpenAPI spec（bash） |
+| `pa-meta-client-dev` | — | allow | allow | — | — | — | — | 生成 TypeScript 类型（bash）+ commit（bash） |
+| `pa-service-manager` | allow | — | — | — | allow | — | — | 纯调度 |
+| `pa-service-dev` | — | allow | allow | — | — | — | — | 写后端代码 + 运行 type check/test/commit |
+| `pa-service-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `pa-service-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 pytest/mypy |
+| `pa-client-manager` | allow | — | — | — | allow | — | — | 纯调度 |
+| `pa-client-dev` | — | allow | allow | — | — | — | — | 写前端代码 + 运行 tsc/lint/test/commit |
+| `pa-client-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `pa-client-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 tsc/lint/test/build |
+| `pa-infra-manager` | allow | — | — | — | allow | — | — | 纯调度 |
+| `pa-infra-dev` | — | allow | allow | — | — | — | — | 写 HCL + 运行 tofu fmt/validate |
+| `pa-infra-reviewer` | — | deny | — | — | — | — | — | 审查业务代码 + 测试代码；审计 stale 测试移除 |
+| `pa-infra-tester` | — | allow | allow | — | — | — | — | 写测试文件、移除 stale 测试（reviewer 审计）+ 运行 tofu validate/plan |
+| `pa-committer` | — | deny | allow | — | — | — | — | bash 用于 git 操作；显式 deny edit 防止意外修改源码 |
+| `pa-merger` | allow | allow | allow | — | — | — | — | 执行 git merge main → feature；task 用于委托 panel-chair 解决冲突；edit 用于冲突文件修改 |
+| `pa-e2e-manager` | allow | — | — | — | allow | — | — | 纯调度，管理 E2E Tester → Reviewer 闭环 |
+| `pa-e2e-tester` | — | allow | allow | allow | — | — | — | primary agent（mode: all），需要完整工具链；skill 用于加载 hermes-e2e-testing。负责 E2E 测试编写、执行及移除 stale 测试（reviewer 审计） |
+| `pa-e2e-reviewer` | — | deny | — | — | — | — | — | 审查 E2E 测试代码；审计 stale 测试移除 |
 | `panelist-deepseek` | — | — | — | — | — | allow | allow | DeepSeek 模型 panelist，只读。webfetch/websearch 用于外部文档 |
 | `panelist-gemini` | — | — | — | — | — | allow | allow | Gemini 模型 panelist，只读。webfetch/websearch 用于外部文档 |
 | `panelist-zhipu` | — | — | — | — | — | allow | allow | Zhipu 模型 panelist，只读。webfetch/websearch 用于外部文档 |
@@ -437,19 +437,19 @@ done
 
 ## E2E 领域
 
-personal-assistant-e2e-manager 管理 E2E 测试的质量闭环，调度 personal-assistant-e2e-tester 编写 E2E 测试 → personal-assistant-e2e-reviewer 审查测试代码。E2E 领域与其他四个领域并行存在，在 Implementation Commit（步骤 ⑬）之后执行。
+pa-e2e-manager 管理 E2E 测试的质量闭环，调度 pa-e2e-tester 编写 E2E 测试 → pa-e2e-reviewer 审查测试代码。E2E 领域与其他四个领域并行存在，在 Implementation Commit（步骤 ⑬）之后执行。
 
-personal-assistant-e2e-tester 与领域 Tester（personal-assistant-service-tester / personal-assistant-client-tester / personal-assistant-infra-tester）定位不同：
+pa-e2e-tester 与领域 Tester（pa-service-tester / pa-client-tester / pa-infra-tester）定位不同：
 
-| | 领域 Tester | personal-assistant-e2e-tester |
+| | 领域 Tester | pa-e2e-tester |
 |---|---|---|
 | 测试范围 | 单个目录 | 跨目录（Service + Client 联调） |
 | 测试类型 | 单元测试、内部集成测试 | 端到端场景测试 |
 | 运行方式 | 直接跑测试套件 | 调用 Hermes 启动完整环境后执行 |
-| 调度者 | 领域 Manager | personal-assistant-e2e-manager |
+| 调度者 | 领域 Manager | pa-e2e-manager |
 | Agent 类型 | subagent | primary agent |
 
-personal-assistant-e2e-reviewer 审查 E2E 测试代码，确保测试覆盖和代码质量。其权限与领域 Reviewer 一致（`edit: deny`），只检查报告，不修改被审查内容。
+pa-e2e-reviewer 审查 E2E 测试代码，确保测试覆盖和代码质量。其权限与领域 Reviewer 一致（`edit: deny`），只检查报告，不修改被审查内容。
 
 ## Agent 编写规范
 
@@ -470,12 +470,12 @@ personal-assistant-e2e-reviewer 审查 E2E 测试代码，确保测试覆盖和�
 
 | 层级 | 应该知道 | 不应该知道 |
 |------|---------|-----------|
-| personal-assistant-meta-manager | 3 个直属：personal-assistant-meta-dev、panel-chair、personal-assistant-committer | personal-assistant-meta-dev 具体怎么撰写统一 plan.md |
-| personal-assistant-dev-manager | 7 个直属：personal-assistant-meta-service-dev (API)、personal-assistant-meta-client-dev (API)、service/client/infra-manager、e2e-manager、committer | personal-assistant-service-manager 内部有 personal-assistant-service-dev/tester 等 |
-| personal-assistant-service-manager | 3 个直属：personal-assistant-service-dev/personal-assistant-service-tester/personal-assistant-service-reviewer | Tester 跑 `pytest` 还是 `pytest --cov` |
-| personal-assistant-client-manager | 3 个直属：personal-assistant-client-dev/personal-assistant-client-tester/personal-assistant-client-reviewer | Tester 跑 `vitest` 还是 `jest` |
-| personal-assistant-infra-manager | 3 个直属：personal-assistant-infra-dev/personal-assistant-infra-tester/personal-assistant-infra-reviewer | Tester 跑 `tofu validate` 和只读 `tofu plan` |
-| personal-assistant-e2e-manager | 2 个直属：personal-assistant-e2e-tester/personal-assistant-e2e-reviewer | Tester 具体怎么运行 E2E 测试套件 |
+| pa-meta-manager | 3 个直属：pa-meta-dev、panel-chair、pa-committer | pa-meta-dev 具体怎么撰写统一 plan.md |
+| pa-dev-manager | 7 个直属：pa-meta-service-dev (API)、pa-meta-client-dev (API)、pa-service-manager、pa-client-manager、pa-infra-manager、pa-e2e-manager、pa-committer | pa-service-manager 内部有 pa-service-dev/pa-service-tester 等 |
+| pa-service-manager | 3 个直属：pa-service-dev/pa-service-tester/pa-service-reviewer | Tester 跑 `pytest` 还是 `pytest --cov` |
+| pa-client-manager | 3 个直属：pa-client-dev/pa-client-tester/pa-client-reviewer | Tester 跑 `vitest` 还是 `jest` |
+| pa-infra-manager | 3 个直属：pa-infra-dev/pa-infra-tester/pa-infra-reviewer | Tester 跑 `tofu validate` 和只读 `tofu plan` |
+| pa-e2e-manager | 2 个直属：pa-e2e-tester/pa-e2e-reviewer | Tester 具体怎么运行 E2E 测试套件 |
 
 ### 每个 delegate 必须声明 input 和 return
 
@@ -489,17 +489,17 @@ delegate(AgentName)
 
 Pipeline 图中用 `-- "returns: xxx" -->` 标注返回值。Delegation Reference 表格用 `input → returns output` 格式。
 
-**检查方法**：分别从 `personal-assistant-meta-manager` 与 `personal-assistant-dev-manager` 开始，逐层追踪每个 delegate 的 input 来源（上一层的 return）和 return 去向（下一层的 input），不能有断链。
+**检查方法**：分别从 `pa-meta-manager` 与 `pa-dev-manager` 开始，逐层追踪每个 delegate 的 input 来源（上一层的 return）和 return 去向（下一层的 input），不能有断链。
 
 ### 模式声明 — 同类型 Worker 的不同模式
 
-当同一个 Worker 概念存在多个实例（如 personal-assistant-meta-service-dev 在 Meta 领域做 API 同步、personal-assistant-service-dev 在 Service 领域做功能开发），Manager 委托时必须明确声明 **mode**：
+当同一个 Worker 概念存在多个实例（如 pa-meta-service-dev 在 Meta 领域做 API 同步、pa-service-dev 在 Service 领域做功能开发），Manager 委托时必须明确声明 **mode**：
 
 ```
-Delegate to `personal-assistant-meta-service-dev` in **API sync mode**:
+Delegate to `pa-meta-service-dev` in **API sync mode**:
   - explicit scope: update API contracts only. No feature logic.
 
-Delegate to `personal-assistant-service-dev` in **feature development mode**:
+Delegate to `pa-service-dev` in **feature development mode**:
   - explicit scope: full backend implementation.
 ```
 
@@ -519,7 +519,7 @@ OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_ta
 **Manager 文件中的写法**：每个 worker 的委托说明必须包含 `Record the returned task_id. Reuse on re-delegation.`
 
 **层级隔离**：
-- `personal-assistant-meta-manager` 与 `personal-assistant-dev-manager` 分别只跟踪其直属 Worker/Manager/Committer 的 `task_id`。
+- `pa-meta-manager` 与 `pa-dev-manager` 分别只跟踪其直属 Worker/Manager/Committer 的 `task_id`。
 - 每个领域 Manager 跟踪自己 worker 的 `task_id`。
 - 上层 Manager **不跟踪**下层 Manager 内部 worker 的 `task_id`。
 
@@ -546,33 +546,33 @@ OpenCode 的 subagent 模型是**同步阻塞**的：Manager 调用 `delegate_ta
 
 | 图中节点 | 对应的 Agent 文件 |
 |---------|------------------|
-| personal-assistant-meta-manager | `personal-assistant-meta-manager.md` |
-| personal-assistant-dev-manager | `personal-assistant-dev-manager.md` |
-| personal-assistant-meta-dev | `personal-assistant-meta-dev.md` |
+| pa-meta-manager | `pa-meta-manager.md` |
+| pa-dev-manager | `pa-dev-manager.md` |
+| pa-meta-dev | `pa-meta-dev.md` |
 | panel-chair | `panel-chair.md` |
 | panelist-deepseek | `panelist-deepseek.md` |
 | panelist-gemini | `panelist-gemini.md` |
 | panelist-zhipu | `panelist-zhipu.md` |
 | panelist-hermes | `panelist-hermes.md` |
-| personal-assistant-meta-service-dev（API） | `personal-assistant-meta-service-dev.md` |
-| personal-assistant-meta-client-dev（API） | `personal-assistant-meta-client-dev.md` |
-| personal-assistant-service-manager | `personal-assistant-service-manager.md` |
-| personal-assistant-service-dev | `personal-assistant-service-dev.md` |
-| personal-assistant-service-reviewer | `personal-assistant-service-reviewer.md` |
-| personal-assistant-service-tester | `personal-assistant-service-tester.md` |
-| personal-assistant-client-manager | `personal-assistant-client-manager.md` |
-| personal-assistant-client-dev | `personal-assistant-client-dev.md` |
-| personal-assistant-client-reviewer | `personal-assistant-client-reviewer.md` |
-| personal-assistant-client-tester | `personal-assistant-client-tester.md` |
-| personal-assistant-infra-manager | `personal-assistant-infra-manager.md` |
-| personal-assistant-infra-dev | `personal-assistant-infra-dev.md` |
-| personal-assistant-infra-reviewer | `personal-assistant-infra-reviewer.md` |
-| personal-assistant-infra-tester | `personal-assistant-infra-tester.md` |
-| personal-assistant-committer | `personal-assistant-committer.md` |
-| personal-assistant-merger | `personal-assistant-merger.md` |
-| personal-assistant-e2e-manager | `personal-assistant-e2e-manager.md` |
-| personal-assistant-e2e-tester | `personal-assistant-e2e-tester.md` |
-| personal-assistant-e2e-reviewer | `personal-assistant-e2e-reviewer.md` |
+| pa-meta-service-dev（API） | `pa-meta-service-dev.md` |
+| pa-meta-client-dev（API） | `pa-meta-client-dev.md` |
+| pa-service-manager | `pa-service-manager.md` |
+| pa-service-dev | `pa-service-dev.md` |
+| pa-service-reviewer | `pa-service-reviewer.md` |
+| pa-service-tester | `pa-service-tester.md` |
+| pa-client-manager | `pa-client-manager.md` |
+| pa-client-dev | `pa-client-dev.md` |
+| pa-client-reviewer | `pa-client-reviewer.md` |
+| pa-client-tester | `pa-client-tester.md` |
+| pa-infra-manager | `pa-infra-manager.md` |
+| pa-infra-dev | `pa-infra-dev.md` |
+| pa-infra-reviewer | `pa-infra-reviewer.md` |
+| pa-infra-tester | `pa-infra-tester.md` |
+| pa-committer | `pa-committer.md` |
+| pa-merger | `pa-merger.md` |
+| pa-e2e-manager | `pa-e2e-manager.md` |
+| pa-e2e-tester | `pa-e2e-tester.md` |
+| pa-e2e-reviewer | `pa-e2e-reviewer.md` |
 
 
-命名规则：`personal-assistant-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester}。例外：`personal-assistant-committer.md`（统一 Committer，无 domain 限定）、`personal-assistant-merger.md`（统一 Merger，无 domain 限定）、`panelist-*.md`（panel-chair 的 4 个专家 panelist）。
+命名规则：`pa-{domain}-{role}.md`，domain ∈ {meta, service, client, infra, e2e}，role ∈ {manager, dev, reviewer, tester}。例外：`pa-committer.md`（统一 Committer，无 domain 限定）、`pa-merger.md`（统一 Merger，无 domain 限定）、`panelist-*.md`（panel-chair 的 4 个专家 panelist）。

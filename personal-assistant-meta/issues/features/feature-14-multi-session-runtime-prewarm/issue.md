@@ -72,7 +72,9 @@ Runtime Session 的做法必须被拆分。
 ## 目标
 
 图类型：**Flowchart（系统上下文 / 架构概览图）**。它展示核心对象和调用方向，
-不是 UML Use Case Diagram，也不是严格的 UML Component Diagram。
+用于说明用户、Web Chat、AgentArts Gateway、Runtime Session、Conversation Store
+和 LangGraph Checkpoint 之间的高层关系；不是 UML Use Case Diagram，也不是严格
+UML Component Diagram。
 
 ```mermaid
 flowchart LR
@@ -235,7 +237,7 @@ flowchart LR
 ## Cardinality 与生命周期
 
 图类型：**ER Diagram（实体关系图）**。用于表达 User、Conversation、Runtime
-Session、Sandbox Session 等实体之间的 cardinality。
+Session、Sandbox Session 和 LangGraph Thread 等实体之间的 cardinality。
 
 ```mermaid
 erDiagram
@@ -306,7 +308,8 @@ per-user Runtime Session pool；这不改变 Conversation 与 `thread_id` 的 1:
 ## 职责边界
 
 图类型：**Flowchart（职责边界 / 概念关系图）**。用于说明各层分别负责什么，
-不是数据库 ERD。
+尤其是 Conversation、Runtime Session、LangGraph Thread、Sandbox Session 和
+Memory 的职责拆分；不是数据库 ERD。
 
 ```mermaid
 flowchart TB
@@ -352,7 +355,9 @@ Conversation Metadata Store + durable Checkpoint 恢复。
 Conversation 为中心，Runtime/Sandbox 只是可替换 lease。
 
 图类型：**Flowchart（组件/容器架构图）**。接近 Component Diagram 的用途，
-但语法上是 Mermaid Flowchart，不是严格 UML Component Diagram。
+用于说明 Conversation API、PostgreSQL、Runtime lifecycle、Invocation Proxy、Agent
+和 Code Interpreter 之间的职责关系；语法上是 Mermaid Flowchart，不是严格 UML
+Component Diagram。
 
 ```mermaid
 flowchart LR
@@ -482,7 +487,8 @@ Conversation API 是跨设备、跨刷新一致的唯一事实源。
 
 图类型：**Sequence Diagram（时序图）**。用于说明 UI、Control Plane、
 数据库和 Checkpoint 之间的调用顺序。实际部署中 UI 可经 Thin BFF same-origin proxy
-访问 Control Plane。
+访问 Control Plane；页面刷新和 Conversation 切换只走 history read path，Agent
+state resume 由后续 invocation 使用同一个 `thread_id` 完成。
 
 ```mermaid
 sequenceDiagram
@@ -527,7 +533,7 @@ Hydration 规则：
 ### Runtime Session 状态机
 
 图类型：**State Diagram（状态机图）**。用于说明 Runtime Session lease 的状态
-转换。
+转换，包括 pre-warm、ready、degraded、expired 和 stop/cleanup 生命周期。
 
 ```mermaid
 stateDiagram-v2
@@ -640,7 +646,8 @@ Conversation 与 `thread_id` 保持稳定，也无法恢复旧的 graph state。
 ### 用户 Runtime 预热与创建 Conversation
 
 图类型：**Sequence Diagram（时序图）**。用于说明用户进入 Chat 后 pre-warm 与
-Conversation 创建的交互顺序。
+Conversation 创建的交互顺序，包括 Runtime pre-warm、lease 查询、fallback 和
+New Chat 创建。
 
 ```mermaid
 sequenceDiagram
@@ -686,7 +693,7 @@ sequenceDiagram
 ### 发送消息
 
 图类型：**Sequence Diagram（时序图）**。用于说明发送消息时 UI、BFF、
-AgentArts Runtime 和 FastAPI 的调用顺序。
+Control Plane、AgentArts Runtime 和 FastAPI Agent 的调用顺序。
 
 ```mermaid
 sequenceDiagram
