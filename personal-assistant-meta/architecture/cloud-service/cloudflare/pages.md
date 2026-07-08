@@ -188,13 +188,19 @@ Required / recommended Pages runtime variables：
 - `AGENTARTS_INVOCATIONS_URL`：现有 `/invocations` proxy upstream。
 - `OAUTH2_CALLBACK_BFF_SECRET`：推荐配置，与 Service
   `OAUTH2_CALLBACK_BFF_SECRET` 相同。
-- `AGENTARTS_OAUTH_CALLBACK_URL`：可选 direct Service callback upstream；未配置时
-  BFF 复用 `AGENTARTS_INVOCATIONS_URL` 构造 Gateway full Runtime callback path。
 BFF 使用 `/invocations` 正常登录请求预先写入的 callback-only HttpOnly cookies
 恢复 Gateway 所需的 `Authorization`、`x-hw-agentarts-session-id` 和
 `X-HW-AgentGateway-User-Id`。Calendar complete 的 `Authorization` 必须是同一用户的
 inbound user token；不要用 service token 覆盖，否则 AgentArts Identity 可能返回
 `AgentIdentityTokenVault.1002` identity mismatch。
+
+Local direct callback override：
+
+- `AGENTARTS_OAUTH_CALLBACK_URL`：仅用于本地 full-flow 开发或显式 direct callback
+  bypass，例如 `npm run pages:dev:local` 绑定到
+  `http://localhost:8080/auth/oauth2/callback/m365-calendar`。线上默认不配置该变量；
+  未配置时 BFF 复用 `AGENTARTS_INVOCATIONS_URL` 构造 Gateway full Runtime callback
+  path。
 
 API Token 最小权限为目标 Account 的 `Cloudflare Pages: Edit`。
 
