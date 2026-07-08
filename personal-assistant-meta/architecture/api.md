@@ -65,11 +65,15 @@ Frontend `/invocations/{suffix}` 作为隐式 contract。
 ## 3. Local-only Exceptions
 
 下表只记录本地开发或 Wrangler preview 的特例路径，不参与 production API 映射。
+Vite chat dev 使用 proxy 是为了让浏览器始终请求 `http://localhost:5173/invocations`
+这个同源 path，避免 FastAPI 为本地 `localhost:5173 -> localhost:8080` 跨端口请求
+额外开启 CORS。
+Calendar OAuth callback 的本地 full-flow 测试必须走 local Cloudflare Pages Functions
+（`npm run pages:dev:local`），不走 Vite dev proxy。
 
 | 场景 | Local frontend path | Local proxy / route | Gateway full Runtime path | Backend container path |
 |------|---------------------|---------------------|---------------------------|------------------------|
 | Local Vite chat dev | `POST http://localhost:5173/invocations` | Vite dev proxy | `N/A` | `POST http://localhost:8080/invocations` |
-| Local Vite Calendar fallback | `GET http://localhost:5173/auth/callback/m365-calendar` | React fallback shell → Vite proxy rewrite | `N/A` | `GET http://localhost:8080/auth/oauth2/callback/m365-calendar` |
 | Local Pages full-flow callback | `GET http://localhost:5173/auth/callback/m365-calendar` | `functions/auth/callback/m365-calendar.js` | `AGENTARTS_OAUTH_CALLBACK_URL=http://localhost:8080/auth/oauth2/callback/m365-calendar` | `GET http://localhost:8080/auth/oauth2/callback/m365-calendar` |
 | Backend health check | `GET http://localhost:8080/ping` | direct backend | `N/A` | `GET /ping` |
 | Backend Chainlit playground | `GET http://localhost:8080/invocations/playground` | direct backend | `N/A` | `GET /invocations/playground` |
