@@ -9,18 +9,18 @@
    `X-Hw-Agentarts-Session-Id` 是调用 `ExecuteRuntime` /
    `ExecuteRuntimeWithPrefix` 的必选 header，Gateway 在进入 FastAPI 容器前已经使用它完成 Runtime Session routing。因此 FastAPI 不能为当前这一次
    `/invocations` 请求“补注入” Runtime Session ID。
-2. **将 Conversation 管理 API 放在 Agent Runtime 内是可实现但有代价的。**
+2. **将 Conversation 管理 API 放在 Agent Runtime 内是可实现但不作为目标方案。**
    AgentArts `ExecuteRuntimeWithPrefix` 文档明确要求 custom route 也携带
    `X-Hw-Agentarts-Session-Id`。因此 `/conversations`、`/messages` 这类
    metadata API 如果通过 Gateway 访问，也会被建模为 Runtime execution call。
    若目标是不让 metadata API 本身触发或依赖 Runtime execution instance，应把
-   Conversation API 放到独立 stateless BFF，而不是 Runtime 容器内。
+   Conversation API 放到 Service-owned Control Plane，而不是 Runtime 容器内。
 3. **当前 Cloudflare Pages Function 是 pre-Gateway BFF 的唯一现成位置，但它没有
-   server-side lease store。**
-   它可以调用 `sessions-start`、注入 Runtime Session header、代理 SSE；但若要满足
-   “多 Tab 对同一 user single-flight / 最多一个 active Runtime Session”的 invariant，
-   需要新增 Cloudflare-side durable coordination（例如 Durable Object/KV/其他
-   server-side store），或引入独立 BFF 服务访问 PostgreSQL。
+   business state ownership。**
+   采纳后的目标是：Pages Function 作为 Thin BFF，只做 same-origin proxy、调用
+   Control Plane、注入 Runtime Session header 和代理 SSE。Runtime lease state
+   machine、Conversation ownership、数据库访问与 `sessions-start` / `sessions-stop`
+   调用由 Service-owned Control Plane 负责。
 4. **本环境无法完成 live `sessions-start` 成功路径验证。**
    仓库中配置的 dev API key 对当前 Gateway 返回 `401 Authentication failed!`；
    环境中没有 Microsoft ID token / `AGENTARTS_BEARER_TOKEN`。需要用有效
@@ -132,66 +132,66 @@ endpoint is available:
 
 ### Recommended Boundary
 
-Use a **pre-Gateway lifecycle BFF** for Runtime Session lifecycle:
+Use a **pre-Gateway Thin BFF** for Runtime Session header injection, and delegate
+Runtime Session lifecycle to Service-owned Control Plane:
+
+图类型：**Flowchart（架构边界图）**。用于说明 Browser、BFF、AgentArts Gateway
+和 FastAPI Runtime 的调用边界。
 
 ```mermaid
 flowchart LR
-    Browser["Browser"] --> BFF["same-origin BFF"]
-    BFF -->|"sessions-start / sessions-stop"| Gateway["AgentArts Gateway"]
+    Browser["Browser"] --> BFF["Cloudflare Pages Function<br/>Thin BFF"]
+    BFF -->|"ensure / invocation context"| CP["Service-owned Control Plane"]
+    CP -->|"lease state + messages"| DB["PostgreSQL"]
+    CP -->|"sessions-start / sessions-stop"| Gateway["AgentArts Gateway"]
     BFF -->|"inject X-Hw-Agentarts-Session-Id"| Runtime["ExecuteRuntime / ExecuteRuntimeWithPrefix"]
     Runtime --> FastAPI["FastAPI Agent Runtime"]
+    FastAPI --> DB
 ```
 
-FastAPI should still own:
+Service side should own:
 
 - Conversation ownership checks;
 - `conversation_id -> thread_id` derivation;
 - `conversation_messages` read model;
+- Runtime lease state machine and lifecycle API client;
 - LangGraph checkpoint execution state.
 
-BFF should own:
+BFF should only own:
 
-- user-scoped active Runtime Session lease lookup;
-- `sessions-start` / `sessions-stop` calls;
+- same-origin proxy behavior;
+- authenticated calls to Control Plane;
 - injection of `X-Hw-Agentarts-Session-Id`;
-- fallback behavior when pre-warm is degraded.
+- SSE forwarding without parsing or teeing Agent payload.
 
-### BFF Storage Options
+### BFF Storage Options Considered
 
 | Option | Fit | Trade-off |
 |--------|-----|-----------|
-| Cloudflare Durable Object / KV lease store | Good for pre-Gateway user single-flight | New Cloudflare stateful dependency; runtime leases separate from PostgreSQL unless synchronized |
-| Separate stateless BFF service with PostgreSQL access | Best target architecture | New deployable service and network/security work |
+| Service-owned Control Plane with PostgreSQL access | Target design | Requires a non-session-scoped endpoint reachable by Thin BFF before Gateway invocation |
+| Cloudflare Durable Object / KV lease store | Prototype only | Adds Cloudflare stateful dependency and duplicates Runtime lease truth outside PostgreSQL |
 | Keep lifecycle in Pages Function and use browser/localStorage | Fastest prototype | Violates server-side multi-Tab invariant; not acceptable as final Feature 14 |
 | FastAPI-only lease lookup | Not sufficient | Too late to inject the header for the current Gateway request |
 
 ### Route Placement Recommendation
 
-Target long-term:
+Target after plan review:
 
 ```text
-Browser /api/conversations/* -> stateless BFF -> PostgreSQL
-Browser /invocations          -> BFF ensure lease -> AgentArts Gateway -> FastAPI
+Browser /api/conversations/* -> Thin BFF -> Control Plane -> PostgreSQL
+Browser /invocations          -> Thin BFF -> Control Plane invocation context
+                               -> AgentArts Gateway -> FastAPI
 ```
 
-Pragmatic intermediate, if a separate BFF is out of scope:
-
-```text
-Browser /api/conversations/* -> Pages Function ensure lease -> Gateway custom route -> FastAPI /conversations/*
-Browser /invocations          -> Pages Function ensure lease -> Gateway invoke       -> FastAPI /invocations
-```
-
-The intermediate keeps one deployable backend but accepts that metadata APIs are
-served through the Agent Runtime path and require a Runtime Session header. This
-should be explicitly marked as an implementation trade-off, not the clean target.
+Rejected for final Feature 14: routing Conversation metadata through Gateway custom
+routes that themselves require `X-Hw-Agentarts-Session-Id`.
 
 ## Implementation Plan Updates Suggested
 
-1. Add a mandatory `runtime-lifecycle-bff` decision before Service/Client implementation starts.
+1. Add a mandatory `Control Plane placement` decision before Service/Client implementation starts.
 2. Do not implement `ensureUserRuntimeSession()` only inside FastAPI.
-3. If using Cloudflare Pages Function as lifecycle BFF, add a server-side
-   coordination mechanism for user-scoped leases; do not rely on Tab-local
-   storage.
+3. Cloudflare Pages Function must call Control Plane for user-scoped leases; do not
+   keep the lease store in browser/localStorage or BFF-local state.
 4. Keep Service `POST /invocations` responsible for `conversation_id` ownership
    and `thread_id = user_id:conversation_id`, never `runtime_session_id`.
 5. Add a live-spike prerequisite requiring a valid CUSTOM_JWT token:

@@ -71,6 +71,9 @@ Runtime Session 的做法必须被拆分。
 
 ## 目标
 
+图类型：**Flowchart（系统上下文 / 架构概览图）**。它展示核心对象和调用方向，
+不是 UML Use Case Diagram，也不是严格的 UML Component Diagram。
+
 ```mermaid
 flowchart LR
     User["用户"] -->|"登录/进入 Chat"| Prewarm["User Runtime Pre-warm"]
@@ -116,7 +119,10 @@ flowchart LR
   - 防止多 Tab/并发请求为同一用户重复创建 Runtime Session。
 - **Service / BFF**
   - 浏览器不得持有 AgentArts 管理凭据；
-  - 通过 same-origin Backend-for-Frontend endpoint 代理 Runtime Session lifecycle；
+  - Cloudflare Pages Function 作为 Thin BFF 只做 same-origin proxy、身份转发、
+    Runtime Session header 注入和 SSE 转发；
+  - Service-owned Control Plane 负责 Conversation API、Runtime lease state machine、
+    数据库访问和 AgentArts lifecycle 调用；
   - 校验 Conversation 所有权，禁止用户操作其他用户的 Conversation；
   - 分别处理 `conversation_id` 和 user-scoped `runtime_session_id`，不得由一个字段
     兼任。
@@ -201,6 +207,8 @@ Runtime Session 和 Sandbox Session 都是临时资源，但解决的问题完�
 
 普通聊天只经过 Runtime Session：
 
+图类型：**Flowchart（请求路径图）**。用于说明普通聊天请求经过哪些运行资源。
+
 ```mermaid
 flowchart LR
     User["用户"] --> Runtime["Runtime Session<br/>user-scoped"]
@@ -209,6 +217,9 @@ flowchart LR
 ```
 
 需要代码或文件执行时，Agent 再按需创建 Sandbox Session：
+
+图类型：**Flowchart（请求路径图）**。用于说明代码/文件执行时额外引入
+Sandbox Session。
 
 ```mermaid
 flowchart LR
@@ -222,6 +233,9 @@ flowchart LR
 的隔离目标是避免不同 Conversation 的文件、代码和临时工作区互相污染。
 
 ## Cardinality 与生命周期
+
+图类型：**ER Diagram（实体关系图）**。用于表达 User、Conversation、Runtime
+Session、Sandbox Session 等实体之间的 cardinality。
 
 ```mermaid
 erDiagram
@@ -291,6 +305,9 @@ per-user Runtime Session pool；这不改变 Conversation 与 `thread_id` 的 1:
 
 ## 职责边界
 
+图类型：**Flowchart（职责边界 / 概念关系图）**。用于说明各层分别负责什么，
+不是数据库 ERD。
+
 ```mermaid
 flowchart TB
     Conversation["Conversation<br/>标题、列表、所有权、归档状态"]
@@ -334,18 +351,23 @@ Conversation Metadata Store + durable Checkpoint 恢复。
 采用 **Conversation-centered orchestration**：所有 durable state 和资源关联均以
 Conversation 为中心，Runtime/Sandbox 只是可替换 lease。
 
+图类型：**Flowchart（组件/容器架构图）**。接近 Component Diagram 的用途，
+但语法上是 Mermaid Flowchart，不是严格 UML Component Diagram。
+
 ```mermaid
 flowchart LR
-    UI["Web Chat<br/>assistant-ui RemoteThreadListRuntime"] --> API["Conversation API / BFF"]
-    API --> DB["PostgreSQL<br/>Conversation + user runtime leases"]
+    UI["Web Chat<br/>assistant-ui RemoteThreadListRuntime"] --> BFF["Cloudflare Pages Function<br/>Thin BFF / Proxy"]
+    BFF -->|"Conversation API / invocation context"| API["Service-owned Control Plane API"]
+    API --> DB["PostgreSQL<br/>Conversation + messages + leases"]
     API --> RT["AgentArts Runtime lifecycle"]
-    API --> Invoke["Invocation Proxy"]
+    BFF -->|"inject runtime_session_id header"| Invoke["AgentArts Gateway / Invocation Proxy"]
     Invoke --> Agent["FastAPI + deepagents"]
+    Agent --> DB
     Agent --> CP["Durable LangGraph Checkpointer"]
     Agent --> CI["Code Interpreter<br/>按需创建 Sandbox Session"]
 
     DB -->|"conversation_id"| API
-    DB -->|"user-scoped active runtime_session_id"| Invoke
+    DB -->|"user-scoped active runtime_session_id"| API
     API -->|"可信 user_id + conversation_id"| Agent
     Agent -->|"派生稳定 thread_id"| CP
 ```
@@ -458,25 +480,32 @@ Conversation API 是跨设备、跨刷新一致的唯一事实源。
 页面刷新和 Conversation 切换必须走显式 history read path，而不是期待
 `AsyncPostgresSaver` 自动驱动 UI：
 
+图类型：**Sequence Diagram（时序图）**。用于说明 UI、Control Plane、
+数据库和 Checkpoint 之间的调用顺序。实际部署中 UI 可经 Thin BFF same-origin proxy
+访问 Control Plane。
+
 ```mermaid
 sequenceDiagram
     participant UI as Web Chat
-    participant BFF as Conversation API / BFF
+    participant BFF as Thin BFF
+    participant API as Control Plane API
     participant Store as PostgreSQL Read Model
     participant CP as LangGraph Checkpointer
 
-    UI->>BFF: GET /conversations?cursor=...
-    BFF->>Store: query by authenticated user_id
-    Store-->>BFF: Conversation list + selected/default id
+    UI->>BFF: GET /api/conversations?cursor=...
+    BFF->>API: proxy authenticated request
+    API->>Store: query by authenticated user_id
+    Store-->>API: Conversation list + selected/default id
+    API-->>BFF: Conversation metadata
     BFF-->>UI: Conversation metadata
-    UI->>BFF: GET /conversations/{id}/messages?cursor=...
-    BFF->>Store: ownership check + paginated message query
-    Store-->>BFF: normalized UI messages
+    UI->>BFF: GET /api/conversations/{id}/messages?cursor=...
+    BFF->>API: proxy authenticated request
+    API->>Store: ownership check + paginated message query
+    Store-->>API: normalized UI messages
+    API-->>BFF: messages + next_cursor
     BFF-->>UI: messages + next_cursor
     UI->>UI: hydrate assistant-ui ThreadHistoryAdapter
-    Note over BFF,CP: Checkpoint is not queried on the normal UI read path
-    UI->>BFF: POST /invocations with conversation_id
-    BFF->>CP: Agent resumes stable thread_id state
+    Note over API,CP: Checkpoint is not queried on the normal UI read path
 ```
 
 Hydration 规则：
@@ -496,6 +525,9 @@ Hydration 规则：
 - 新发送消息与 history hydration 并发时必须按 `message_id` 去重并保持稳定顺序。
 
 ### Runtime Session 状态机
+
+图类型：**State Diagram（状态机图）**。用于说明 Runtime Session lease 的状态
+转换。
 
 ```mermaid
 stateDiagram-v2
@@ -530,31 +562,33 @@ Conversation 状态与 Runtime 状态必须分开。例如多个 Conversation �
 
 - `conversation_id` 进入业务 body/path，用于 ownership 和 `thread_id`；
 - `runtime_session_id` 仅用于 AgentArts Runtime header/routing；
-- BFF/Proxy 按 `user_id` 从数据库读取 active lease 并注入 Runtime Session header，避免浏览器将
+- Thin BFF 不直接查数据库；它按可信身份调用 Service-owned Control Plane 获取
+  active/fallback `runtime_session_id`，再注入 Runtime Session header，避免浏览器将
   临时 Runtime resource identity 当作 Conversation identity；
-- 若无 active Runtime lease，BFF 可先执行有界 pre-warm，或生成/协商 fallback
-  Runtime Session ID 后直接 invocation；
+- 若无 active Runtime lease，Control Plane 可先执行有界 pre-warm，或生成/协商
+  fallback Runtime Session ID 后让 BFF 继续 invocation；
 - Service 不能再从 Runtime Session header 构造 LangGraph `thread_id`。
 
 ### Conversation API contract
 
-现有 AgentArts Gateway 使用 `PREFIX_MATCH`，Service 内部路由建议收敛在
-`/invocations` 前缀下：
+Conversation API 属于 Service-owned Control Plane，不应部署成必须携带
+`X-Hw-Agentarts-Session-Id` 的 Gateway custom route：
 
 ```text
-POST   /invocations/conversations
-GET    /invocations/conversations
-GET    /invocations/conversations/{conversation_id}
-PATCH  /invocations/conversations/{conversation_id}
-DELETE /invocations/conversations/{conversation_id}
-GET    /invocations/conversations/{conversation_id}/messages
-POST   /invocations/runtime-session/ensure
-DELETE /invocations/runtime-session
-POST   /invocations
+POST   /api/conversations
+GET    /api/conversations
+GET    /api/conversations/{conversation_id}
+PATCH  /api/conversations/{conversation_id}
+DELETE /api/conversations/{conversation_id}
+GET    /api/conversations/{conversation_id}/messages
+POST   /api/conversations/migrate-legacy
+POST   /api/runtime-session/ensure
+POST   /api/invocation-context
 ```
 
-Cloudflare Pages Function 可向浏览器提供 same-origin `/api/conversations/*`，
-再映射到上述 Runtime path。所有 endpoint 必须：
+Cloudflare Pages Function 可向浏览器提供 same-origin `/api/*` facade，但最终业务
+语义、DB 访问、ownership 和 idempotency 都由 Control Plane 执行。所有 endpoint
+必须：
 
 - 从 Gateway 验证后的 identity 获取 `user_id`；
 - 在数据库中执行 `(user_id, conversation_id)` ownership query；
@@ -565,10 +599,9 @@ Cloudflare Pages Function 可向浏览器提供 same-origin `/api/conversations/
 - 不允许客户端指定或覆盖 `thread_id`；
 - 不返回 AgentArts 管理凭据。
 
-在冻结路由方案前必须通过 API spike 确认：调用 Conversation 管理路由是否会被
-AgentArts 强制绑定或创建 Runtime Session。如果管理请求本身会产生昂贵的
-session-scoped execution instance，应将 Conversation API 放到独立 stateless BFF，
-而不是部署在 session-scoped Agent Runtime 内。
+实现前必须确认 Control Plane endpoint 可在 AgentArts Gateway invocation path 之前被
+Thin BFF 调用；Conversation 管理请求本身不得因为经过 Gateway custom route 而强制创建
+或绑定 Runtime Session。
 
 ### Pre-warm 与 Session ID policy
 
@@ -606,28 +639,36 @@ Conversation 与 `thread_id` 保持稳定，也无法恢复旧的 graph state。
 
 ### 用户 Runtime 预热与创建 Conversation
 
+图类型：**Sequence Diagram（时序图）**。用于说明用户进入 Chat 后 pre-warm 与
+Conversation 创建的交互顺序。
+
 ```mermaid
 sequenceDiagram
     actor User as 用户
     participant UI as Web Chat
-    participant BFF as Session BFF
+    participant BFF as Thin BFF
+    participant API as Control Plane API
     participant Store as Metadata Store
     participant AA as AgentArts Runtime
 
     User->>UI: 登录完成 / 进入 Chat
     UI->>BFF: POST /api/runtime-session/ensure
-    BFF->>Store: 查询 user-scoped active lease
+    BFF->>API: ensure user Runtime Session
+    API->>Store: 查询 user-scoped active lease
     alt 已有 active Runtime Session
-        Store-->>BFF: existing runtime_session_id
+        Store-->>API: existing runtime_session_id
+        API-->>BFF: runtime_status=ready
         BFF-->>UI: runtime_status=ready
     else 无 active Runtime Session
-        BFF->>AA: POST /runtimes/{runtime_name}/sessions-start
+        API->>AA: POST /runtimes/{runtime_name}/sessions-start
         alt pre-warm 成功
-            AA-->>BFF: runtime_session_id
-            BFF->>Store: 保存 user-scoped active lease
+            AA-->>API: runtime_session_id
+            API->>Store: 保存 user-scoped active lease
+            API-->>BFF: runtime_status=ready
             BFF-->>UI: runtime_status=ready
         else pre-warm 失败或超时
-            AA-->>BFF: error
+            AA-->>API: error
+            API-->>BFF: runtime_status=degraded
             BFF-->>UI: runtime_status=degraded
             Note over UI,AA: 不阻断聊天；/invocations implicit creation 作为 fallback
         end
@@ -635,35 +676,40 @@ sequenceDiagram
 
     User->>UI: 点击 New Chat
     UI->>BFF: POST /api/conversations
-    BFF->>Store: 创建 user-scoped Conversation
-    Store-->>BFF: conversation_id
+    BFF->>API: proxy authenticated request
+    API->>Store: 创建 user-scoped Conversation
+    Store-->>API: conversation_id
+    API-->>BFF: 返回 Conversation
     BFF-->>UI: 返回 Conversation
 ```
 
 ### 发送消息
 
+图类型：**Sequence Diagram（时序图）**。用于说明发送消息时 UI、BFF、
+AgentArts Runtime 和 FastAPI 的调用顺序。
+
 ```mermaid
 sequenceDiagram
     actor User as 用户
     participant UI as Web Chat
-    participant BFF as Lifecycle BFF / Invocation Proxy
-    participant Store as Conversation Store
+    participant BFF as Thin BFF / Invocation Proxy
+    participant API as Control Plane API
     participant Runtime as AgentArts Runtime
     participant Agent as FastAPI + LangGraph
 
     User->>UI: 在选中的 Conversation 中发送消息
     UI->>BFF: POST /invocations<br/>body: conversation_id
-    BFF->>Store: Conversation ownership + user active lease lookup
-    Store-->>BFF: active runtime_session_id
+    BFF->>API: resolve invocation context
+    API-->>BFF: conversation ok + active/fallback runtime_session_id
     BFF->>Runtime: 转发请求<br/>注入 runtime_session_id header
     Runtime->>Agent: invocation
-    Agent->>Agent: ownership check<br/>thread_id = user_id:conversation_id
+    Agent->>Agent: ownership check + message write<br/>thread_id = user_id:conversation_id
     Agent-->>UI: SSE response
 ```
 
-`Lifecycle BFF` 是逻辑角色，不预先锁定为 Cloudflare Pages Function 或 AgentArts
-Runtime 内部模块。API spike 与 Meta Implementation Plan 必须根据 Runtime Session
-创建语义、RDS 网络可达性和凭据边界决定其最终部署位置。
+目标方案中 `Lifecycle BFF` 收敛为 Cloudflare Pages Function Thin BFF。它只负责
+pre-Gateway proxy/header injection；Runtime lease、Conversation ownership、DB 访问和
+message write model 由 Service-owned Control Plane / FastAPI Service 负责。
 
 ### 删除或结束
 
@@ -842,7 +888,8 @@ Feature 上线前可能已经存在“只有 LangGraph Checkpoint、没有
 - [ ] Conversation list 只返回当前认证用户的数据；
 - [ ] 伪造其他用户的 ID 无法读取消息、Checkpoint 或控制 Runtime/Sandbox lifecycle；
 - [ ] 浏览器 bundle、localStorage 和网络响应中不出现平台管理凭据；
-- [ ] lifecycle BFF 只允许受支持的 Runtime 和操作，不能成为通用代理。
+- [ ] Thin BFF 只允许受支持的 Runtime 和操作，不能成为通用代理，且不直接访问
+  PostgreSQL/Hyperdrive 或写业务消息。
 
 ### AC8：E2E
 

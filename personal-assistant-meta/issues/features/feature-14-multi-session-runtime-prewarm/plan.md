@@ -21,8 +21,8 @@ LangGraph `thread_id`”的设计拆开，升级为：
    PostgreSQL-backed Conversation metadata 与 `conversation_messages` read model。
 
 因此本计划采用 staged implementation：先建立 DB schema migration 能力与
-Conversation read/write model，再实现 Service contract 与 Client remote thread UI，
-最后接入 pre-Gateway BFF 的 Runtime lifecycle/pre-warm。
+Service-owned Control Plane，再实现 Conversation read/write model 与 Client remote
+thread UI，最后接入 pre-Gateway Thin BFF 的 Runtime header injection。
 
 ## 0. Readiness Gates
 
@@ -32,65 +32,97 @@ Feature 14 final implementation。
 | Gate | 判定 | 要求 |
 |------|------|------|
 | G0 AgentArts lifecycle auth | Blocking | 用有效 CUSTOM_JWT 或目标 Runtime 支持的认证方式完成 `sessions-start` / `sessions-stop` live probe |
-| G1 BFF placement | Blocking | 决定 pre-Gateway lifecycle BFF 的部署位置及 server-side lease store |
+| G1 Control Plane placement | Blocking | 决定 Service-owned Control Plane 的部署位置；它必须可被 Thin BFF 在 AgentArts Gateway 前调用 |
 | G2 DB migration baseline | Blocking | 引入 application schema migration 机制，停止新增分散的启动时 DDL |
 | G3 API compatibility | Required | 明确 `/invocations` 从旧 body 到含 `conversation_id` body 的兼容窗口 |
 | G4 E2E fixtures | Required | 准备可 mock `sessions-start` failure/success 的 E2E harness |
 
 ### G1 推荐决策
 
-目标架构是独立 pre-Gateway BFF，直接访问 PostgreSQL 并调用 AgentArts Gateway：
+目标架构使用 **Cloudflare Pages Function as Thin BFF**，但它不直接访问 PostgreSQL，
+也不持有业务状态。业务 DB、Conversation ownership、Runtime lease state machine 和
+message write model 由 Service-owned Control Plane / FastAPI Service 负责。
+
+图类型：**Flowchart（组件/部署边界图）**。用于表达 Browser、Thin BFF、
+Control Plane、PostgreSQL 和 AgentArts Runtime 的边界关系，不是严格 UML
+Component Diagram。
 
 ```mermaid
 flowchart LR
-    Browser["Browser"] --> BFF["Lifecycle / Conversation BFF"]
-    BFF --> DB["PostgreSQL<br/>conversations + messages + leases"]
-    BFF --> Gateway["AgentArts Gateway"]
+    Browser["Browser"] --> BFF["Cloudflare Pages Function<br/>Thin BFF / Proxy"]
+    BFF -->|"ensure / invocation context"| CP["Service-owned Control Plane API"]
+    CP --> DB["PostgreSQL<br/>conversations + messages + leases"]
+    CP -->|"sessions-start / sessions-stop"| Gateway["AgentArts Gateway"]
+    BFF -->|"inject runtime_session_id header"| Gateway
     Gateway --> Runtime["FastAPI Agent Runtime"]
+    Runtime --> DB
 ```
 
-若当前迭代不新增独立 BFF deployable，可接受一个明确标注的 intermediate：
+Thin BFF 允许做：
 
-- Cloudflare Pages Function 继续作为 `/invocations` proxy 与 lifecycle BFF；
-- Runtime active lease 使用 Cloudflare-side server-side coordination；
-- Conversation API 暂时通过 Gateway custom route 进入 FastAPI，再访问 PostgreSQL；
-- 该方案保留“metadata API 仍依赖 Runtime path”的 trade-off，不作为最终架构终点。
+- same-origin proxy；
+- auth header forwarding；
+- 调用 Control Plane 获取 `runtime_session_id` / invocation context；
+- 注入 `X-Hw-Agentarts-Session-Id`；
+- 保持 SSE stream 转发。
+
+Thin BFF 禁止做：
+
+- 直接访问 PostgreSQL / Hyperdrive；
+- 维护 Runtime lease state machine；
+- 写 `conversation_messages`；
+- tee / 解析 Agent SSE；
+- 判断 Conversation ownership 的最终规则。
+
+`Cloudflare Pages Functions + Hyperdrive` 只能作为短期 spike/prototype shortcut，不进入
+Feature 14 target design。
 
 禁止方案：
 
 - 浏览器 localStorage 作为 Runtime lease source of truth；
 - FastAPI-only `ensureUserRuntimeSession()`；
+- BFF 直接读写业务数据库；
+- BFF tee SSE 并拼 assistant message；
 - 从 `runtime_session_id` 派生 `thread_id`；
 - 为每个 Conversation 创建独立 Runtime Session。
 
 ## 1. Target Runtime Flow
 
+图类型：**Sequence Diagram（时序图）**。用于说明 Thin BFF、Control Plane、
+AgentArts Gateway 和 FastAPI Runtime 的调用顺序。
+
 ```mermaid
 sequenceDiagram
     actor User as 用户
     participant UI as Web Chat
-    participant BFF as Pre-Gateway BFF
+    participant BFF as Thin BFF
+    participant CP as Control Plane API
     participant DB as PostgreSQL
     participant GW as AgentArts Gateway
     participant API as FastAPI Runtime
-    participant CP as LangGraph Checkpoint
+    participant LG as LangGraph Checkpoint
 
     User->>UI: 登录 / 进入 Chat
     UI->>BFF: POST /api/runtime-session/ensure
-    BFF->>DB: find or create user active Runtime lease
+    BFF->>CP: ensure user Runtime Session
+    CP->>DB: find or create user active Runtime lease
     alt no ready lease
-        BFF->>GW: POST /runtimes/{runtime}/sessions-start
-        GW-->>BFF: runtime_session_id
-        BFF->>DB: mark lease ready
+        CP->>GW: POST /runtimes/{runtime}/sessions-start
+        GW-->>CP: runtime_session_id
+        CP->>DB: mark lease ready
     end
+    CP-->>BFF: runtime_status + runtime_session_id
+    BFF-->>UI: runtime_status
 
     User->>UI: 发送消息
     UI->>BFF: POST /invocations {conversation_id, message, stream}
-    BFF->>DB: ownership + active runtime lease lookup
+    BFF->>CP: resolve invocation context
+    CP->>DB: ownership + active Runtime lease lookup
+    CP-->>BFF: runtime_session_id + conversation ok
     BFF->>GW: forward with X-Hw-Agentarts-Session-Id
     GW->>API: POST /invocations
-    API->>DB: validate conversation + write visible messages
-    API->>CP: thread_id = user_id:conversation_id
+    API->>DB: validate conversation + write user/assistant messages
+    API->>LG: thread_id = user_id:conversation_id
     API-->>UI: SSE / JSON response
 ```
 
@@ -144,7 +176,7 @@ schema readiness check 或调用 shared migrator，不再拥有独立 DDL。
 | `202607070002_conversations_and_messages.sql` | 新增 `conversations`、`conversation_messages`、message indexes |
 | `202607070003_runtime_and_sandbox_leases.sql` | 新增 `runtime_session_leases`、`sandbox_session_leases` 与 partial unique indexes |
 | `202607070004_legacy_checkpoint_migrations.sql` | 新增 legacy checkpoint migration marker |
-| `202607070005_idempotency_records.sql` | 可选，若 API create/start 需要通用 idempotency cache |
+| `202607070005_idempotency_records.sql` | 新增 idempotency records；覆盖 Conversation create 与 Runtime ensure/start retry |
 
 下面 SQL 示例使用 `gen_random_uuid()`。实现时必须先验证 RDS `pa_app` 角色能否使用该
 函数；若需要 extension，则 migration 显式执行 `CREATE EXTENSION IF NOT EXISTS pgcrypto`。
@@ -167,6 +199,8 @@ CREATE TABLE conversations (
     deleted_at TIMESTAMPTZ
 );
 
+CREATE UNIQUE INDEX uq_conversations_id_user
+    ON conversations (id, user_id);
 CREATE INDEX idx_conversations_user_status_updated
     ON conversations (user_id, status, updated_at DESC, id DESC);
 ```
@@ -178,7 +212,7 @@ Ownership query 一律使用 `(user_id, id)`。不允许只凭 `conversation_id`
 ```sql
 CREATE TABLE conversation_messages (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    conversation_id UUID NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    conversation_id UUID NOT NULL,
     user_id TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool')),
     content JSONB NOT NULL,
@@ -190,6 +224,9 @@ CREATE TABLE conversation_messages (
         CHECK (status IN ('pending', 'complete', 'failed')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    FOREIGN KEY (conversation_id, user_id)
+        REFERENCES conversations (id, user_id)
+        ON DELETE CASCADE,
     UNIQUE (conversation_id, sequence),
     UNIQUE (conversation_id, client_message_id)
         DEFERRABLE INITIALLY IMMEDIATE
@@ -206,7 +243,8 @@ CREATE INDEX idx_conversation_messages_user_created
 DTO 明确支持。
 
 `sequence` 由 Service 在同一 transaction 内对 Conversation row 加锁后分配，避免跨 Tab
-并发乱序。
+并发乱序。`user_id` 是 denormalized query/audit field，必须通过 composite FK 与 parent
+Conversation owner 保持一致。
 
 #### `runtime_session_leases`
 
@@ -214,31 +252,41 @@ DTO 明确支持。
 CREATE TABLE runtime_session_leases (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id TEXT NOT NULL,
-    runtime_session_id TEXT NOT NULL UNIQUE,
+    runtime_session_id TEXT UNIQUE,
     status TEXT NOT NULL
         CHECK (status IN (
-            'warming', 'ready', 'degraded', 'expired',
+            'starting', 'warming', 'ready', 'degraded', 'expired',
             'stopping', 'stopped', 'stop_failed'
         )),
     started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     ready_at TIMESTAMPTZ,
     last_used_at TIMESTAMPTZ,
     ended_at TIMESTAMPTZ,
+    lease_owner_token TEXT,
+    lease_expires_at TIMESTAMPTZ,
     failure_reason TEXT,
     metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (
+        (status = 'starting' AND runtime_session_id IS NULL)
+        OR (status <> 'starting' AND runtime_session_id IS NOT NULL)
+    )
 );
 
 CREATE UNIQUE INDEX uq_runtime_session_leases_active_user
     ON runtime_session_leases (user_id)
-    WHERE status IN ('warming', 'ready', 'degraded');
+    WHERE status IN ('starting', 'warming', 'ready', 'degraded');
 CREATE INDEX idx_runtime_session_leases_user_updated
     ON runtime_session_leases (user_id, updated_at DESC);
 ```
 
-Phase 1 只依赖 `user_id -> active runtime_session_id`。`started_at`、`ready_at`、
-`last_used_at`、`failure_reason` 同时写入，作为 Phase 2 cleanup/observability 的基础。
+Phase 1 只依赖 `user_id -> active runtime_session_id`。`starting` row 是 platform-generated
+Session ID 返回前的占位记录，用 `lease_owner_token` 与 `lease_expires_at` 支持 owner
+crash 后 stale takeover。`degraded` 状态必须写入 app-generated fallback
+`runtime_session_id`，让 Thin BFF 仍可注入 header 并依赖 AgentArts implicit creation。
+`started_at`、`ready_at`、`last_used_at`、`failure_reason` 同时写入，作为 Phase 2
+cleanup/observability 的基础。
 
 #### `sandbox_session_leases`
 
@@ -289,6 +337,31 @@ CREATE TABLE legacy_checkpoint_migrations (
 用于记录从旧 `agentarts-session-id` / Checkpoint 到 Conversation read model 的幂等
 backfill 状态。默认存 hash，不长期保存 raw legacy session id。
 
+#### `idempotency_records`
+
+```sql
+CREATE TABLE idempotency_records (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    idempotency_key TEXT NOT NULL,
+    request_hash TEXT NOT NULL,
+    status TEXT NOT NULL CHECK (status IN ('processing', 'succeeded', 'failed')),
+    response JSONB,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (user_id, operation, idempotency_key)
+);
+
+CREATE INDEX idx_idempotency_records_expires_at
+    ON idempotency_records (expires_at);
+```
+
+`POST /api/conversations` 和 Runtime ensure/start retry 必须使用 idempotency key 或
+server-generated equivalent，确保重复请求不会创建重复 Conversation 或重复占用
+Runtime lease。
+
 ### 2.5 Schema Rollout Strategy
 
 1. Deploy migration runner and baseline migration without changing runtime behavior.
@@ -315,6 +388,9 @@ Rollback policy:
 Feature 14 must not make existing user history disappear.
 
 Lazy migration flow:
+
+图类型：**Sequence Diagram（时序图）**。用于说明 legacy Checkpoint backfill 的
+调用顺序。
 
 ```mermaid
 sequenceDiagram
@@ -356,7 +432,7 @@ Agent execution state migration as best effort. Do not delete the old checkpoint
 | `app/db/migrator.py` | 新建 | migration runner |
 | `app/conversations/models.py` | 新建 | DTO/Pydantic models |
 | `app/conversations/store.py` | 新建 | psycopg-backed Conversation/message store |
-| `app/conversations/routes.py` | 新建 | FastAPI routes under `/invocations/conversations` |
+| `app/conversations/routes.py` | 新建 | Control Plane routes under `/api/conversations` or equivalent pre-Gateway service route |
 | `app/runtime_leases/store.py` | 新建 | PostgreSQL Runtime/Sandbox lease store |
 | `app/runtime_leases/policy.py` | 新建 | status machine, active lease rules |
 | `app/invocation_write_model.py` | 新建 | message insert + assistant completion projection |
@@ -395,6 +471,9 @@ thread_id = f"{user_id}:{conversation_id}"
 
 ### 4.3 Message Write Model
 
+FastAPI Service / Agent Runtime owns the message write model. Thin BFF must not tee SSE,
+parse Agent tokens, or write `conversation_messages`.
+
 For each invocation:
 
 1. Validate `(user_id, conversation_id)` ownership and status.
@@ -409,32 +488,29 @@ For each invocation:
 7. On error after partial stream, insert failed assistant message only if UI needs replay/debug;
    otherwise leave user message complete and surface error state.
 
-The browser is never allowed to POST assistant messages directly.
+The browser is never allowed to POST assistant messages directly. Thin BFF only proxies the
+stream and may surface transport errors; it does not decide message persistence.
 
 ### 4.4 Conversation API
 
-Service routes, if implemented inside Runtime path:
-
-```text
-POST   /invocations/conversations
-GET    /invocations/conversations
-GET    /invocations/conversations/{conversation_id}
-PATCH  /invocations/conversations/{conversation_id}
-DELETE /invocations/conversations/{conversation_id}
-GET    /invocations/conversations/{conversation_id}/messages
-POST   /invocations/conversations/migrate-legacy
-```
-
-Public BFF routes may expose cleaner same-origin aliases:
+Target Control Plane routes:
 
 ```text
 POST   /api/conversations
 GET    /api/conversations
+GET    /api/conversations/{conversation_id}
 PATCH  /api/conversations/{conversation_id}
 DELETE /api/conversations/{conversation_id}
 GET    /api/conversations/{conversation_id}/messages
 POST   /api/conversations/migrate-legacy
+POST   /api/runtime-session/ensure
+POST   /api/invocation-context
 ```
+
+These routes must be reachable by Thin BFF before the AgentArts Gateway invocation path.
+They may be implemented as a separate Control Plane deployable or a non-session-scoped service
+entrypoint, but not as Gateway custom routes that themselves require
+`X-Hw-Agentarts-Session-Id`.
 
 DTO rules:
 
@@ -447,23 +523,26 @@ DTO rules:
 
 ### 4.5 Runtime Lease Store
 
-If the selected BFF can access PostgreSQL, implement active Runtime lease in
-`runtime_session_leases`.
+Control Plane owns active Runtime lease state in `runtime_session_leases`.
+Thin BFF calls Control Plane and receives a `runtime_session_id`; it never reads or writes the
+lease table directly.
 
 `ensureUserRuntimeSession(user_id)` algorithm:
 
 1. Query active lease by `user_id`.
 2. If status is `ready` and not stale, return it.
-3. If no active lease, insert `warming` lease placeholder under partial unique constraint.
-4. Call `sessions-start` with short timeout outside long DB transaction.
-5. On success, update `runtime_session_id`, `status=ready`, `ready_at`, `last_used_at`.
-6. On timeout/error, set `status=degraded`, `failure_reason`; invocation can still use
-   implicit creation fallback.
-7. Concurrent callers that lose the insert race poll/read the existing active lease.
-
-If the selected BFF cannot access PostgreSQL, implement this algorithm in its server-side store
-and write PostgreSQL lease history later through a trusted Service endpoint. That is an
-intermediate trade-off and must be documented in the PR.
+3. If an active `starting` lease exists and `lease_expires_at > now()`, return `warming` and let
+   callers poll/bounded-wait.
+4. If no active lease or the active `starting` lease is stale, insert/take over a `starting`
+   placeholder with a fresh `lease_owner_token`.
+5. Call `sessions-start` with short timeout outside long DB transaction.
+6. On success, write returned `runtime_session_id`, `status=ready`, `ready_at`,
+   `last_used_at`.
+7. On timeout/error, generate a valid app fallback Runtime Session ID, write it with
+   `status=degraded` and `failure_reason`, and let invocation use AgentArts implicit creation.
+8. Concurrent callers that lose the insert/takeover race poll/read the existing active lease.
+9. Replacement after `expired`/`stopped`/`stop_failed` creates a new active lease; terminal
+   statuses do not participate in the partial unique index.
 
 ### 4.6 OpenAPI
 
@@ -476,29 +555,35 @@ uv run python scripts/generate_openapi.py
 
 Commit expected `openapi.json` diff with Service changes.
 
-## 5. BFF / Cloudflare Pages Function Plan
+## 5. Thin BFF / Cloudflare Pages Function Plan
 
 ### 5.1 Responsibilities
 
-The pre-Gateway BFF owns:
+The pre-Gateway BFF owns only the pre-Gateway proxy responsibilities:
 
-- `POST /api/runtime-session/ensure`；
-- runtime session lookup / creation / degraded fallback；
+- same-origin `/invocations` proxy；
+- forwarding auth and user headers to Control Plane and AgentArts Gateway；
+- calling Control Plane `POST /api/runtime-session/ensure` or `POST /api/invocation-context`；
 - injecting `X-Hw-Agentarts-Session-Id` before forwarding `/invocations`；
-- forwarding `Authorization` and trusted user headers；
-- preventing browser access to AgentArts management credentials；
-- mapping public `/api/conversations/*` to selected backend route。
+- preserving SSE streaming without parsing Agent payload；
+- preventing browser access to AgentArts management credentials。
+
+The BFF does not own:
+
+- PostgreSQL / Hyperdrive access；
+- Conversation CRUD semantics；
+- Runtime lease state machine；
+- message persistence；
+- SSE tee / assistant message assembly。
 
 ### 5.2 Required Environment
 
 | Env / Secret | 用途 |
 |--------------|------|
 | `AGENTARTS_INVOCATIONS_URL` | Existing Gateway invocation URL |
-| `AGENTARTS_RUNTIME_NAME` | Runtime name for lifecycle paths |
-| `AGENTARTS_BEARER_TOKEN` or equivalent token source | `sessions-start` / `sessions-stop` auth |
+| `CONTROL_PLANE_URL` | Service-owned Control Plane base URL |
+| `CONTROL_PLANE_BFF_SECRET` or equivalent service auth | BFF-to-Control-Plane authentication |
 | `RUNTIME_PREWARM_TIMEOUT_MS` | bounded pre-warm timeout |
-| `RUNTIME_IDLE_TIMEOUT_SECONDS` | idle cleanup policy |
-| BFF store binding | PostgreSQL access, Durable Object, or selected server-side store |
 
 ### 5.3 Proxy Changes
 
@@ -506,7 +591,7 @@ Current `functions/invocations/[[path]].js` forwards caller-provided
 `x-hw-agentarts-session-id`. Feature 14 changes this:
 
 1. Client stops sending Runtime Session header.
-2. BFF resolves active user Runtime Session server-side.
+2. BFF asks Control Plane for invocation context.
 3. BFF overwrites `x-hw-agentarts-session-id` on forwarded Gateway request.
 4. BFF refuses unsupported lifecycle/custom proxy paths.
 5. BFF preserves SSE streaming behavior and response headers.
@@ -515,7 +600,9 @@ Tests must cover:
 
 - forwarded header is BFF-owned；
 - stale client-provided runtime session header is ignored；
+- BFF does not access PostgreSQL or Hyperdrive；
 - pre-warm degraded still forwards with fallback session id；
+- BFF does not parse or tee SSE payload；
 - upstream errors are not retried after Agent may have received the invocation。
 
 ## 6. Client Implementation Plan
@@ -576,9 +663,9 @@ Required deployment changes:
 
 - Add Service DB migration command to deployment/runbook before Runtime deploy；
 - ensure production `POSTGRES_DSN` points to `pa_app` with `sslmode=require`；
-- configure BFF lifecycle secrets and runtime name；
-- if choosing independent BFF, add its deploy target and network/security runbook；
-- if choosing Cloudflare-side server-side store, document binding creation and cleanup；
+- add/deploy Service-owned Control Plane API reachable by Thin BFF before AgentArts Gateway；
+- configure BFF-to-Control-Plane auth and AgentArts Gateway target；
+- keep Hyperdrive out of the target path unless explicitly running a prototype shortcut；
 - do not place `.agentarts_config.yaml` in Infra ownership。
 
 Validation commands:
@@ -624,6 +711,8 @@ Mocking strategy:
 
 ## 9. Implementation Order
 
+图类型：**Gantt Chart（实施排期图）**。用于表达各阶段的先后依赖，不代表运行时调用。
+
 ```mermaid
 gantt
     title Feature 14 Implementation Order
@@ -632,25 +721,26 @@ gantt
 
     section Gates
     G0 lifecycle live spike              :g0, 2026-07-07, 1d
-    G1 BFF placement decision            :g1, after g0, 1d
+    G1 Control Plane placement decision  :g1, after g0, 1d
 
     section DB
     Migration runner + baseline          :db0, after g1, 1d
     Conversation/message schema          :db1, after db0, 1d
-    Lease/migration marker schema        :db2, after db1, 1d
+    Lease/idempotency/migration schema   :db2, after db1, 1d
 
     section Service
-    Conversation store/routes            :s1, after db1, 2d
-    Invocation contract + thread_id      :s2, after s1, 2d
-    Message projection + legacy backfill :s3, after s2, 2d
+    Control Plane conversation routes    :s1, after db1, 2d
+    Runtime lease ensure + lifecycle     :s2, after db2, 2d
+    Invocation contract + write model    :s3, after s1, 2d
+    Message projection + legacy backfill :s4, after s3, 2d
 
-    section BFF
-    Runtime ensure + header injection    :b1, after db2, 2d
+    section Thin BFF
+    Control Plane context + header       :b1, after s2, 2d
     Proxy routes + failure fallback      :b2, after b1, 1d
 
     section Client
     Remote thread adapter + sidebar      :c1, after s1, 3d
-    History hydration + migration helper :c2, after s3, 2d
+    History hydration + migration helper :c2, after s4, 2d
     Runtime status UI                    :c3, after b1, 1d
 
     section Validation
@@ -667,23 +757,28 @@ gantt
 - [ ] Move `oauth2_callback_states` DDL into baseline migration.
 - [ ] Add `conversations` and `conversation_messages` schema.
 - [ ] Add `runtime_session_leases`, `sandbox_session_leases`, migration marker schema.
-- [ ] Implement Conversation store and routes.
+- [ ] Add `idempotency_records` schema and store.
+- [ ] Implement Control Plane Conversation store and routes.
+- [ ] Implement Control Plane Runtime lease coordination.
+- [ ] Add AgentArts lifecycle start/stop API client and timeout handling in Control Plane.
+- [ ] Implement `POST /api/runtime-session/ensure` and `POST /api/invocation-context`.
+- [ ] Enforce idempotency for Conversation create and Runtime ensure/start retry.
 - [ ] Extend `/invocations` request schema with `conversation_id`.
 - [ ] Change LangGraph config to `thread_id = user_id:conversation_id`.
 - [ ] Keep Runtime Session ID only as AgentArts routing/session context.
-- [ ] Project user/assistant visible messages into `conversation_messages`.
+- [ ] Project user/assistant visible messages into `conversation_messages` inside FastAPI Runtime.
 - [ ] Implement legacy checkpoint migration/backfill.
 - [ ] Generate and commit `openapi.json`.
 - [ ] Add unit/integration tests for ownership, messages, leases and migrations.
 
 ### BFF / Client Functions
 
-- [ ] Implement `POST /api/runtime-session/ensure`.
-- [ ] Implement server-side active Runtime lease coordination.
+- [ ] Implement same-origin `POST /api/runtime-session/ensure` proxy to Control Plane.
+- [ ] Call Control Plane `POST /api/invocation-context` before `/invocations`.
 - [ ] Inject `x-hw-agentarts-session-id`; ignore stale client-provided values.
-- [ ] Add lifecycle start/stop API client and timeout handling.
-- [ ] Preserve SSE streaming behavior in proxy.
-- [ ] Add tests for success, degraded fallback, unsupported paths and auth forwarding.
+- [ ] Preserve SSE streaming behavior without parsing or teeing Agent payload.
+- [ ] Refuse unsupported management/custom proxy paths.
+- [ ] Add tests for success, degraded fallback, unsupported paths, no DB/Hyperdrive access and auth forwarding.
 
 ### Client
 
@@ -701,7 +796,7 @@ gantt
 - [ ] Add Feature 14 E2E suite.
 - [ ] Update specs and architecture docs listed in `issue.md`.
 - [ ] Update Service/Client README for new env and migration commands.
-- [ ] Update deployment runbook with DB migration step and BFF lifecycle secrets.
+- [ ] Update deployment runbook with DB migration step and Control Plane/BFF secrets.
 
 ## 11. Verification Commands
 
@@ -758,15 +853,16 @@ Manual staging:
 
 | Risk | Severity | Mitigation |
 |------|:------:|------------|
-| BFF cannot access chosen server-side lease store | High | G1 blocks implementation; choose independent BFF or Cloudflare-side durable store before coding |
+| Control Plane is not reachable before AgentArts Gateway invocation | High | G1 blocks implementation; deploy a Service-owned non-session-scoped Control Plane endpoint before coding BFF header injection |
 | Runtime lifecycle API auth remains blocked | High | G0 live spike with valid CUSTOM_JWT before freezing parser and status semantics |
 | DB migrations run concurrently from multiple Runtime instances | High | advisory lock + schema_migrations checksum |
 | Message read model drifts from Checkpoint | High | Service-only assistant writes + reconciliation/backfill tests |
+| Thin BFF grows business logic over time | Medium | contract tests forbid DB/Hyperdrive access, SSE tee, and Conversation/message writes in BFF |
 | Streaming response fails after user message persisted | Medium | mark run status and expose retry/error state; do not replay non-idempotent invocation automatically |
 | Same Conversation receives concurrent sends | High | per-conversation serialization or explicit 409 busy response |
 | Legacy checkpoint copy is hard | Medium | for UUID legacy sessions, reuse old UUID as `conversation_id` so thread key remains unchanged |
-| Metadata route through Runtime causes unwanted Runtime usage | Medium | document intermediate trade-off; target independent BFF |
-| Partial unique active lease blocks replacement after stop failure | Medium | active statuses limited to `warming`, `ready`, `degraded`; terminal/retry statuses do not block replacement |
+| Metadata route accidentally goes through Runtime and consumes Runtime Session | Medium | target Control Plane routes must be reachable outside Gateway custom routes; deployment smoke test verifies no `X-Hw-Agentarts-Session-Id` is required |
+| Active lease placeholder blocks replacement after owner crash or stop failure | Medium | `starting` uses `lease_owner_token`/`lease_expires_at` stale takeover; terminal statuses do not participate in the active partial unique index |
 | Client shows empty state before history loads | Medium | explicit hydration skeleton/error state and race cancellation |
 
 ## 13. Acceptance Criteria Mapping
@@ -775,10 +871,10 @@ Manual staging:
 |----|------------|
 | AC1 多 Conversation 列表与切换 | §4.4, §6, §8 |
 | AC2 ID 与 cardinality invariant | §1, §2.4, §4.2, §5 |
-| AC3 User Runtime pre-warm | §5, §8 |
+| AC3 User Runtime pre-warm | §4.5, §5, §8 |
 | AC4 失败降级 | §5.3, §8, §12 |
 | AC5 幂等与并发 | §2.4, §4.3, §4.5 |
-| AC6 删除与资源回收 | §4.4, §5, §10 |
+| AC6 删除与资源回收 | §4.4, §4.5, §10 |
 | AC7 安全与数据隔离 | §4.4, §5.3, §8 |
 | AC8 E2E | §8, §11 |
 | AC9 Message history 与 Checkpoint | §2.4, §3, §4.3, §6.1 |
@@ -789,6 +885,6 @@ Manual staging:
 | Question | Answer | 说明 |
 |----------|:------:|------|
 | Is it best practice? | Yes | 将 durable Conversation、Agent Checkpoint、Runtime lease 与 Sandbox lease 分层，避免把临时 execution resource 当业务状态。 |
-| Is it industry standard? | Yes | BFF 注入平台 header、PostgreSQL read model、server-side lease coordination、versioned DB migration 都是主流 production 模式。 |
+| Is it industry standard? | Yes | Thin BFF 注入平台 header、Service-owned PostgreSQL read model、Control Plane lease coordination、versioned DB migration 都是主流 production 模式。 |
 | Is it conventional? | Yes | 新成员可以按 Conversation API、message table、migration runner、runtime lease state machine 理解系统职责。 |
 | Is it modern? | Yes | durable checkpoint + UI read model + async pre-warm + resource lease + remote thread runtime 符合现代 Agent app 架构。 |
