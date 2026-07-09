@@ -1,9 +1,9 @@
 import {
   applyCallbackContextHeaders,
   applyExpiredCallbackContextCookies,
-  buildUpstreamUrl,
   getCallbackContextFromCookies,
-} from "../../invocations/[[path]].js";
+} from "../../_shared/callback-context.js";
+import { buildUpstreamUrl } from "../../_shared/agentarts-proxy.js";
 
 const CALLBACK_PUBLIC_PATH = "/auth/callback/m365-calendar";
 const CALLBACK_UPSTREAM_PREFIX = "auth/oauth2/callback/m365-calendar";

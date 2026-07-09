@@ -33,7 +33,7 @@ Frontend `/invocations/{suffix}` 作为隐式 contract。
 
 | 规则 | Frontend path | Cloudflare Function route | Gateway full Runtime path | Backend container path |
 |------|---------------|--------------------------|---------------------------|------------------------|
-| 对话根入口 | `/invocations` | `functions/invocations.js` → `functions/invocations/[[path]].js` | `/runtimes/personal-assistant/invocations` | `/invocations` |
+| 对话根入口 | `/invocations` | `functions/invocations.js` | `/runtimes/personal-assistant/invocations` | `/invocations` |
 | 显式 BFF public route | 明确设计的 public path，例如 `/auth/callback/m365-calendar` | 对应的 Pages Function 文件，例如 `functions/auth/callback/m365-calendar.js` | `/runtimes/personal-assistant/invocations/{suffix}` | `/{suffix}` |
 
 关键约束：
@@ -43,8 +43,8 @@ Frontend `/invocations/{suffix}` 作为隐式 contract。
   `/invocations`。
 - Gateway suffix `/runtimes/personal-assistant/invocations/{suffix}` 对应 Backend
   `/{suffix}`。
-- `/invocations/{suffix}` 是当前 `functions/invocations/[[path]].js` 的 proxy
-  implementation capability，不是 production public API contract。
+- Frontend `/invocations/{suffix}` 不作为 production public route。新增 production
+  public API 时必须有独立 Pages Function 文件显式声明。
 - `AGENTARTS_OAUTH_CALLBACK_URL` 不属于 production path mapping；它是 local-only
   direct upstream override。
 
@@ -52,7 +52,7 @@ Frontend `/invocations/{suffix}` 作为隐式 contract。
 
 | 能力 | Frontend path | Cloudflare Function route | Gateway full Runtime path | Backend container path |
 |------|---------------|--------------------------|---------------------------|------------------------|
-| Web Chat invocation | `POST /invocations` | `functions/invocations.js` → `functions/invocations/[[path]].js` | `POST /runtimes/personal-assistant/invocations` | `POST /invocations` |
+| Web Chat invocation | `POST /invocations` | `functions/invocations.js` | `POST /runtimes/personal-assistant/invocations` | `POST /invocations` |
 | Calendar OAuth callback | `GET /auth/callback/m365-calendar` | `functions/auth/callback/m365-calendar.js` | `GET /runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `GET /auth/oauth2/callback/m365-calendar` |
 
 以下 backend paths 不是 production public API entrypoint：
@@ -82,8 +82,9 @@ Calendar OAuth callback 的本地 full-flow 测试必须走 local Cloudflare Pag
 
 - Frontend URL 构造：`personal-assistant-client/src/lib/chat/chat-api-client.ts`
 - Vite proxy：`personal-assistant-client/vite.config.ts`
-- Cloudflare exact shim：`personal-assistant-client/functions/invocations.js`
-- Cloudflare shared proxy：`personal-assistant-client/functions/invocations/[[path]].js`
+- Cloudflare Web Chat proxy route：`personal-assistant-client/functions/invocations.js`
+- Cloudflare AgentArts proxy helper：`personal-assistant-client/functions/_shared/agentarts-proxy.js`
+- Cloudflare callback context helper：`personal-assistant-client/functions/_shared/callback-context.js`
 - Cloudflare OAuth callback BFF：`personal-assistant-client/functions/auth/callback/m365-calendar.js`
 - FastAPI routes：`personal-assistant-service/app/main.py`
 - Cloudflare runtime var：`personal-assistant-client/wrangler.toml`
