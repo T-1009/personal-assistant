@@ -587,13 +587,14 @@ GET    /api/conversations/{conversation_id}
 PATCH  /api/conversations/{conversation_id}
 DELETE /api/conversations/{conversation_id}
 GET    /api/conversations/{conversation_id}/messages
-POST   /api/conversations/migrate-legacy
-POST   /api/runtime-session/ensure
-POST   /api/invocation-context
+POST   /api/conversation-imports
+POST   /api/chat/readiness
+POST   /internal/chat/invocation-contexts
 ```
 
-Cloudflare Pages Function 可向浏览器提供 same-origin `/api/*` facade，但最终业务
-语义、DB 访问、ownership 和 idempotency 都由 Control Plane 执行。所有 endpoint
+Cloudflare Pages Function 必须为 production public API 提供显式 same-origin route，
+不能用 catch-all `/api/*` 隐式公开新 API。最终业务语义、DB 访问、ownership 和
+idempotency 都由 Control Plane 执行。所有 endpoint
 必须：
 
 - 从 Gateway 验证后的 identity 获取 `user_id`；
@@ -602,6 +603,8 @@ Cloudflare Pages Function 可向浏览器提供 same-origin `/api/*` facade，�
 - message history 返回 normalized message DTO 与 `next_cursor`，不得返回原始
   Checkpoint payload；
 - 对 Conversation create/delete 与 Runtime ensure/stop 使用 idempotency key；
+- 所有 Personal Assistant 自定义跨边界 JSON 字段使用 `snake_case`，包括 HTTP
+  JSON、SSE JSON 和 `postMessage` / `BroadcastChannel` envelope；
 - 不允许客户端指定或覆盖 `thread_id`；
 - 不返回 AgentArts 管理凭据。
 
@@ -659,7 +662,7 @@ sequenceDiagram
     participant AA as AgentArts Runtime
 
     User->>UI: 登录完成 / 进入 Chat
-    UI->>BFF: POST /api/runtime-session/ensure
+    UI->>BFF: POST /api/chat/readiness
     BFF->>API: ensure user Runtime Session
     API->>Store: 查询 user-scoped active lease
     alt 已有 active Runtime Session
@@ -786,8 +789,8 @@ Implementation 前必须在目标 Region `cn-southwest-2` 完成剩余 spike：
 
 - Conversation Metadata 查询必须以 Gateway 验证后的 `user_id` 为边界；
 - 客户端传入的 `conversation_id`、`runtime_session_id` 不构成授权；
-- lifecycle endpoint 必须验证 `{user_id, conversation_id}` ownership，并确认
-  Runtime Session 绑定到该 User、Sandbox Session 绑定到该 Conversation；
+- Conversation/Sandbox 相关 endpoint 必须验证 `{user_id, conversation_id}` ownership；
+  chat readiness / Runtime pre-warm 只按可信 `user_id` 管理 user-scoped Runtime lease；
 - `thread_id` 固定使用 `{user_id}:{conversation_id}`，防止跨用户碰撞；
 - 不在浏览器保存 AgentArts API Key、AK/SK 或 Workload Access Token。
 

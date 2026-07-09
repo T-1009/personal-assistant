@@ -103,20 +103,20 @@ sequenceDiagram
     participant LG as LangGraph Checkpoint
 
     User->>UI: 登录 / 进入 Chat
-    UI->>BFF: POST /api/runtime-session/ensure
-    BFF->>CP: ensure user Runtime Session
+    UI->>BFF: POST /api/chat/readiness
+    BFF->>CP: POST /api/chat/readiness
     CP->>DB: find or create user active Runtime lease
     alt no ready lease
         CP->>GW: POST /runtimes/{runtime}/sessions-start
         GW-->>CP: runtime_session_id
         CP->>DB: mark lease ready
     end
-    CP-->>BFF: runtime_status + runtime_session_id
+    CP-->>BFF: runtime_status
     BFF-->>UI: runtime_status
 
     User->>UI: 发送消息
     UI->>BFF: POST /invocations {conversation_id, message, stream}
-    BFF->>CP: resolve invocation context
+    BFF->>CP: POST /internal/chat/invocation-contexts
     CP->>DB: ownership + active Runtime lease lookup
     CP-->>BFF: runtime_session_id + conversation ok
     BFF->>GW: forward with X-Hw-Agentarts-Session-Id
@@ -358,9 +358,9 @@ CREATE INDEX idx_idempotency_records_expires_at
     ON idempotency_records (expires_at);
 ```
 
-`POST /api/conversations` 和 Runtime ensure/start retry 必须使用 idempotency key 或
-server-generated equivalent，确保重复请求不会创建重复 Conversation 或重复占用
-Runtime lease。
+`POST /api/conversations`、`POST /api/chat/readiness` 和 internal Runtime start retry
+必须使用 idempotency key 或 server-generated equivalent，确保重复请求不会创建重复
+Conversation 或重复占用 Runtime lease。
 
 ### 2.5 Schema Rollout Strategy
 
@@ -399,7 +399,7 @@ sequenceDiagram
     participant DB as PostgreSQL
     participant CP as LangGraph Checkpoint
 
-    UI->>API: POST /api/conversations/migrate-legacy {legacy_session_id}
+    UI->>API: POST /api/conversation-imports {legacy_session_id}
     API->>API: trusted user_id from Gateway / BFF
     API->>CP: read state for old thread_id = user_id:legacy_session_id
     alt messages exist
@@ -432,7 +432,8 @@ Agent execution state migration as best effort. Do not delete the old checkpoint
 | `app/db/migrator.py` | 新建 | migration runner |
 | `app/conversations/models.py` | 新建 | DTO/Pydantic models |
 | `app/conversations/store.py` | 新建 | psycopg-backed Conversation/message store |
-| `app/conversations/routes.py` | 新建 | Control Plane routes under `/api/conversations` or equivalent pre-Gateway service route |
+| `app/conversations/routes.py` | 新建 | Control Plane public API routes under `/api/conversations` and `/api/conversation-imports` |
+| `app/chat_readiness/routes.py` | 新建 | Control Plane public `/api/chat/readiness` and internal `/internal/chat/*` routes |
 | `app/runtime_leases/store.py` | 新建 | PostgreSQL Runtime/Sandbox lease store |
 | `app/runtime_leases/policy.py` | 新建 | status machine, active lease rules |
 | `app/invocation_write_model.py` | 新建 | message insert + assistant completion projection |
@@ -493,23 +494,52 @@ stream and may surface transport errors; it does not decide message persistence.
 
 ### 4.4 Conversation API
 
-Target Control Plane routes:
+Feature 14 API design follows
+[`architecture/api.md`](../../../architecture/api.md):
 
-```text
-POST   /api/conversations
-GET    /api/conversations
-GET    /api/conversations/{conversation_id}
-PATCH  /api/conversations/{conversation_id}
-DELETE /api/conversations/{conversation_id}
-GET    /api/conversations/{conversation_id}/messages
-POST   /api/conversations/migrate-legacy
-POST   /api/runtime-session/ensure
-POST   /api/invocation-context
-```
+- Browser-facing public paths use product semantics and must not expose `runtime`,
+  `gateway`, `proxy` or `function` as path segments.
+- Existing `POST /invocations` remains the only public conversation invocation entry.
+- All Personal Assistant-owned cross-boundary JSON fields use `snake_case`, including HTTP
+  JSON, SSE JSON payloads and browser `postMessage` / `BroadcastChannel` envelopes.
+- Every production public route requires an explicit Cloudflare Pages Function file; no
+  catch-all `/api/*` or `/invocations/{suffix}` route becomes an implicit public contract.
+
+Target browser-facing routes:
+
+| Method + Frontend path | Purpose |
+|------------------------|---------|
+| `POST /invocations` | Existing chat invocation entry; body includes `conversation_id` |
+| `POST /api/conversations` | Create a Conversation |
+| `GET /api/conversations` | List Conversations with cursor pagination |
+| `GET /api/conversations/{conversation_id}` | Read one Conversation |
+| `PATCH /api/conversations/{conversation_id}` | Rename/archive/unarchive one Conversation |
+| `DELETE /api/conversations/{conversation_id}` | Delete one Conversation |
+| `GET /api/conversations/{conversation_id}/messages` | Read visible message history |
+| `POST /api/conversation-imports` | Import/migrate one legacy local session into Conversation model |
+| `POST /api/chat/readiness` | Ensure chat is ready; starts bounded Runtime pre-warm without exposing Runtime ID |
+
+Thin BFF to Control Plane internal routes:
+
+| Method + internal path | Caller | Purpose |
+|------------------------|--------|---------|
+| `POST /internal/chat/invocation-contexts` | Thin BFF only | Validate `conversation_id`, resolve active/fallback `runtime_session_id` for Gateway header injection |
+| `DELETE /internal/chat/runtime-leases/current` | Thin BFF / cleanup job only | Stop or mark the current user Runtime lease for logout/idle cleanup |
+
+Planned production path mapping:
+
+| 能力 | Frontend path | Cloudflare Function route | Gateway full Runtime path | Backend / Control Plane path |
+|------|---------------|---------------------------|---------------------------|------------------------------|
+| Web Chat invocation | `POST /invocations` | `functions/invocations.js` | `POST /runtimes/personal-assistant/invocations` | `POST /invocations` |
+| Conversation collection | `GET/POST /api/conversations` | `functions/api/conversations.js` | N/A, pre-Gateway Control Plane direct upstream | `GET/POST /api/conversations` |
+| Conversation item | `GET/PATCH/DELETE /api/conversations/{conversation_id}` | `functions/api/conversations/[conversation_id].js` | N/A, pre-Gateway Control Plane direct upstream | `GET/PATCH/DELETE /api/conversations/{conversation_id}` |
+| Conversation messages | `GET /api/conversations/{conversation_id}/messages` | `functions/api/conversations/[conversation_id]/messages.js` | N/A, pre-Gateway Control Plane direct upstream | `GET /api/conversations/{conversation_id}/messages` |
+| Legacy Conversation import | `POST /api/conversation-imports` | `functions/api/conversation-imports.js` | N/A, pre-Gateway Control Plane direct upstream | `POST /api/conversation-imports` |
+| Chat readiness / pre-warm | `POST /api/chat/readiness` | `functions/api/chat/readiness.js` | N/A, pre-Gateway Control Plane direct upstream | `POST /api/chat/readiness` |
 
 These routes must be reachable by Thin BFF before the AgentArts Gateway invocation path.
-They may be implemented as a separate Control Plane deployable or a non-session-scoped service
-entrypoint, but not as Gateway custom routes that themselves require
+The `/api/*` browser-facing routes may be implemented as a separate Control Plane deployable
+or a non-session-scoped service entrypoint, but not as Gateway custom routes that themselves require
 `X-Hw-Agentarts-Session-Id`.
 
 DTO rules:
@@ -517,6 +547,10 @@ DTO rules:
 - list uses cursor pagination；
 - messages use stable ascending `sequence` order；
 - message response includes `message_id`, `role`, `content`, `created_at`, `next_cursor`；
+- Conversation response includes `conversation_id`, `title`, `status`, `created_at`,
+  `updated_at`；
+- chat readiness response includes `runtime_status` (`warming` / `ready` / `degraded`)
+  and never returns `runtime_session_id` to the browser；
 - raw Checkpoint payload is never returned；
 - deleted/archived status is enforced server-side；
 - all routes derive `user_id` from trusted Gateway/BFF identity, never from request body。
@@ -563,7 +597,9 @@ The pre-Gateway BFF owns only the pre-Gateway proxy responsibilities:
 
 - same-origin `/invocations` proxy；
 - forwarding auth and user headers to Control Plane and AgentArts Gateway；
-- calling Control Plane `POST /api/runtime-session/ensure` or `POST /api/invocation-context`；
+- proxying explicit public `/api/conversations`, `/api/conversation-imports` and
+  `/api/chat/readiness` routes to Control Plane；
+- calling Control Plane `POST /internal/chat/invocation-contexts` before `/invocations`；
 - injecting `X-Hw-Agentarts-Session-Id` before forwarding `/invocations`；
 - preserving SSE streaming without parsing Agent payload；
 - preventing browser access to AgentArts management credentials。
@@ -587,13 +623,14 @@ The BFF does not own:
 
 ### 5.3 Proxy Changes
 
-Current `functions/invocations/[[path]].js` forwards caller-provided
+Current `functions/invocations.js` forwards caller-provided
 `x-hw-agentarts-session-id`. Feature 14 changes this:
 
 1. Client stops sending Runtime Session header.
-2. BFF asks Control Plane for invocation context.
+2. BFF asks Control Plane `POST /internal/chat/invocation-contexts` for invocation context.
 3. BFF overwrites `x-hw-agentarts-session-id` on forwarded Gateway request.
-4. BFF refuses unsupported lifecycle/custom proxy paths.
+4. BFF refuses unsupported lifecycle/custom proxy paths and does not expose catch-all
+   `/api/*` or `/invocations/{suffix}` production routes.
 5. BFF preserves SSE streaming behavior and response headers.
 
 Tests must cover:
@@ -619,7 +656,7 @@ Replace `useLocalRuntime(chatAdapter)` with assistant-ui remote thread integrati
 `src/lib/chat/session.ts` becomes legacy migration helper only:
 
 - read old `agentarts-session-id` once；
-- call `POST /api/conversations/migrate-legacy`；
+- call `POST /api/conversation-imports`；
 - clear or mark migrated after server success；
 - never use it as new Runtime Session source of truth。
 
@@ -648,7 +685,7 @@ Design constraints:
 |------|------|
 | `src/lib/conversations/api.ts` | 新建 Conversation API client |
 | `src/lib/conversations/adapter.ts` | 新建 assistant-ui remote adapter |
-| `src/lib/runtime-session/api.ts` | 新建 pre-warm ensure client |
+| `src/lib/chat/readiness-api.ts` | 新建 chat readiness / pre-warm status API client |
 | `src/components/chat/ConversationSidebar.tsx` | 新建/改造 |
 | `src/components/RuntimeProvider.tsx` | 改为 remote thread runtime |
 | `src/lib/chat/chat-api-client.ts` | body 增加 `conversation_id`，删除 client Runtime Session header |
@@ -761,7 +798,8 @@ gantt
 - [ ] Implement Control Plane Conversation store and routes.
 - [ ] Implement Control Plane Runtime lease coordination.
 - [ ] Add AgentArts lifecycle start/stop API client and timeout handling in Control Plane.
-- [ ] Implement `POST /api/runtime-session/ensure` and `POST /api/invocation-context`.
+- [ ] Implement `POST /api/chat/readiness`, `POST /api/conversation-imports` and
+      `POST /internal/chat/invocation-contexts`.
 - [ ] Enforce idempotency for Conversation create and Runtime ensure/start retry.
 - [ ] Extend `/invocations` request schema with `conversation_id`.
 - [ ] Change LangGraph config to `thread_id = user_id:conversation_id`.
@@ -773,8 +811,9 @@ gantt
 
 ### BFF / Client Functions
 
-- [ ] Implement same-origin `POST /api/runtime-session/ensure` proxy to Control Plane.
-- [ ] Call Control Plane `POST /api/invocation-context` before `/invocations`.
+- [ ] Implement explicit same-origin `/api/conversations`, `/api/conversation-imports` and
+      `/api/chat/readiness` Functions; do not add catch-all `/api/*`.
+- [ ] Call Control Plane `POST /internal/chat/invocation-contexts` before `/invocations`.
 - [ ] Inject `x-hw-agentarts-session-id`; ignore stale client-provided values.
 - [ ] Preserve SSE streaming behavior without parsing or teeing Agent payload.
 - [ ] Refuse unsupported management/custom proxy paths.
