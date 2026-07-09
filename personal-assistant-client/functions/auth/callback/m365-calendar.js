@@ -50,7 +50,7 @@ function bffFailurePage(requestUrl) {
     null;
   const payload = {
     type: "m365-calendar-auth",
-    requestId: state ?? "",
+    request_id: state ?? "",
     provider: "m365-calendar-provider",
     status: "failed",
     message: "日历授权服务暂时不可用，请返回聊天窗口后重新发起授权。",

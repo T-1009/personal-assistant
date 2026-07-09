@@ -125,8 +125,17 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
 
 - FastAPI/Pydantic model 使用 PascalCase，并按用途加 `Request`、`Response`、
   `Event`、`Error` 后缀，例如 `InvocationRequest`、`OAuth2CallbackResponse`。
-- 新增 browser-facing JSON 字段默认使用 lowerCamelCase。Python 代码可用 snake_case
-  属性并通过 Pydantic alias 暴露 lowerCamelCase。
+- 新增 Personal Assistant first-party HTTP JSON 字段默认使用 Python `snake_case`，
+  例如 `conversation_id`、`client_message_id`、`runtime_status`、`next_cursor`。
+  这里的 HTTP JSON 指 FastAPI/OpenAPI 暴露的 request/response body；它是 Service
+  contract，不随 React component 或 TypeScript UI state 的命名习惯改变。
+- Personal Assistant 自己定义的跨边界 payload 字段统一使用 `snake_case`。这包括
+  HTTP JSON request/response、SSE JSON event，以及浏览器窗口、tab、popup 或组件之间
+  通过 `postMessage` / `BroadcastChannel` 传递的 envelope，例如 `request_id`。
+- Frontend 内部 domain object、component props 或 store state 可以使用 `camelCase`，
+  但转换应放在 API adapter 层完成。
+- 不引入全局 Pydantic `alias_generator` 作为默认行为。若某个新 contract 确实需要
+  偏离 `snake_case`，必须在对应 issue/ADR 中说明原因、调用方和兼容性影响。
 - 已存在 contract 保持兼容，例如 `POST /invocations` 的 `message`、`stream`、
   `response` 不为了统一命名而重命名。
 - 外部协议或平台传入字段保持对方定义，例如 OAuth2/AgentArts callback query 中的

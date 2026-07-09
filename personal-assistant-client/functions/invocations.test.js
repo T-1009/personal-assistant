@@ -256,7 +256,7 @@ describe("Cloudflare Pages invocations proxy", () => {
       "pa_oauth2_callback_auth=; Max-Age=0",
     );
     expect(text).toContain("授权失败");
-    expect(text).toContain('"requestId":"signed-state"');
+    expect(text).toContain('"request_id":"signed-state"');
     expect(text).toContain('"status":"failed"');
     expect(text).toContain('BroadcastChannel("m365-calendar-auth")');
   });
