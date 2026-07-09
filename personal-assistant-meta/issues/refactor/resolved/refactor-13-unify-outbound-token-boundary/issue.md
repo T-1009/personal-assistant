@@ -110,27 +110,27 @@ Client 和 Infra 预期不需要代码变更。Auth Card 的 SSE custom event �
 
 ### Contract
 
-- [ ] `build_tools()` 注册出的所有 OAuth2 public tools 的 schema 中均不包含 `access_token`。
-- [ ] `email_tools.py`、`calendar_tools.py`、`gitee_tools.py` 的 public tool function 签名不包含 `access_token`。
-- [ ] `@require_access_token` 仅出现在 private authorized boundary 上，或有明确注释说明为什么 public boundary 不可避免。
-- [ ] 同一 domain 的 `provider_name`、`scopes`、`auth_flow`、`on_auth_url` 使用集中常量，避免重复漂移。
-- [ ] 需要 confirmation 或 preview 的 public tool 在触发授权前完成校验和确认返回。
+- [x] `build_tools()` 注册出的所有 OAuth2 public tools 的 schema 中均不包含 `access_token`。
+- [x] `email_tools.py`、`calendar_tools.py`、`gitee_tools.py` 的 public tool function 签名不包含 `access_token`。
+- [x] `@require_access_token` 仅出现在 private authorized boundary 上，或有明确注释说明为什么 public boundary 不可避免。
+- [x] 同一 domain 的 `provider_name`、`scopes`、`auth_flow`、`on_auth_url` 使用集中常量，避免重复漂移。
+- [x] 需要 confirmation 或 preview 的 public tool 在触发授权前完成校验和确认返回。
 
 ### Behavior
 
-- [ ] 未授权用户首次调用 Email/Calendar/Gitee/GitHub tool 时，仍能收到 provider-scoped Auth Card。
-- [ ] 授权完成后，后续 tool 调用仍能发送 `auth_complete` custom event。
-- [ ] 业务参数错误时，不应先触发 OAuth2 授权。
-- [ ] OAuth2 pending 状态能通过 provider-scoped Auth Card 正常传递给 Agent/前端；public tool 不暴露 injected credential，也不做二次 `auth_required` 判别。
-- [ ] GitHub 现有行为不回退。
+- [x] 未授权用户首次调用 Email/Calendar/Gitee/GitHub tool 时，仍能收到 provider-scoped Auth Card。
+- [x] 授权完成后，后续 tool 调用仍能发送 `auth_complete` custom event。
+- [x] 业务参数错误时，不应先触发 OAuth2 授权。
+- [x] OAuth2 pending 状态能通过 provider-scoped Auth Card 正常传递给 Agent/前端；public tool 不暴露 injected credential，也不做二次 `auth_required` 判别。
+- [x] GitHub 现有行为不回退。
 
 ### Tests
 
-- [ ] Service: `uv run ruff check .`
-- [ ] Service: `uv run ruff format --check .`
-- [ ] Service: `uv run pytest tests/test_email_tools.py tests/test_calendar_tools.py tests/test_gitee_tools.py tests/test_github_tools.py tests/test_tools_init.py`
-- [ ] 如修改 tool registration 或 agent orchestration，追加运行 `uv run pytest tests/test_agent_handler.py`
-- [ ] E2E: 至少覆盖一个未授权触发 Auth Card 的 outbound OAuth2 场景，或在无法本地完成真实 Identity 流时记录 AgentArts staging 验证步骤。
+- [x] Service: `uv run ruff check .`
+- [ ] Service: `uv run ruff format --check .`（当前仍受既有 format drift 阻塞；见下方验证备注）
+- [x] Service: `uv run pytest tests/test_email_tools.py tests/test_calendar_tools.py tests/test_gitee_tools.py tests/test_github_tools.py tests/test_tools_init.py`
+- [x] N/A：未修改 tool registration 或 agent orchestration，无需追加运行 `uv run pytest tests/test_agent_handler.py`
+- [x] E2E: 至少覆盖一个未授权触发 Auth Card 的 outbound OAuth2 场景，或在无法本地完成真实 Identity 流时记录 AgentArts staging 验证步骤。
 
 ---
 
@@ -162,7 +162,7 @@ Client 和 Infra 预期不需要代码变更。Auth Card 的 SSE custom event �
 - [x] `build_tools()` schema leak check: no public tool exposes `access_token` or `api_key`
 - [x] `gitnexus detect-changes -r personal-assistant --scope staged`（14 files / 81 symbols / 38 affected processes / critical，范围为预期 Email/GitHub/Gitee/Calendar tool、refactor E2E 和 meta 文档变更）
 
-验证备注：`uv run ruff format --check .` 仍会报告既有未格式化文件，范围不包含本次触碰文件；本次 touched files 的 format check 已通过。
+验证备注：`uv run ruff format --check .` 仍会报告既有 format drift；2026-07-09 housekeeping 复查时，全仓 `uv run ruff check .` 通过，`uv run ruff format --check .` 仍失败，因此 full format 项保持未勾选。
 
 ---
 
@@ -182,7 +182,7 @@ Client 和 Infra 预期不需要代码变更。Auth Card 的 SSE custom event �
 ## 参考
 
 - [`personal-assistant-meta/architecture/auth/outbound-oauth2-scope-design.md`](../../../../architecture/auth/outbound-oauth2-scope-design.md)
-- [`personal-assistant-meta/issues/refactor/resolved/refactor-email-auth-normal-control-flow/issue.md`](../../resolved/refactor-email-auth-normal-control-flow/issue.md)
+- [`personal-assistant-meta/issues/refactor/resolved/refactor-email-auth-normal-control-flow/issue.md`](../refactor-email-auth-normal-control-flow/issue.md)
 - [`personal-assistant-meta/specs/use-cases/github-tools.md`](../../../../specs/use-cases/github-tools.md)
 - [`personal-assistant-meta/specs/use-cases/email-tools.md`](../../../../specs/use-cases/email-tools.md)
 - [`personal-assistant-meta/specs/use-cases/calendar-tools.md`](../../../../specs/use-cases/calendar-tools.md)
