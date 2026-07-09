@@ -10,7 +10,7 @@ Current route contract after refactor-7:
 
 Test scenarios (all subprocess-based, using ServiceProcess from conftest.py):
   1. Health check endpoint unchanged — GET /ping → 200 {"status": "ok"}
-  2. Sync invocation endpoint unchanged — POST /invocations → non-5xx response
+  2. Sync invocation content negotiation happens before the Agent boundary
   3. SSE streaming on /invocations — POST /invocations {"stream": true} → SSE response
   4. Old route /api/chat/stream returns 404 — GET /api/chat/stream?q=test → 404
   5. Playground redirect at new path /invocations/playground.
@@ -74,31 +74,27 @@ class TestScenario2SyncInvocation:
         yield sp.url
         sp.stop()
 
-    @pytest.mark.skip(
-        reason=(
-            "Valid non-streaming invocation currently reaches the real LLM "
-            "boundary; rewrite with a mocked agent before enabling in smoke."
-        )
-    )
-    def test_invocations_responds_without_crash(self, service_url):
-        """POST /invocations with valid message returns a response.
+    def test_invocations_sync_rejects_sse_accept_before_agent(self, service_url):
+        """Sync POST /invocations rejects an incompatible Accept header.
 
-        With a dummy API key, the LLM call may fail (500), but the endpoint
-        plumbing must still work — we verify it responds without crashing the
-        process and returns expected status codes (200 or 500 for LLM failure).
+        This keeps smoke deterministic: it proves the live route is present and
+        validates sync response negotiation without crossing into the real Agent
+        or LLM boundary.
         """
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "你好"},
             headers={
+                "Accept": "text/event-stream",
                 "X-HW-AgentGateway-User-Id": "test-user",
                 "x-hw-agentarts-session-id": "e2e-test-session",
             },
         )
-        assert resp.status_code in (200, 500), (
-            f"POST /invocations got unexpected status: {resp.status_code}\n"
-            f"Response: {resp.text[:200]}"
+        assert resp.status_code == 406, (
+            f"Expected 406 before Agent boundary, got {resp.status_code}: "
+            f"{resp.text[:200]}"
         )
+        assert resp.json()["detail"] == "Accept header must allow application/json"
 
     def test_invocations_empty_message_returns_400(self, service_url):
         """POST /invocations with empty message returns 400."""

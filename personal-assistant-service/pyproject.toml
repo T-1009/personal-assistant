@@ -37,8 +37,8 @@ target-version = "py312"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 markers = [
-    "feature: feature-level service tests migrated from implementation plans",
-    "integration: service tests that cross module or external API boundaries",
+    "integration: service tests across modules, FastAPI app, or mocked external boundaries",
+    "contract: stable API, configuration, logging, or tool schema contracts",
     "regression: service regression tests for fixed bugs",
     "slow: tests that take longer than 5 seconds",
 ]

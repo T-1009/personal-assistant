@@ -7,7 +7,7 @@ import pytest
 SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.feature
+@pytest.mark.contract
 class TestAgentBundleContract:
     def test_agent_bundle_ttl_is_discoverable_and_defaulted(self):
         env_catalog = (SERVICE_DIR / ".env.example").read_text(encoding="utf-8")

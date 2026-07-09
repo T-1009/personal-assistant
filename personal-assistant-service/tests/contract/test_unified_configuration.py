@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.feature
+@pytest.mark.contract
 class TestUnifiedConfigurationContract:
     def test_env_example_is_the_only_root_application_config_catalog(self):
         assert (SERVICE_DIR / ".env.example").is_file()

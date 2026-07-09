@@ -8,7 +8,7 @@ import yaml
 SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.feature
+@pytest.mark.contract
 class TestStructuredLoggingContract:
     def test_dev_and_prod_logging_configs_exist(self):
         assert (SERVICE_DIR / "config/logging.dev.yaml").is_file()
