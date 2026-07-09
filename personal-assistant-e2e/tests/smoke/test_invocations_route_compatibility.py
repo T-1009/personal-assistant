@@ -10,10 +10,10 @@ Current route contract after refactor-7:
 
 Test scenarios (all subprocess-based, using ServiceProcess from conftest.py):
   1. Health check endpoint unchanged — GET /ping → 200 {"status": "ok"}
-  2. Sync invocation endpoint unchanged — POST /invocations → non-5xx response
+  2. Sync invocation content negotiation happens before the Agent boundary
   3. SSE streaming on /invocations — POST /invocations {"stream": true} → SSE response
   4. Old route /api/chat/stream returns 404 — GET /api/chat/stream?q=test → 404
-  5. Playground redirect at new path /invocations/playground — GET /invocations/playground → redirect
+  5. Playground redirect at new path /invocations/playground.
 """
 
 import httpx
@@ -21,6 +21,8 @@ import pytest
 
 # Import shared ServiceProcess fixture from e2e conftest.
 from conftest import ServiceProcess
+
+pytestmark = [pytest.mark.smoke]
 
 # ── Scenario 1: Health check endpoint unchanged ──────────────────────────
 
@@ -72,25 +74,27 @@ class TestScenario2SyncInvocation:
         yield sp.url
         sp.stop()
 
-    def test_invocations_responds_without_crash(self, service_url):
-        """POST /invocations with valid message returns a response.
+    def test_invocations_sync_rejects_sse_accept_before_agent(self, service_url):
+        """Sync POST /invocations rejects an incompatible Accept header.
 
-        With a dummy API key, the LLM call may fail (500), but the endpoint
-        plumbing must still work — we verify it responds without crashing the
-        process and returns expected status codes (200 or 500 for LLM failure).
+        This keeps smoke deterministic: it proves the live route is present and
+        validates sync response negotiation without crossing into the real Agent
+        or LLM boundary.
         """
         resp = httpx.post(
             f"{service_url}/invocations",
             json={"message": "你好"},
             headers={
+                "Accept": "text/event-stream",
                 "X-HW-AgentGateway-User-Id": "test-user",
                 "x-hw-agentarts-session-id": "e2e-test-session",
             },
         )
-        assert resp.status_code in (200, 500), (
-            f"POST /invocations got unexpected status: {resp.status_code}\n"
-            f"Response: {resp.text[:200]}"
+        assert resp.status_code == 406, (
+            f"Expected 406 before Agent boundary, got {resp.status_code}: "
+            f"{resp.text[:200]}"
         )
+        assert resp.json()["detail"] == "Accept header must allow application/json"
 
     def test_invocations_empty_message_returns_400(self, service_url):
         """POST /invocations with empty message returns 400."""
@@ -117,7 +121,8 @@ class TestScenario2SyncInvocation:
             },
         )
         assert resp.status_code == 400, (
-            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: "
+            f"{resp.text[:200]}"
         )
 
 
@@ -198,7 +203,8 @@ class TestScenario3SSEStreamingNewPath:
             },
         )
         assert resp.status_code == 400, (
-            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: "
+            f"{resp.text[:200]}"
         )
 
 
@@ -231,18 +237,14 @@ class TestScenario4OldRouteReturns404:
     def test_old_api_chat_stream_not_found_detail(self, service_url):
         """The 404 response should be a FastAPI 'Not Found' JSON error."""
         resp = httpx.get(f"{service_url}/api/chat/stream?q=test")
-        assert resp.status_code == 404, (
-            f"Expected 404, got {resp.status_code}"
-        )
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
         # FastAPI returns JSON detail for 404
         content_type = resp.headers.get("content-type", "")
         assert "application/json" in content_type, (
             f"Expected JSON error response, got content-type: {content_type}"
         )
         data = resp.json()
-        assert "detail" in data, (
-            f"Expected 'detail' in 404 error response: {data}"
-        )
+        assert "detail" in data, f"Expected 'detail' in 404 error response: {data}"
 
     def test_new_route_works_old_route_404(self, service_url):
         """POST /invocations stream works while old child routes are 404."""
@@ -298,7 +300,7 @@ class TestScenario5PlaygroundRedirectNewPath:
         sp.stop()
 
     def test_playground_new_path_redirects(self, service_url):
-        """GET /invocations/playground returns 307 redirect to /invocations/playground/."""
+        """GET /invocations/playground redirects to the trailing-slash path."""
         resp = httpx.get(
             f"{service_url}/invocations/playground", follow_redirects=False
         )

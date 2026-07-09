@@ -1,4 +1,4 @@
-"""E2E tests for Feature 4 — Inbound Identity: unauthorized / fail-closed behavior.
+"""Service integration tests for Feature 4 — unauthorized / fail-closed behavior.
 
 Tests the fail-closed security model:
 - Missing X-HW-AgentGateway-User-Id header → 401
@@ -43,7 +43,7 @@ def auth_test_app():
 # ── Scenario 1: Missing header → 401 ─────────────────────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_without_user_id_header_returns_401(auth_test_app):
     """POST /invocations without X-HW-AgentGateway-User-Id header returns 401."""
     resp = auth_test_app.post(
@@ -57,9 +57,7 @@ def test_invocations_without_user_id_header_returns_401(auth_test_app):
     )
     data = resp.json()
     assert "detail" in data, f"Expected 'detail' in 401 response: {data}"
-    assert (
-        "Missing X-HW-AgentGateway-User-Id header" in data["detail"]
-    ), (
+    assert "Missing X-HW-AgentGateway-User-Id header" in data["detail"], (
         "Expected 'Missing X-HW-AgentGateway-User-Id header' "
         f"in detail, got: {data['detail']}"
     )
@@ -68,7 +66,7 @@ def test_invocations_without_user_id_header_returns_401(auth_test_app):
 # ── Scenario 2: Empty header → 401 ───────────────────────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_empty_user_id_header_returns_401(auth_test_app):
     """POST /invocations with empty X-HW-AgentGateway-User-Id returns 401."""
     resp = auth_test_app.post(
@@ -85,7 +83,7 @@ def test_invocations_with_empty_user_id_header_returns_401(auth_test_app):
     )
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_whitespace_user_id_header_returns_401(auth_test_app):
     """POST /invocations with whitespace-only X-HW-AgentGateway-User-Id returns 401."""
     resp = auth_test_app.post(
@@ -105,7 +103,7 @@ def test_invocations_with_whitespace_user_id_header_returns_401(auth_test_app):
 # ── Scenario 3: Valid header continues past auth ─────────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_valid_header_does_not_fail_auth(auth_test_app):
     """POST /invocations with valid X-HW-AgentGateway-User-Id passes auth check.
 
@@ -135,7 +133,7 @@ def test_invocations_with_valid_header_does_not_fail_auth(auth_test_app):
 # ── Scenario 4: extract_gateway_user_id direct testing ───────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 class TestExtractGatewayUserId:
     """Direct unit tests for extract_gateway_user_id function."""
 
@@ -147,8 +145,8 @@ class TestExtractGatewayUserId:
         from fastapi import Request
 
         mock_request = MagicMock(spec=Request)
-        mock_request.headers.get.side_effect = (
-            lambda key, default="": headers.get(key, default)
+        mock_request.headers.get.side_effect = lambda key, default="": headers.get(
+            key, default
         )
         return mock_request
 
@@ -172,8 +170,9 @@ class TestExtractGatewayUserId:
 
     def test_extract_raises_401_when_header_missing(self):
         """extract_gateway_user_id raises HTTPException(401) when header missing."""
-        from app.auth import extract_gateway_user_id
         from fastapi import HTTPException
+
+        from app.auth import extract_gateway_user_id
 
         mock_req = self._make_mock_request({})
         with pytest.raises(HTTPException) as exc_info:
@@ -185,8 +184,9 @@ class TestExtractGatewayUserId:
 
     def test_extract_raises_401_when_header_empty(self):
         """extract_gateway_user_id raises HTTPException(401) when header is empty."""
-        from app.auth import extract_gateway_user_id
         from fastapi import HTTPException
+
+        from app.auth import extract_gateway_user_id
 
         mock_req = self._make_mock_request({"X-HW-AgentGateway-User-Id": ""})
         with pytest.raises(HTTPException) as exc_info:
@@ -195,8 +195,9 @@ class TestExtractGatewayUserId:
 
     def test_extract_raises_401_when_header_whitespace_only(self):
         """extract_gateway_user_id raises 401 when header is whitespace."""
-        from app.auth import extract_gateway_user_id
         from fastapi import HTTPException
+
+        from app.auth import extract_gateway_user_id
 
         mock_req = self._make_mock_request({"X-HW-AgentGateway-User-Id": "   "})
         with pytest.raises(HTTPException) as exc_info:

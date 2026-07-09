@@ -24,7 +24,7 @@ import httpx
 import pytest
 
 # Project paths
-PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent.parent
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
 CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 
@@ -114,13 +114,18 @@ def _stop_process(proc: subprocess.Popen):
 
 # ── Pytest markers ─────────────────────────────────────────────────────
 
-pytestmark = [pytest.mark.feature, pytest.mark.slow]
+pytestmark = [
+    pytest.mark.feature,
+    pytest.mark.browser,
+    pytest.mark.slow,
+]
 
 
 # ── App Module Route Interceptor (bypass MSAL auth) ────────────────────
 # In dev mode, Vite serves transformed App.tsx at /src/App.tsx.
 # We intercept this request and replace useIsAuthenticated() with true
 # so ChatPage always renders without MSAL authentication.
+
 
 def _handle_app_route(route):
     """Intercept Vite-served App.tsx to bypass MSAL auth check."""
@@ -159,6 +164,7 @@ def _ensure_deps():
     # Check Playwright browsers (quick launch/close to verify)
     try:
         from playwright.sync_api import sync_playwright
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             browser.close()
@@ -273,7 +279,8 @@ class TestScenario1FullReset:
                 # Wait for ChatPage (ResetSessionButton visible after hydration)
                 page.wait_for_selector('[aria-label="新对话"]', timeout=15000)
 
-                # 2. The composer should be visible in ChatPage (assistant-ui uses textarea)
+                # 2. The composer should be visible in ChatPage.
+                # assistant-ui uses textarea for the composer.
                 composer_sel = "textarea.aui-composer-input"
                 page.wait_for_selector(composer_sel, timeout=10000)
                 page.wait_for_timeout(2000)
@@ -288,7 +295,9 @@ class TestScenario1FullReset:
 
                 # 4. Click the Reset button by aria-label
                 reset_btn = page.get_by_label("新对话")
-                assert reset_btn.is_visible(), "Reset button (aria-label='新对话') not visible"
+                assert reset_btn.is_visible(), (
+                    "Reset button (aria-label='新对话') not visible"
+                )
                 reset_btn.click()
 
                 # 5. Wait for the confirmation dialog
@@ -297,7 +306,9 @@ class TestScenario1FullReset:
                 assert dialog.is_visible(), "Confirmation dialog did not appear"
 
                 # Verify dialog content
-                assert dialog.get_by_text("新对话").count() > 0, "Dialog title '新对话' not found"
+                assert dialog.get_by_text("新对话").count() > 0, (
+                    "Dialog title '新对话' not found"
+                )
                 assert "开始全新对话" in dialog.text_content(), (
                     f"Dialog description not found in: {dialog.text_content()}"
                 )
@@ -369,7 +380,8 @@ class TestScenario2LocalStorageKeyDeletion:
                     "() => localStorage.getItem('agentarts-session-id')"
                 )
                 assert session_id is not None, (
-                    "Expected 'agentarts-session-id' in localStorage after sending a message"
+                    "Expected 'agentarts-session-id' in localStorage after "
+                    "sending a message"
                 )
                 assert isinstance(session_id, str) and len(session_id) > 0, (
                     f"Session ID should be a non-empty string, got: {session_id!r}"
@@ -387,7 +399,8 @@ class TestScenario2LocalStorageKeyDeletion:
                     "() => localStorage.getItem('agentarts-session-id')"
                 )
                 assert session_id_after is None, (
-                    f"Expected 'agentarts-session-id' to be null after reset, got: {session_id_after!r}"
+                    "Expected 'agentarts-session-id' to be null after reset, "
+                    f"got: {session_id_after!r}"
                 )
 
             finally:
@@ -505,7 +518,9 @@ class TestScenario4ComposerCleared:
 
                 # 3. Verify text is in composer (textarea → use input_value)
                 composer_text = composer.input_value()
-                assert len(composer_text) > 0, "Composer should contain typed text before reset"
+                assert len(composer_text) > 0, (
+                    "Composer should contain typed text before reset"
+                )
 
                 # 4. Click Reset → Confirm
                 page.get_by_label("新对话").click()
@@ -518,7 +533,8 @@ class TestScenario4ComposerCleared:
                 composer = page.locator("textarea.aui-composer-input").first
                 composer_text_after = composer.input_value()
                 assert composer_text_after == "", (
-                    f"Composer should be empty after reset, got: {composer_text_after!r}"
+                    "Composer should be empty after reset, "
+                    f"got: {composer_text_after!r}"
                 )
 
             finally:
@@ -614,9 +630,12 @@ class TestScenario6PrivacyMode:
 
             # Collect console errors
             console_errors = []
-            page.on("console", lambda msg: (
-                console_errors.append(msg.text) if msg.type == "error" else None
-            ))
+            page.on(
+                "console",
+                lambda msg: (
+                    console_errors.append(msg.text) if msg.type == "error" else None
+                ),
+            )
 
             try:
                 # Bypass MSAL auth via route interception
@@ -625,7 +644,11 @@ class TestScenario6PrivacyMode:
                 # 1. Before navigating, inject a script that breaks localStorage
                 page.add_init_script("""
                     Object.defineProperty(window, 'localStorage', {
-                        get() { throw new Error('localStorage is not available (privacy mode)'); },
+                        get() {
+                            throw new Error(
+                                'localStorage is not available (privacy mode)'
+                            );
+                        },
                         configurable: true
                     });
                 """)
@@ -665,12 +688,9 @@ class TestScenario6PrivacyMode:
                 #    handleConfirm logs "Failed during session reset" for
                 #    non-localStorage failures, which we expect in privacy mode.
                 unexpected = [
-                    e for e in console_errors
-                    if "Failed during session reset" not in e
+                    e for e in console_errors if "Failed during session reset" not in e
                 ]
-                assert len(unexpected) == 0, (
-                    f"Unexpected console errors: {unexpected}"
-                )
+                assert len(unexpected) == 0, f"Unexpected console errors: {unexpected}"
 
             finally:
                 browser.close()

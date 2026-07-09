@@ -1,4 +1,4 @@
-"""E2E tests for Feature 10a — Outbound Email: Microsoft 365 邮件处理.
+"""Service integration tests for Feature 10a — Outbound Email.
 
 Tests email conversation flows through the POST /invocations endpoint
 with a mocked AgentHandler that returns canned email-specific responses.
@@ -318,7 +318,7 @@ def email_test_client():
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_list_inbox_non_streaming(email_test_client):
     """E2E-01: POST /invocations with "帮我看看收件箱" (stream=false).
 
@@ -361,7 +361,7 @@ def test_list_inbox_non_streaming(email_test_client):
     )
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_list_inbox_sse_streaming(email_test_client):
     """E2E-02: POST /invocations stream=true — SSE format + email content.
 
@@ -439,7 +439,7 @@ def test_list_inbox_sse_streaming(email_test_client):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_search_emails(email_test_client):
     """E2E-03: POST /invocations with search query returns search results."""
     client, fake_handler = email_test_client
@@ -473,7 +473,7 @@ def test_search_emails(email_test_client):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_reply_to_email_guard_confirm_flow(email_test_client):
     """E2E-04: Reply Guard — preview then confirm → sent.
 
@@ -525,7 +525,7 @@ def test_reply_to_email_guard_confirm_flow(email_test_client):
     assert len(fake_handler.handle_calls) == 2
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_reply_to_email_cancel_flow(email_test_client):
     """E2E-05: Reply Guard — preview then cancel → not sent.
 
@@ -562,7 +562,7 @@ def test_reply_to_email_cancel_flow(email_test_client):
     assert "已回复" not in response2, "Cancellation must NOT contain '已回复'"
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_direct_send_shows_preview(email_test_client):
     """E2E-06: Direct send request shows preview, NOT "已发送".
 
@@ -603,7 +603,7 @@ def test_direct_send_shows_preview(email_test_client):
 # ═══════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_cross_session_no_reauth(email_test_client):
     """E2E-07: Two sessions, same user — both return email content.
 
@@ -652,7 +652,7 @@ def test_cross_session_no_reauth(email_test_client):
     assert fake_handler.handle_calls[1][2] == "session-b"
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_cross_session_independent_state(email_test_client):
     """E2E-08: Session A cancels reply; Session B queries inbox normally.
 
@@ -732,8 +732,8 @@ def _make_passthrough_decorator(*args, **kwargs):
 def _import_email_tools():
     """Import email_tools with agentarts.sdk mocked.
 
-    agentarts-sdk is NOT installed in the E2E venv, so we mock it at the
-    sys.modules level before the module is imported.
+    The real SDK is not needed for these tool contract checks, so the
+    decorator boundary is mocked before the module is imported.
     """
     import sys
     from unittest.mock import MagicMock
@@ -771,7 +771,7 @@ def _mock_graph_client():
     return mock_client
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_email_public_tool_signatures_exclude_access_token():
     """E2E-11: public Email tool signatures expose business parameters only."""
     import inspect
@@ -790,7 +790,7 @@ def test_email_public_tool_signatures_exclude_access_token():
     ]
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_send_email_calls_m365_request_boundary():
     """E2E-12: send_email calls the M365 request boundary directly."""
     email_tools = _import_email_tools()
@@ -820,7 +820,7 @@ def test_send_email_calls_m365_request_boundary():
     assert call_args.args[:2] == ("POST", "/sendMail")
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_send_email_input_validation():
     """E2E-13: send_email validates 'to' before request boundary.
 
@@ -848,7 +848,7 @@ def test_send_email_input_validation():
     request.assert_not_awaited()
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_reply_to_email_input_validation():
     """E2E-14: reply_to_email validates input before request boundary.
 
@@ -905,7 +905,7 @@ def test_reply_to_email_input_validation():
     request.assert_not_awaited()
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_search_emails_sse_streaming(email_test_client):
     """E2E-15: SSE streaming search returns valid SSE with search results.
 

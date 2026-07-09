@@ -1,4 +1,4 @@
-"""E2E tests for refactored email OAuth2 auth flow using normal control flow.
+"""Service integration tests for email OAuth2 auth SSE control flow.
 
 Tests the ContextVar-isolated message_queue flow for delivering auth URLs
 via SSE system_message events, replacing the old exception-based
@@ -65,8 +65,7 @@ AUTH_MESSAGE_CONTENT = (
 
 
 class FakeAuthHandler:
-    """Fake AgentHandler that supports the adispatch_custom_event flow.
-    """
+    """Fake AgentHandler that supports the adispatch_custom_event flow."""
 
     def __init__(self):
         self.handle_calls: list[tuple] = []
@@ -75,14 +74,18 @@ class FakeAuthHandler:
         self._tokens: list[str] = ["你好", "，", "世界", "！"]
 
     async def handle(
-        self, message: str, user_id: str = "anonymous",
+        self,
+        message: str,
+        user_id: str = "anonymous",
         session_id: str | None = None,
     ) -> str:
         self.handle_calls.append((message, user_id, session_id))
         return f"Response to: '{message}'"
 
     async def handle_stream(
-        self, message: str, user_id: str = "anonymous",
+        self,
+        message: str,
+        user_id: str = "anonymous",
         session_id: str | None = None,
     ):
         self.stream_calls.append((message, user_id, session_id))
@@ -96,9 +99,9 @@ class FakeAuthHandler:
             yield f"data: {json.dumps(payload)}\n\n"
 
         for _idx, token in enumerate(self._tokens):
-            yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
+            yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
 
-        yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
+        yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -121,8 +124,10 @@ def auth_test_client(auth_fake_handler: FakeAuthHandler):
     FastAPI stack — routing, SSE formatting, header handling — with
     our controlled fake handler.
     """
-    with patch("app.llm_config.init_chat_model", return_value=MagicMock()), \
-         patch("app.agent_handler.AgentHandler", return_value=auth_fake_handler):
+    with (
+        patch("app.llm_config.init_chat_model", return_value=MagicMock()),
+        patch("app.agent_handler.AgentHandler", return_value=auth_fake_handler),
+    ):
         from app.main import app
 
         # Ensure the handler is set (lifespan will call get_agent_handler
@@ -141,6 +146,7 @@ async def async_auth_client(auth_fake_handler: FakeAuthHandler):
     Must be async because ASGITransport requires httpx.AsyncClient.
     """
     import app.main as app_main
+
     with patch.object(app_main, "AgentHandler", return_value=auth_fake_handler):
         from app.main import app
 
@@ -148,7 +154,8 @@ async def async_auth_client(auth_fake_handler: FakeAuthHandler):
 
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(
-            transport=transport, base_url="http://test",
+            transport=transport,
+            base_url="http://test",
         ) as client:
             yield client, auth_fake_handler
 
@@ -158,7 +165,7 @@ async def async_auth_client(auth_fake_handler: FakeAuthHandler):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_auth_url_delivered_via_sse_system_message(auth_test_client):
     """E2E-AUTH-01: Auth URL delivered as SSE system_message event.
 
@@ -222,7 +229,7 @@ def test_auth_url_delivered_via_sse_system_message(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_system_message_appears_before_tokens(auth_test_client):
     """E2E-AUTH-02: system_message appears BEFORE token events in SSE stream.
 
@@ -267,7 +274,7 @@ def test_system_message_appears_before_tokens(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_system_message_fields_complete(auth_test_client):
     """E2E-AUTH-03: system_message event has all required fields.
 
@@ -319,7 +326,7 @@ def test_system_message_fields_complete(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_auth_stream_ends_with_done_true(auth_test_client):
     """E2E-AUTH-04: After system_message + tokens, stream ends with done: true.
 
@@ -354,7 +361,9 @@ def test_auth_stream_ends_with_done_true(auth_test_client):
     # Verify there are token events and system_message events before done
     token_events = [e for e in events if "token" in e and not e.get("done")]
     system_events = [e for e in events if "system_message" in e]
-    assert len(token_events) >= 1, f"Expected at least 1 token event, got events: {events}"
+    assert len(token_events) >= 1, (
+        f"Expected at least 1 token event, got events: {events}"
+    )
     assert len(system_events) >= 1, "Expected at least 1 system_message event"
 
 
@@ -363,7 +372,7 @@ def test_auth_stream_ends_with_done_true(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_normal_streaming_has_no_system_message(auth_test_client):
     """E2E-AUTH-05: Normal streaming without auth — no system_message events.
 
@@ -382,7 +391,9 @@ def test_normal_streaming_has_no_system_message(auth_test_client):
     assert resp.status_code == 200
 
     events = _parse_sse_events(resp.text)
-    assert len(events) >= 2, f"Expected at least 2 events (token + done), got {len(events)}"
+    assert len(events) >= 2, (
+        f"Expected at least 2 events (token + done), got {len(events)}"
+    )
 
     # No system_message events
     system_events = [e for e in events if "system_message" in e]
@@ -392,7 +403,9 @@ def test_normal_streaming_has_no_system_message(auth_test_client):
 
     # Should have token events and a done event
     token_events = [e for e in events if "token" in e and not e.get("done")]
-    assert len(token_events) >= 1, f"Expected at least 1 token event, got events: {events}"
+    assert len(token_events) >= 1, (
+        f"Expected at least 1 token event, got events: {events}"
+    )
 
     # Last event should be done: true
     assert events[-1].get("done") is True, (
@@ -408,7 +421,7 @@ def test_normal_streaming_has_no_system_message(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_non_streaming_path_unaffected(auth_test_client):
     """E2E-AUTH-06: Non-streaming path returns normal JSON response.
 
@@ -453,7 +466,7 @@ def test_non_streaming_path_unaffected(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_queue_lifecycle_no_cross_request_leakage(auth_test_client):
     """E2E-AUTH-07: Queue cleanup prevents cross-request leakage.
 
@@ -475,8 +488,9 @@ def test_queue_lifecycle_no_cross_request_leakage(auth_test_client):
     assert resp1.status_code == 200
     events1 = _parse_sse_events(resp1.text)
     system_events_r1 = [e for e in events1 if "system_message" in e]
+    event_keys_r1 = [list(e.keys()) for e in events1]
     assert len(system_events_r1) >= 1, (
-        f"Round 1: Expected system_message event, got events: {[list(e.keys()) for e in events1]}"
+        f"Round 1: Expected system_message event, got events: {event_keys_r1}"
     )
 
     # ── Round 2: Normal request (no auth) ──
@@ -496,6 +510,3 @@ def test_queue_lifecycle_no_cross_request_leakage(auth_test_client):
 
     # Both calls tracked
     assert len(fake_handler.stream_calls) == 2
-
-
-

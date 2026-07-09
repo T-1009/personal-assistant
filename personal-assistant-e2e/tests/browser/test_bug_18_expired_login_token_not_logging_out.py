@@ -24,7 +24,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 _IS_WINDOWS = os.name == "nt"
 
-pytestmark = [pytest.mark.regression, pytest.mark.slow]
+pytestmark = [pytest.mark.regression, pytest.mark.browser, pytest.mark.slow]
 
 
 class ClientDevProcess:

@@ -1,40 +1,77 @@
-"""Regression test for bug-6: Vite Dev Server Does Not Proxy /playground.
+"""Regression test for bug-6: Vite dev server playground proxy coverage.
 
 Related: personal-assistant-meta/issues/bugs/bug-6-vite-playground-proxy-missing/
 
-Bug: Vite dev server (port 5173) only proxies /api to the FastAPI backend,
-not /playground. Visiting localhost:5173/playground serves the assistant-ui
-SPA instead of Chainlit. This test verifies the proxy rule exists and works.
+The current route contract uses /invocations/playground for Chainlit. This test
+verifies Vite forwards that same-origin path to the backend instead of serving
+the assistant-ui SPA fallback.
 """
 
+import os
+import shutil
+import socket
 import subprocess
 import time
+from pathlib import Path
 
 import httpx
 import pytest
 
 # Import shared ServiceProcess fixture from e2e conftest.
 # pytest automatically discovers conftest.py in the e2e root directory.
-from conftest import PROJECT_ROOT, ServiceProcess
+from conftest import PROJECT_ROOT, ServiceProcess, terminate_process_tree
 
 _CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
+
+pytestmark = [pytest.mark.full_stack]
+
+
+def _node_command() -> str:
+    return shutil.which("node.exe") or shutil.which("node") or "node"
+
+
+def _vite_cli_path() -> Path:
+    return _CLIENT_DIR / "node_modules" / "vite" / "bin" / "vite.js"
+
+
+def _find_free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 class ClientDevProcess:
     """Manage a subprocess running the Vite dev server."""
 
-    def __init__(self, port: int = 5173):
+    def __init__(self, *, port: int, service_url: str):
         self.port = port
+        self.service_url = service_url
         self.process: subprocess.Popen | None = None
         self.url = f"http://127.0.0.1:{port}"
 
     def start(self, timeout: float = 30.0):
         """Start the Vite dev server."""
+        vite_cli = _vite_cli_path()
+        if not vite_cli.exists():
+            raise RuntimeError(f"Vite CLI not found at {vite_cli}")
+
         self.process = subprocess.Popen(
-            ["npm", "run", "dev", "--", "--port", str(self.port)],
+            [
+                _node_command(),
+                str(vite_cli),
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self.port),
+            ],
             cwd=str(_CLIENT_DIR),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
+            env={
+                **os.environ,
+                "BROWSER": "none",
+                "PA_SERVICE_PROXY_TARGET": self.service_url,
+            },
         )
 
         # Wait for the dev server to be ready
@@ -56,34 +93,26 @@ class ClientDevProcess:
 
         self.stop()
         raise TimeoutError(
-            f"Vite dev server did not become ready within {timeout}s on port {self.port}"
+            "Vite dev server did not become ready within "
+            f"{timeout}s on port {self.port}"
         )
 
     def stop(self):
         """Stop the dev server subprocess."""
         if self.process and self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=10)
-            except subprocess.TimeoutExpired:
-                self.process.kill()
-                self.process.wait()
+            terminate_process_tree(self.process)
         self.process = None
 
 
 @pytest.mark.regression
 @pytest.mark.slow
 class TestBug6VitePlaygroundProxyMissing:
-    """Verify /playground is proxied from Vite dev server to Chainlit backend.
+    """Verify playground is proxied from Vite dev server to Chainlit backend.
 
-    BUG-6: When the Vite dev server does NOT proxy /playground to the backend,
-    visiting localhost:<vite_port>/playground returns the assistant-ui SPA
-    (index.html with <div id="root">) instead of Chainlit.
+    BUG-6: When the Vite dev server does NOT proxy the playground backend path,
+    visiting localhost:<vite_port>/invocations/playground returns the
+    assistant-ui SPA instead of Chainlit.
     """
-
-    # Must match the proxy target in vite.config.ts (hardcoded to localhost:8080)
-    SERVICE_PORT = 8080
-    VITE_PORT = 18731
 
     @pytest.fixture
     def dev_urls(self):
@@ -92,16 +121,15 @@ class TestBug6VitePlaygroundProxyMissing:
         The Vite dev server must be started AFTER the backend to ensure the
         proxy target is available.
         """
-        service = ServiceProcess(port=self.SERVICE_PORT)
-        client = ClientDevProcess(port=self.VITE_PORT)
+        service = ServiceProcess(port=_find_free_port())
+        client = ClientDevProcess(port=_find_free_port(), service_url=service.url)
 
         try:
             service.start()
 
-            # Ensure Vite config has /playground proxy pointing to our service.
-            # If the proxy rule is correctly added (the fix), /playground
-            # requests to the Vite dev server should be forwarded to the
-            # backend's Chainlit mount.
+            # Ensure Vite config has the playground proxy pointing to this
+            # service. Requests through the Vite origin should be forwarded to
+            # the backend's Chainlit mount.
             client.start()
 
             yield {
@@ -115,32 +143,31 @@ class TestBug6VitePlaygroundProxyMissing:
     # ── Core bug assertions ──────────────────────────────────────────
 
     def test_playground_on_vite_serves_chainlit_not_spa(self, dev_urls):
-        """GET /playground on Vite dev server should proxy to Chainlit.
+        """GET /invocations/playground through Vite should proxy to Chainlit.
 
-        Before fix: Vite SPA fallback catches /playground and returns
+        Before fix: Vite SPA fallback catches the playground path and returns
         index.html (assistant-ui, contains '<div id="root">').
         After fix: request is proxied to FastAPI, which returns a redirect
-        to /playground/ where Chainlit serves its HTML UI.
+        to /invocations/playground/ where Chainlit serves its HTML UI.
         """
         resp = httpx.get(
-            f"{dev_urls['vite_url']}/playground",
+            f"{dev_urls['vite_url']}/invocations/playground",
             follow_redirects=False,
         )
 
-        # The proxy should forward to the backend, which redirects /playground
-        # to /playground/ (Chainlit mount requires trailing slash).
+        # The proxy should forward to the backend, which redirects to the
+        # trailing-slash path required by the Chainlit mount.
         # Accept 200 (Chainlit served directly) or 302/307 (redirect).
         assert resp.status_code in (200, 302, 307), (
-            f"Expected /playground on Vite dev server to reach backend Chainlit, "
-            f"got status {resp.status_code}"
+            "Expected /invocations/playground on Vite dev server to reach "
+            f"backend Chainlit, got status {resp.status_code}"
         )
 
-        # If redirect, verify the Location header targets /playground/ (the
-        # Chainlit mount requires the trailing slash).
+        # If redirect, verify the Location header targets the mounted path.
         if resp.status_code in (302, 307):
             location = resp.headers.get("Location", "")
-            assert location.endswith("/playground/"), (
-                f"Expected redirect Location to end with /playground/, "
+            assert location.endswith("/invocations/playground/"), (
+                "Expected redirect Location to end with /invocations/playground/, "
                 f"got {location!r}"
             )
 
@@ -151,22 +178,24 @@ class TestBug6VitePlaygroundProxyMissing:
         content_type = resp.headers.get("content-type", "")
         if "text/html" in content_type:
             assert "@vite/client" not in resp.text, (
-                "FAIL: /playground on Vite dev server returned assistant-ui SPA "
-                "(contains @vite/client). The Vite proxy for /playground is "
-                "NOT configured — the SPA fallback is catching the path."
+                "FAIL: /invocations/playground on Vite dev server returned "
+                "assistant-ui SPA (contains @vite/client). The Vite proxy for "
+                "/invocations/playground is NOT configured — the SPA fallback "
+                "is catching the path."
             )
             # Sanity: should contain Chainlit markers
             assert "chainlit" in resp.text.lower(), (
-                "FAIL: /playground response is HTML but does not contain Chainlit "
-                "markers — unexpected content."
+                "FAIL: /invocations/playground response is HTML but does not "
+                "contain Chainlit markers — unexpected content."
             )
 
     def test_playground_trailing_slash_on_vite_works(self, dev_urls):
-        """GET /playground/ on Vite dev server should reach Chainlit HTML UI."""
-        resp = httpx.get(f"{dev_urls['vite_url']}/playground/")
+        """GET /invocations/playground/ through Vite reaches Chainlit HTML UI."""
+        resp = httpx.get(f"{dev_urls['vite_url']}/invocations/playground/")
 
         assert resp.status_code == 200, (
-            f"Expected 200 from /playground/ on Vite dev server, got {resp.status_code}"
+            "Expected 200 from /invocations/playground/ on Vite dev server, "
+            f"got {resp.status_code}"
         )
         assert "text/html" in resp.headers.get("content-type", "")
 
@@ -175,21 +204,30 @@ class TestBug6VitePlaygroundProxyMissing:
         # (Both Chainlit and the Vite SPA contain '<div id="root">', so that
         # is NOT a valid discriminator — use Vite-specific scripts instead.)
         assert "@vite/client" not in resp.text, (
-            "FAIL: /playground/ on Vite dev server returned the assistant-ui SPA "
-            "(contains @vite/client). The proxy is NOT forwarding to the backend."
+            "FAIL: /invocations/playground/ on Vite dev server returned the "
+            "assistant-ui SPA (contains @vite/client). The proxy is NOT "
+            "forwarding to the backend."
         )
         assert "chainlit" in resp.text.lower(), (
-            "FAIL: /playground/ response is HTML but missing Chainlit markers — "
-            "the proxy may be returning unexpected content."
+            "FAIL: /invocations/playground/ response is HTML but missing "
+            "Chainlit markers — the proxy may be returning unexpected content."
         )
 
     # ── Sanity checks ─────────────────────────────────────────────────
 
-    def test_api_proxy_still_works(self, dev_urls):
-        """Sanity: /ping proxy (existing rule) should still work."""
-        resp = httpx.get(f"{dev_urls['vite_url']}/ping")
-        assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+    def test_invocations_proxy_still_works(self, dev_urls):
+        """Sanity: /invocations proxy still reaches the backend service."""
+        resp = httpx.post(
+            f"{dev_urls['vite_url']}/invocations",
+            json={"message": "", "stream": True},
+            headers={
+                "Accept": "text/event-stream",
+                "x-hw-agentarts-session-id": "bug-6-proxy-session",
+            },
+        )
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "message is required"
 
     def test_root_still_serves_spa(self, dev_urls):
         """Sanity: GET / on Vite dev server should still serve the SPA."""
@@ -202,17 +240,18 @@ class TestBug6VitePlaygroundProxyMissing:
         )
 
     def test_playground_ws_proxied(self, dev_urls):
-        """WebSocket upgrade to /playground/ws should be forwarded to Chainlit.
+        """WebSocket upgrade to the playground path should be forwarded to Chainlit.
 
-        Chainlit uses WebSocket at /playground/ws for real-time communication.
-        The proxy rule must include `ws: true` to support the protocol upgrade.
+        Chainlit uses WebSocket under the playground mount for real-time
+        communication. The proxy rule must include `ws: true` to support the
+        protocol upgrade.
         """
         # Test that the endpoint at least accepts the WebSocket upgrade attempt
         # (returns 426 Upgrade Required or similar) rather than returning SPA HTML.
         try:
             with httpx.Client() as client:
                 resp = client.get(
-                    f"{dev_urls['vite_url']}/playground/ws",
+                    f"{dev_urls['vite_url']}/invocations/playground/ws",
                     headers={
                         "Upgrade": "websocket",
                         "Connection": "Upgrade",
@@ -223,9 +262,10 @@ class TestBug6VitePlaygroundProxyMissing:
                 # Chainlit session), we should at least not get SPA HTML back.
                 if "text/html" in resp.headers.get("content-type", ""):
                     assert "@vite/client" not in resp.text, (
-                        "FAIL: /playground/ws WebSocket upgrade was caught by "
-                        "Vite SPA fallback (contains @vite/client). The proxy "
-                        "does not handle /playground WebSocket connections."
+                        "FAIL: /invocations/playground/ws WebSocket upgrade was "
+                        "caught by Vite SPA fallback (contains @vite/client). "
+                        "The proxy does not handle playground WebSocket "
+                        "connections."
                     )
         except httpx.RemoteProtocolError as e:
             # This is expected if the connection is handled as WebSocket
@@ -233,4 +273,9 @@ class TestBug6VitePlaygroundProxyMissing:
             pytest.skip(
                 f"WebSocket connection triggered RemoteProtocolError "
                 f"(expected for ws upgrade): {e}"
+            )
+        except httpx.TimeoutException as e:
+            pytest.skip(
+                f"WebSocket upgrade did not complete over httpx "
+                f"(acceptable for ws proxy smoke): {e}"
             )

@@ -1,15 +1,14 @@
-"""E2E contracts for unified Service structured logging."""
+"""Service contract tests for unified structured logging."""
 
 from pathlib import Path
 
 import pytest
 import yaml
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
+SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.feature
+@pytest.mark.contract
 class TestStructuredLoggingContract:
     def test_dev_and_prod_logging_configs_exist(self):
         assert (SERVICE_DIR / "config/logging.dev.yaml").is_file()

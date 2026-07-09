@@ -1,15 +1,14 @@
-"""E2E contract tests for the unified Service configuration entry."""
+"""Service contract tests for the unified configuration entry."""
 
 from pathlib import Path
 
 import pytest
 from fastapi.middleware.cors import CORSMiddleware
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
+SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
-@pytest.mark.feature
+@pytest.mark.contract
 class TestUnifiedConfigurationContract:
     def test_env_example_is_the_only_root_application_config_catalog(self):
         assert (SERVICE_DIR / ".env.example").is_file()
@@ -28,9 +27,7 @@ class TestUnifiedConfigurationContract:
             assert name in content
 
     def test_deployment_config_contains_no_removed_runtime_variables(self):
-        content = (SERVICE_DIR / ".agentarts_config.yaml").read_text(
-            encoding="utf-8"
-        )
+        content = (SERVICE_DIR / ".agentarts_config.yaml").read_text(encoding="utf-8")
 
         for removed in (
             "MODEL_API_KEY",
@@ -43,8 +40,7 @@ class TestUnifiedConfigurationContract:
         from app.main import app
 
         assert all(
-            middleware.cls is not CORSMiddleware
-            for middleware in app.user_middleware
+            middleware.cls is not CORSMiddleware for middleware in app.user_middleware
         )
 
     def test_legacy_variables_do_not_change_settings(self, monkeypatch):

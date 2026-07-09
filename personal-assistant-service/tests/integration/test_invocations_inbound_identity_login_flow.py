@@ -1,4 +1,4 @@
-"""E2E tests for Feature 4 — Inbound Identity: dev-mode login flow.
+"""Service integration tests for Feature 4 — Inbound Identity login flow.
 
 Tests the happy path with dev-mode identity injection:
 - Valid X-HW-AgentGateway-User-Id header → 200 OK
@@ -38,8 +38,8 @@ class FakeAgentHandler:
     ):
         self.stream_calls.append((message, user_id, session_id))
         for token in self._tokens:
-            yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
-        yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
+            yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
+        yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
 
 
 # ── Test Fixture ─────────────────────────────────────────────────────────
@@ -55,8 +55,9 @@ def identity_test_client():
     """
     fake_handler = FakeAgentHandler()
 
-    with patch("app.llm_config.init_chat_model", return_value=MagicMock()), patch(
-        "app.agent_handler.AgentHandler", return_value=fake_handler
+    with (
+        patch("app.llm_config.init_chat_model", return_value=MagicMock()),
+        patch("app.agent_handler.AgentHandler", return_value=fake_handler),
     ):
         from app.main import app
 
@@ -71,7 +72,7 @@ def identity_test_client():
 # ── Scenario 1: Valid user_id → 200 OK (non-streaming) ───────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_valid_gateway_user_id(identity_test_client):
     """POST /invocations with valid X-HW-AgentGateway-User-Id returns 200."""
     client, fake_handler = identity_test_client
@@ -94,9 +95,7 @@ def test_invocations_with_valid_gateway_user_id(identity_test_client):
     )
     msg, user_id, session_id = fake_handler.handle_calls[0]
     assert msg == "Hello"
-    assert user_id == "dev-user", (
-        f"Expected user_id='dev-user', got {user_id!r}"
-    )
+    assert user_id == "dev-user", f"Expected user_id='dev-user', got {user_id!r}"
     assert session_id == "test-session-e2e", (
         f"Expected session_id='test-session-e2e', got {session_id!r}"
     )
@@ -110,7 +109,7 @@ def test_invocations_with_valid_gateway_user_id(identity_test_client):
 # ── Scenario 2: Streaming invocation with valid identity ───────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_streaming_invocation_with_valid_user_id(identity_test_client):
     """POST /invocations stream=true with valid identity returns SSE."""
     client, fake_handler = identity_test_client
@@ -174,7 +173,7 @@ def test_streaming_invocation_with_valid_user_id(identity_test_client):
 # ── Scenario 3: Service continues after valid auth ──────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_multiple_requests_with_same_user_id(identity_test_client):
     """Multiple requests with same valid user_id all succeed."""
     client, fake_handler = identity_test_client
@@ -203,7 +202,7 @@ def test_multiple_requests_with_same_user_id(identity_test_client):
 # ── Scenario 4: Different user_ids work independently ──────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_different_user_ids_accepted(identity_test_client):
     """Different X-HW-AgentGateway-User-Id values are all accepted."""
     client, fake_handler = identity_test_client
@@ -236,7 +235,7 @@ def test_different_user_ids_accepted(identity_test_client):
 # ── Scenario 5: Missing session-id → 400 (not 401) ─────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_valid_user_id_but_missing_session_id(identity_test_client):
     """POST /invocations with valid user_id but missing session-id returns 400,
     NOT 401 — proving auth passes but session validation fails after."""
@@ -262,7 +261,7 @@ def test_invocations_with_valid_user_id_but_missing_session_id(identity_test_cli
 # ── Scenario 6: Empty message with valid auth → 400 ────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_valid_auth_empty_message_returns_400(identity_test_client):
     """POST /invocations with valid auth but empty message returns 400,
     NOT 401 — proving auth passes but validation fails at message check."""
