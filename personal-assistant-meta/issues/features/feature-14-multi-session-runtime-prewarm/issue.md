@@ -580,6 +580,8 @@ Conversation 状态与 Runtime 状态必须分开。例如多个 Conversation �
 Conversation API 属于 Service-owned Control Plane，不应部署成必须携带
 `X-Hw-Agentarts-Session-Id` 的 Gateway custom route：
 
+Browser-facing public routes:
+
 ```text
 POST   /api/conversations
 GET    /api/conversations
@@ -589,12 +591,18 @@ DELETE /api/conversations/{conversation_id}
 GET    /api/conversations/{conversation_id}/messages
 POST   /api/conversation-imports
 POST   /api/chat/readiness
+```
+
+Thin BFF internal Control Plane routes:
+
+```text
 POST   /internal/chat/invocation-contexts
+DELETE /internal/chat/runtime-leases/current
 ```
 
 Cloudflare Pages Function 必须为 production public API 提供显式 same-origin route，
 不能用 catch-all `/api/*` 隐式公开新 API。最终业务语义、DB 访问、ownership 和
-idempotency 都由 Control Plane 执行。所有 endpoint
+idempotency 都由 Control Plane 执行。上述 Control Plane endpoint
 必须：
 
 - 从 Gateway 验证后的 identity 获取 `user_id`；
@@ -718,8 +726,9 @@ sequenceDiagram
 ```
 
 目标方案中 `Lifecycle BFF` 收敛为 Cloudflare Pages Function Thin BFF。它只负责
-pre-Gateway proxy/header injection；Runtime lease、Conversation ownership、DB 访问和
-message write model 由 Service-owned Control Plane / FastAPI Service 负责。
+pre-Gateway proxy/header injection；Runtime lease、Conversation ownership 和 metadata
+DB 访问由 Service-owned Control Plane 负责；message write model 由 FastAPI Service /
+Agent Runtime 负责。
 
 ### 删除或结束
 

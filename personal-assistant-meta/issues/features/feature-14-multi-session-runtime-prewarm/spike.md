@@ -1,6 +1,6 @@
 # Feature 14 Spike: Runtime Session Pre-warm 与 Conversation API 边界
 
-> 日期：2026-07-07  
+> 日期：2026-07-07
 > 状态：部分完成；live lifecycle 行为仍需有效 CUSTOM_JWT 后复测
 
 ## 结论摘要
@@ -201,4 +201,3 @@ export AGENTARTS_BEARER_TOKEN="<valid Microsoft ID token or accepted Runtime tok
 ```
 
 Then rerun start/stop/idempotency probes before freezing request/response parsing.
-

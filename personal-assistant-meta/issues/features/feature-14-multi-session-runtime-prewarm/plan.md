@@ -1,6 +1,6 @@
 # Feature 14 Implementation Plan: 多 Conversation 与 Runtime Pre-warm
 
-> 版本：v0.1 | 状态：Meta Draft | 日期：2026-07-07  
+> 版本：v0.1 | 状态：Meta Draft | 日期：2026-07-07
 > Issue: [`issue.md`](./issue.md) | Spike: [`spike.md`](./spike.md)
 
 ## Executive Summary
@@ -40,8 +40,9 @@ Feature 14 final implementation。
 ### G1 推荐决策
 
 目标架构使用 **Cloudflare Pages Function as Thin BFF**，但它不直接访问 PostgreSQL，
-也不持有业务状态。业务 DB、Conversation ownership、Runtime lease state machine 和
-message write model 由 Service-owned Control Plane / FastAPI Service 负责。
+也不持有业务状态。Conversation metadata DB、ownership 和 Runtime lease state
+machine 由 Service-owned Control Plane 负责；message write model 由 FastAPI Agent
+Runtime 负责。
 
 图类型：**Flowchart（组件/部署边界图）**。用于表达 Browser、Thin BFF、
 Control Plane、PostgreSQL 和 AgentArts Runtime 的边界关系，不是严格 UML
@@ -541,6 +542,9 @@ These routes must be reachable by Thin BFF before the AgentArts Gateway invocati
 The `/api/*` browser-facing routes may be implemented as a separate Control Plane deployable
 or a non-session-scoped service entrypoint, but not as Gateway custom routes that themselves require
 `X-Hw-Agentarts-Session-Id`.
+Implementation must update [`architecture/api.md`](../../../architecture/api.md) section 3
+or its mapping template to explicitly document these pre-Gateway Control Plane routes; the
+`N/A` Gateway column in this plan must not remain only as issue-local knowledge.
 
 DTO rules:
 
@@ -834,6 +838,8 @@ gantt
 
 - [ ] Add Feature 14 E2E suite.
 - [ ] Update specs and architecture docs listed in `issue.md`.
+- [ ] Update `architecture/api.md` Production API Instances or API mapping template for
+      pre-Gateway Control Plane public routes.
 - [ ] Update Service/Client README for new env and migration commands.
 - [ ] Update deployment runbook with DB migration step and Control Plane/BFF secrets.
 
