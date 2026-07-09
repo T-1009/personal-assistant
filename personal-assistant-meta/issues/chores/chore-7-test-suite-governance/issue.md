@@ -44,7 +44,7 @@ status: in_progress
 - 已更新 `personal-assistant-e2e/AGENTS.md`、`README.md` 和 manual real-auth
   目录说明。
 - 已验证 `personal-assistant-e2e` collection 通过；`uv run pytest -m smoke -q`
-  结果为 13 passed, 1 skipped。
+  结果为 13 passed, 3 skipped。
 - 已新增 `.github/workflows/ci.yml`，PR / main push 会运行 Service lint/tests、
   Client test/build 和 E2E smoke。
 - 遗留：`personal-assistant-e2e/tests/full_stack/test_feature_1_1_web_chat.py`
