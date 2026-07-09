@@ -165,7 +165,7 @@ async def async_auth_client(auth_fake_handler: FakeAuthHandler):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_auth_url_delivered_via_sse_system_message(auth_test_client):
     """E2E-AUTH-01: Auth URL delivered as SSE system_message event.
 
@@ -229,7 +229,7 @@ def test_auth_url_delivered_via_sse_system_message(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_system_message_appears_before_tokens(auth_test_client):
     """E2E-AUTH-02: system_message appears BEFORE token events in SSE stream.
 
@@ -274,7 +274,7 @@ def test_system_message_appears_before_tokens(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_system_message_fields_complete(auth_test_client):
     """E2E-AUTH-03: system_message event has all required fields.
 
@@ -326,7 +326,7 @@ def test_system_message_fields_complete(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_auth_stream_ends_with_done_true(auth_test_client):
     """E2E-AUTH-04: After system_message + tokens, stream ends with done: true.
 
@@ -372,7 +372,7 @@ def test_auth_stream_ends_with_done_true(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_normal_streaming_has_no_system_message(auth_test_client):
     """E2E-AUTH-05: Normal streaming without auth — no system_message events.
 
@@ -421,7 +421,7 @@ def test_normal_streaming_has_no_system_message(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_non_streaming_path_unaffected(auth_test_client):
     """E2E-AUTH-06: Non-streaming path returns normal JSON response.
 
@@ -466,7 +466,7 @@ def test_non_streaming_path_unaffected(auth_test_client):
 # ═════════════════════════════════════════════════════════════════════════════
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_queue_lifecycle_no_cross_request_leakage(auth_test_client):
     """E2E-AUTH-07: Queue cleanup prevents cross-request leakage.
 

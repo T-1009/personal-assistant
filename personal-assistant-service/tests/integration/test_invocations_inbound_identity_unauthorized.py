@@ -43,7 +43,7 @@ def auth_test_app():
 # ── Scenario 1: Missing header → 401 ─────────────────────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_without_user_id_header_returns_401(auth_test_app):
     """POST /invocations without X-HW-AgentGateway-User-Id header returns 401."""
     resp = auth_test_app.post(
@@ -66,7 +66,7 @@ def test_invocations_without_user_id_header_returns_401(auth_test_app):
 # ── Scenario 2: Empty header → 401 ───────────────────────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_empty_user_id_header_returns_401(auth_test_app):
     """POST /invocations with empty X-HW-AgentGateway-User-Id returns 401."""
     resp = auth_test_app.post(
@@ -83,7 +83,7 @@ def test_invocations_with_empty_user_id_header_returns_401(auth_test_app):
     )
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_whitespace_user_id_header_returns_401(auth_test_app):
     """POST /invocations with whitespace-only X-HW-AgentGateway-User-Id returns 401."""
     resp = auth_test_app.post(
@@ -103,7 +103,7 @@ def test_invocations_with_whitespace_user_id_header_returns_401(auth_test_app):
 # ── Scenario 3: Valid header continues past auth ─────────────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 def test_invocations_with_valid_header_does_not_fail_auth(auth_test_app):
     """POST /invocations with valid X-HW-AgentGateway-User-Id passes auth check.
 
@@ -133,7 +133,7 @@ def test_invocations_with_valid_header_does_not_fail_auth(auth_test_app):
 # ── Scenario 4: extract_gateway_user_id direct testing ───────────────────
 
 
-@pytest.mark.feature
+@pytest.mark.integration
 class TestExtractGatewayUserId:
     """Direct unit tests for extract_gateway_user_id function."""
 
