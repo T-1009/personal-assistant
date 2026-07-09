@@ -117,7 +117,6 @@ def _stop_process(proc: subprocess.Popen):
 pytestmark = [
     pytest.mark.feature,
     pytest.mark.browser,
-    pytest.mark.full_stack,
     pytest.mark.slow,
 ]
 
