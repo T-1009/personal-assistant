@@ -166,7 +166,7 @@ async def test_backend_callback_returns_json_for_local_fallback(
     assert response.headers["content-type"].startswith("application/json")
     assert response.json() == {
         "type": "m365-calendar-auth",
-        "requestId": state,
+        "request_id": state,
         "provider": "m365-calendar-provider",
         "status": "complete",
         "message": "日历授权已完成，可以关闭此窗口并重试刚才的问题。",

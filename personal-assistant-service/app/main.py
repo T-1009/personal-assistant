@@ -24,7 +24,6 @@ from fastapi.responses import (  # noqa: E402
 from huaweicloudsdkagentidentity.v1.model import UserIdentifier  # noqa: E402
 from pydantic import (  # noqa: E402
     BaseModel,
-    ConfigDict,
     Field,
     StrictBool,
     ValidationError,
@@ -94,13 +93,10 @@ class OAuth2CallbackQuery(BaseModel):
 class OAuth2CallbackResponse(BaseModel):
     """Calendar OAuth2 callback status returned to the BFF result page."""
 
-    model_config = ConfigDict(populate_by_name=True)
-
     type: Literal["m365-calendar-auth"] = Field(
         description="Calendar OAuth2 callback envelope type.",
     )
     request_id: str = Field(
-        alias="requestId",
         description="OAuth2 state used as the UI request id.",
     )
     provider: str = Field(description="AgentArts resource credential provider name.")
@@ -214,7 +210,7 @@ def _oauth2_callback_page(
     # finish the same AgentArts session with a different foreground identity.
     payload = {
         "type": "m365-calendar-auth",
-        "requestId": state or "",
+        "request_id": state or "",
         "provider": provider,
         "status": status,
         "message": message,
@@ -326,7 +322,7 @@ def _oauth2_callback_response(
     """Return callback status as JSON for local fallback, HTML for direct opens."""
     payload = {
         "type": "m365-calendar-auth",
-        "requestId": state or "",
+        "request_id": state or "",
         "provider": provider,
         "status": status,
         "message": message,

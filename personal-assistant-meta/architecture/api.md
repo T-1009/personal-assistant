@@ -125,16 +125,18 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
 
 - FastAPI/Pydantic model 使用 PascalCase，并按用途加 `Request`、`Response`、
   `Event`、`Error` 后缀，例如 `InvocationRequest`、`OAuth2CallbackResponse`。
-- 所有 Personal Assistant 自定义的跨边界 JSON 字段默认使用 `snake_case`。这包括
-  HTTP JSON request/response、SSE JSON payload、`postMessage` /
-  `BroadcastChannel` JSON envelope、local fallback JSON 等 wire contract。
-- TypeScript 变量、React props、store 内部状态可使用 camelCase；如需转换，应在
-  Client API adapter 边界完成，不把组件内部命名反推到 wire schema。
+- 所有 Personal Assistant 自定义的跨边界 JSON 字段默认使用 Python `snake_case`，
+  例如 `conversation_id`、`client_message_id`、`runtime_status`、`next_cursor`。
+  这包括 HTTP JSON request/response、SSE JSON event、local fallback JSON，以及
+  浏览器窗口、tab、popup 或组件之间通过 `postMessage` / `BroadcastChannel`
+  传递的 envelope，例如 `request_id`。
+- Frontend 内部 TypeScript domain object、component props 或 store state 可以使用
+  `camelCase`；如需转换，应在 Client API adapter 边界完成，不把组件内部命名反推到
+  wire schema。
+- 不引入全局 Pydantic `alias_generator` 作为默认行为。若某个新 contract 确实需要
+  偏离 `snake_case`，必须在对应 issue/ADR 中说明原因、调用方和兼容性影响。
 - 已存在 contract 保持兼容，例如 `POST /invocations` 的 `message`、`stream`、
   `response` 不为了统一命名而重命名。
-- 历史上已经存在的 browser message 字段，例如 Calendar OAuth bridge 的
-  `requestId`，视为 legacy compatibility exception；新字段使用 `request_id`，后续
-  若迁移需先让 Client 同时接受 `request_id` 与 `requestId`。
 - 外部协议或平台传入字段保持对方定义，例如 OAuth2/AgentArts callback query 中的
   `session_uri`、`custom_state`。
 - Error response 默认使用 FastAPI `detail` contract；若某个 API 需要结构化错误，
