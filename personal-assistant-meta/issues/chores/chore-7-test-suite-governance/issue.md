@@ -1,5 +1,5 @@
 ---
-status: backlog
+status: in_progress
 ---
 
 # Chore 7: 测试体系治理与 E2E 分层落地
@@ -31,16 +31,46 @@ status: backlog
 
 ---
 
+## 当前进展
+
+更新日期：2026-07-09
+
+- 已将导致 `personal-assistant-e2e` collection 失败的 `FastAPI TestClient`
+  类测试迁入 `personal-assistant-service/tests/integration/`。
+- 已将 configuration、structured logging、Agent Bundle、bug-4 CWD import
+  等 Service contract / regression 测试迁入 `personal-assistant-service/tests/`。
+- 已将 E2E 目录重组为 `smoke/`、`browser/`、`full_stack/`、`manual/`。
+- 已补充 pytest markers：`smoke`、`browser`、`full_stack`、`manual`。
+- 已更新 `personal-assistant-e2e/AGENTS.md`、`README.md` 和 manual real-auth
+  目录说明。
+- 已验证 `personal-assistant-e2e` collection 通过；`uv run pytest -m smoke -q`
+  结果为 13 passed, 1 skipped。
+- 已新增 `.github/workflows/ci.yml`，PR / main push 会运行 Service lint/tests、
+  Client test/build 和 E2E smoke。
+- 遗留：`personal-assistant-e2e/tests/full_stack/test_feature_1_1_web_chat.py`
+  仍是 legacy mixed file，里面包含少量 in-process `ASGITransport` Service route
+  测试；后续应拆到 Service integration，只保留真正跨进程 / Client 相关覆盖。
+- 遗留：`smoke/test_invocations_route_compatibility.py` 中 valid non-streaming
+  `/invocations` 用例暂时 skip，因为它会触达真实 LLM 边界；后续应改成带 mocked
+  Agent boundary 的稳定 smoke。
+- 遗留：`smoke/test_bug_1_playground_trailing_slash_404.py` 已标记为 superseded
+  skip；当前产品合同已迁到 `/invocations/playground`。
+- 遗留：Service 全量 `ruff format --check .` 当前会命中既有格式化债务；本次 CI
+  先启用稳定的 `ruff check .` 和 `pytest tests/`，全量 format gate 需单独 cleanup
+  后再开启。
+
+---
+
 ## 目标
 
 建立清晰、可运行、可逐步进入 CI 的测试体系：
 
-1. `personal-assistant-e2e` 在干净环境中 `collect-only` 稳定通过。
-2. Service-only integration / contract tests 迁回 `personal-assistant-service/tests/`。
-3. E2E 目录按 `smoke / browser / full_stack / manual` 分层。
-4. pytest markers 与目录分层一致。
-5. CI 至少能稳定运行 Service tests、Client tests/build 和 E2E smoke。
-6. Manual real-auth 测试默认不进入 PR gate，但有明确 runbook / skip 策略。
+1. [x] `personal-assistant-e2e` 在干净环境中 `collect-only` 稳定通过。
+2. [ ] Service-only integration / contract tests 迁回 `personal-assistant-service/tests/`。
+3. [x] E2E 目录按 `smoke / browser / full_stack / manual` 分层。
+4. [x] pytest markers 与目录分层一致。
+5. [x] CI 至少能稳定运行 Service tests、Client tests/build 和 E2E smoke。
+6. [x] Manual real-auth 测试默认不进入 PR gate，但有明确 runbook / skip 策略。
 
 ---
 
@@ -48,13 +78,13 @@ status: backlog
 
 ### Service tests
 
-- [ ] 盘点 `personal-assistant-e2e/tests/` 中只验证 Service 内部行为的测试。
+- [x] 盘点 `personal-assistant-e2e/tests/` 中只验证 Service 内部行为的测试。
 - [ ] 将以下类别迁移或拆分到 `personal-assistant-service/tests/`：
   - Inbound Identity header / session extraction。
   - `/invocations` sync / SSE route contract。
   - `FakeAgentHandler` 邮件对话中只验证 Service route 与 handler 参数的部分。
   - configuration / logging / agent bundle contract tests。
-- [ ] 迁移后使用 Service project 环境运行相关 tests。
+- [x] 迁移后使用 Service project 环境运行相关 tests。
 
 ### Client tests
 
@@ -65,7 +95,7 @@ status: backlog
 
 ### E2E tests
 
-- [ ] 调整目录结构：
+- [x] 调整目录结构：
   ```text
   personal-assistant-e2e/tests/
   ├── smoke/
@@ -73,7 +103,7 @@ status: backlog
   ├── full_stack/
   └── manual/
   ```
-- [ ] 增加 / 调整 pytest markers：
+- [x] 增加 / 调整 pytest markers：
   - `smoke`
   - `browser`
   - `full_stack`
@@ -85,11 +115,11 @@ status: backlog
   - Playwright ChatPage happy path：mock auth state，发送消息，观察 UI 收到回复。
   - token expiry browser regression。
   - reset session browser regression。
-- [ ] manual real-auth tests 默认 skip，必须显式环境变量启用。
+- [x] manual real-auth tests 默认 skip，必须显式环境变量启用。
 
 ### CI/CD
 
-- [ ] 新增或更新 GitHub Actions，使 PR 至少运行：
+- [x] 新增或更新 GitHub Actions，使 PR 至少运行：
   - Service lint + affected tests。
   - Client tests + build。
   - E2E smoke。
@@ -98,7 +128,7 @@ status: backlog
 
 ### Documentation
 
-- [ ] 更新 `personal-assistant-e2e/AGENTS.md` 和 README，说明新目录和 markers。
+- [x] 更新 `personal-assistant-e2e/AGENTS.md` 和 README，说明新目录和 markers。
 - [ ] 如迁移大量测试，更新相关 issue / architecture 链接。
 - [ ] 保持 [`test-strategy.md`](../../../architecture/devops/test/test-strategy.md)
       是测试归属规则的 source of truth。
@@ -119,23 +149,23 @@ status: backlog
 
 ### Phase 0: 测试资产盘点
 
-- [ ] 列出当前 `personal-assistant-e2e/tests/` 每个文件的实际测试层级：
+- [x] 列出当前 `personal-assistant-e2e/tests/` 每个文件的实际测试层级：
   Service integration、Client contract、browser、full_stack、manual。
-- [ ] 标注迁移目标目录和保留理由。
-- [ ] 确认哪些 tests 当前 collection 失败及其原因。
+- [x] 标注迁移目标目录和保留理由。
+- [x] 确认哪些 tests 当前 collection 失败及其原因。
 
 ### Phase 1: 修复可运行性
 
-- [ ] 保证 `cd personal-assistant-e2e && uv run pytest --collect-only` 通过。
+- [x] 保证 `cd personal-assistant-e2e && uv run pytest --collect-only` 通过。
 - [ ] 避免 E2E project 隐式依赖 Service dev dependency；确需调用 Service internals 的
       测试应迁移到 Service project。
-- [ ] 更新 `pyproject.toml` markers。
+- [x] 更新 `pyproject.toml` markers。
 
 ### Phase 2: 迁移 service-level tests
 
 - [ ] 将 `TestClient + FakeAgentHandler` 的 Service route tests 迁入 Service tests。
 - [ ] 保留一小组 process-level smoke 在 E2E。
-- [ ] 迁移后确保 Service tests 和 E2E tests 都能独立运行。
+- [x] 迁移后确保 Service tests 和 E2E tests 都能独立运行。
 
 ### Phase 3: 重组 E2E
 
@@ -146,7 +176,7 @@ status: backlog
 
 ### Phase 4: CI 门禁
 
-- [ ] 新增 E2E smoke job。
+- [x] 新增 E2E smoke job。
 - [ ] 明确 browser tests 的触发条件。
 - [ ] 部署后 production smoke 保持轻量、低 flake。
 
@@ -154,13 +184,13 @@ status: backlog
 
 ## 验收标准
 
-- [ ] `personal-assistant-e2e` 全量 collection 通过。
-- [ ] `personal-assistant-e2e/tests/` 已按 smoke / browser / full_stack / manual 分层。
+- [x] `personal-assistant-e2e` 全量 collection 通过。
+- [x] `personal-assistant-e2e/tests/` 已按 smoke / browser / full_stack / manual 分层。
 - [ ] Service-only integration tests 不再长期留在 E2E 目录。
-- [ ] `uv run pytest -m smoke` 可稳定运行。
+- [x] `uv run pytest -m smoke` 可稳定运行。
 - [ ] `uv run pytest -m browser` 可按需运行，缺 Playwright browser 时清晰 skip。
 - [ ] manual real-auth tests 默认 skip，启用条件和 required env vars 清晰。
-- [ ] PR CI 至少包含 E2E smoke。
+- [x] PR CI 至少包含 E2E smoke。
 - [ ] 文档与 [`test-strategy.md`](../../../architecture/devops/test/test-strategy.md) 一致。
 
 ---

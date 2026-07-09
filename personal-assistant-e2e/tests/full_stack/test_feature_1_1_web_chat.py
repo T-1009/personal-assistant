@@ -37,6 +37,8 @@ SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
 CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 DIST_DIR = CLIENT_DIR / "dist"
 
+pytestmark = [pytest.mark.full_stack]
+
 
 # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -158,13 +160,16 @@ class FakeAgentHandler:
         return "".join(self._tokens)
 
     async def handle_stream(
-        self, message: str, user_id: str = "anonymous", session_id: str | None = None,
+        self,
+        message: str,
+        user_id: str = "anonymous",
+        session_id: str | None = None,
         message_queue=None,
     ):
         self.stream_calls.append((message, user_id, session_id))
         for token in self._tokens:
-            yield f'data: {json.dumps({"token": token, "done": False})}\n\n'
-        yield f'data: {json.dumps({"token": "", "done": True})}\n\n'
+            yield f"data: {json.dumps({'token': token, 'done': False})}\n\n"
+        yield f"data: {json.dumps({'token': '', 'done': True})}\n\n"
 
 
 @pytest.fixture
@@ -190,13 +195,16 @@ async def test_app_client(fake_handler):
     # Import app.main first so the module exists for patching,
     # then use patch.object which takes a real module reference.
     import app.main as app_main
+
     with patch.object(app_main, "AgentHandler", return_value=fake_handler):
         from app.main import app
 
         app.state.agent_handler = fake_handler
 
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        async with httpx.AsyncClient(
+            transport=transport, base_url="http://test"
+        ) as client:
             yield client
 
 
@@ -215,7 +223,8 @@ class TestScenario1DevModeStartup:
         """Ensure node_modules are installed."""
         if not (CLIENT_DIR / "node_modules").is_dir():
             pytest.skip(
-                "node_modules/ not found — run 'npm install' in personal-assistant-client/"
+                "node_modules/ not found — run 'npm install' in "
+                "personal-assistant-client/"
             )
 
     def test_vite_dev_server_starts_and_serves_page(self, http_client):
@@ -241,9 +250,7 @@ class TestScenario1DevModeStartup:
                         f"stderr: {stderr.decode(errors='replace')[-500:]}"
                     )
                 try:
-                    resp = httpx.get(
-                        f"http://localhost:{self.PORT}/", timeout=2.0
-                    )
+                    resp = httpx.get(f"http://localhost:{self.PORT}/", timeout=2.0)
                     if resp.status_code == 200:
                         ready = True
                         break
@@ -284,7 +291,9 @@ class TestScenario2SSEStreamingChat:
     async def test_sse_content_type_and_headers(self, test_app_client):
         """POST /invocations stream=true returns text/event-stream headers."""
         resp = await _post_stream(test_app_client, "Hello")
-        assert resp.status_code == 200, f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        assert resp.status_code == 200, (
+            f"Expected 200, got {resp.status_code}: {resp.text[:200]}"
+        )
 
         content_type = resp.headers.get("content-type", "")
         assert "text/event-stream" in content_type, f"Got content-type: {content_type}"
@@ -334,7 +343,9 @@ class TestScenario2SSEStreamingChat:
         done_events = [e for e in events if e.get("done")]
 
         assert len(tokens) >= 1, f"Expected at least 1 token event, got {len(tokens)}"
-        assert len(done_events) == 1, f"Expected exactly 1 done event, got {len(done_events)}"
+        assert len(done_events) == 1, (
+            f"Expected exactly 1 done event, got {len(done_events)}"
+        )
         assert done_events[0]["done"] is True
 
         # Verify stream_calls recorded correctly
@@ -363,7 +374,6 @@ class TestScenario2SSEStreamingChat:
         assert "text/event-stream" in resp.headers.get("content-type", "")
 
 
-
 # ── Scenario 4: Multi-turn Conversation ────────────────────────────────
 
 
@@ -372,20 +382,26 @@ class TestScenario4MultiTurnConversation:
     """Verify multiple streaming messages in sequence work correctly."""
 
     @pytest.mark.asyncio
-    async def test_multiple_messages_return_valid_sse(self, test_app_client, fake_handler):
+    async def test_multiple_messages_return_valid_sse(
+        self, test_app_client, fake_handler
+    ):
         """Sending multiple messages sequentially returns valid SSE for each."""
         messages = ["Hello", "How are you?", "What time is it?"]
 
         for i, msg in enumerate(messages):
             resp = await _post_stream(test_app_client, msg)
-            assert resp.status_code == 200, f"Message {i} ('{msg}') failed: {resp.status_code}"
+            assert resp.status_code == 200, (
+                f"Message {i} ('{msg}') failed: {resp.status_code}"
+            )
             assert "text/event-stream" in resp.headers.get("content-type", "")
 
             # Verify valid SSE format
             body = resp.text
             assert "data:" in body, f"Message {i}: no 'data:' in response"
             lines = [line for line in body.split("\n") if line.startswith("data: ")]
-            assert len(lines) >= 2, f"Message {i}: expected >=2 SSE lines, got {len(lines)}"
+            assert len(lines) >= 2, (
+                f"Message {i}: expected >=2 SSE lines, got {len(lines)}"
+            )
 
         # Verify all calls were recorded
         assert len(fake_handler.stream_calls) == 3
@@ -430,7 +446,10 @@ class TestScenario5ErrorHandling:
         try:
             data = resp.json()
             assert "detail" in data
-            assert "required" in data["detail"].lower() or "message" in data["detail"].lower()
+            assert (
+                "required" in data["detail"].lower()
+                or "message" in data["detail"].lower()
+            )
         except Exception:
             # At minimum the response should not be a crash (5xx)
             assert resp.status_code < 500, (
@@ -449,7 +468,8 @@ class TestScenario5ErrorHandling:
             },
         )
         assert resp.status_code == 400, (
-            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: "
+            f"{resp.text[:200]}"
         )
 
     @pytest.mark.asyncio
@@ -508,9 +528,7 @@ class TestScenario6ProductionBuild:
                 timeout=120,
             )
             if result.returncode != 0:
-                pytest.skip(
-                    f"npm install failed: {result.stderr[-300:]}"
-                )
+                pytest.skip(f"npm install failed: {result.stderr[-300:]}")
 
     def test_npm_run_build_creates_dist(self, tmp_path):
         """npm run build generates dist/ directory with index.html."""
@@ -528,7 +546,9 @@ class TestScenario6ProductionBuild:
         )
 
         assert DIST_DIR.is_dir(), f"dist/ directory not found after build at {DIST_DIR}"
-        assert (DIST_DIR / "index.html").exists(), "dist/index.html not found after build"
+        assert (DIST_DIR / "index.html").exists(), (
+            "dist/index.html not found after build"
+        )
 
     def test_dist_index_html_content(self):
         """dist/index.html contains proper HTML structure for assistant-ui."""
@@ -550,7 +570,7 @@ class TestScenario6ProductionBuild:
         assert "<!doctype html>" in content.lower() or "<!DOCTYPE html>" in content
         assert '<html lang="zh-CN">' in content or "<html" in content
         assert '<div id="root"></div>' in content or 'id="root"' in content
-        assert '<script' in content, "Expected script tags in index.html"
+        assert "<script" in content, "Expected script tags in index.html"
         assert "Personal Assistant" in content, (
             f"Expected app name in index.html, got preview: {content[:300]}"
         )
@@ -578,7 +598,8 @@ class TestScenario6ProductionBuild:
             f"No JS files found in {assets_dir}. Contents: {list(assets_dir.iterdir())}"
         )
         assert len(css_files) >= 1, (
-            f"No CSS files found in {assets_dir}. Contents: {list(assets_dir.iterdir())}"
+            f"No CSS files found in {assets_dir}. "
+            f"Contents: {list(assets_dir.iterdir())}"
         )
 
         # Verify files are non-empty

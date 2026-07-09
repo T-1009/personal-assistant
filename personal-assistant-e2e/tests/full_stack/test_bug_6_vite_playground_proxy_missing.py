@@ -19,6 +19,8 @@ from conftest import PROJECT_ROOT, ServiceProcess
 
 _CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 
+pytestmark = [pytest.mark.full_stack]
+
 
 class ClientDevProcess:
     """Manage a subprocess running the Vite dev server."""
@@ -56,7 +58,8 @@ class ClientDevProcess:
 
         self.stop()
         raise TimeoutError(
-            f"Vite dev server did not become ready within {timeout}s on port {self.port}"
+            "Vite dev server did not become ready within "
+            f"{timeout}s on port {self.port}"
         )
 
     def stop(self):
@@ -140,8 +143,7 @@ class TestBug6VitePlaygroundProxyMissing:
         if resp.status_code in (302, 307):
             location = resp.headers.get("Location", "")
             assert location.endswith("/playground/"), (
-                f"Expected redirect Location to end with /playground/, "
-                f"got {location!r}"
+                f"Expected redirect Location to end with /playground/, got {location!r}"
             )
 
         # Key assertion: response must NOT be the assistant-ui SPA.
