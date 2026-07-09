@@ -13,7 +13,7 @@ Test scenarios (all subprocess-based, using ServiceProcess from conftest.py):
   2. Sync invocation endpoint unchanged — POST /invocations → non-5xx response
   3. SSE streaming on /invocations — POST /invocations {"stream": true} → SSE response
   4. Old route /api/chat/stream returns 404 — GET /api/chat/stream?q=test → 404
-  5. Playground redirect at new path /invocations/playground — GET /invocations/playground → redirect
+  5. Playground redirect at new path /invocations/playground.
 """
 
 import httpx
@@ -21,6 +21,8 @@ import pytest
 
 # Import shared ServiceProcess fixture from e2e conftest.
 from conftest import ServiceProcess
+
+pytestmark = [pytest.mark.smoke]
 
 # ── Scenario 1: Health check endpoint unchanged ──────────────────────────
 
@@ -72,6 +74,12 @@ class TestScenario2SyncInvocation:
         yield sp.url
         sp.stop()
 
+    @pytest.mark.skip(
+        reason=(
+            "Valid non-streaming invocation currently reaches the real LLM "
+            "boundary; rewrite with a mocked agent before enabling in smoke."
+        )
+    )
     def test_invocations_responds_without_crash(self, service_url):
         """POST /invocations with valid message returns a response.
 
@@ -117,7 +125,8 @@ class TestScenario2SyncInvocation:
             },
         )
         assert resp.status_code == 400, (
-            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: "
+            f"{resp.text[:200]}"
         )
 
 
@@ -198,7 +207,8 @@ class TestScenario3SSEStreamingNewPath:
             },
         )
         assert resp.status_code == 400, (
-            f"Expected 400 for missing message, got {resp.status_code}: {resp.text[:200]}"
+            f"Expected 400 for missing message, got {resp.status_code}: "
+            f"{resp.text[:200]}"
         )
 
 
@@ -231,18 +241,14 @@ class TestScenario4OldRouteReturns404:
     def test_old_api_chat_stream_not_found_detail(self, service_url):
         """The 404 response should be a FastAPI 'Not Found' JSON error."""
         resp = httpx.get(f"{service_url}/api/chat/stream?q=test")
-        assert resp.status_code == 404, (
-            f"Expected 404, got {resp.status_code}"
-        )
+        assert resp.status_code == 404, f"Expected 404, got {resp.status_code}"
         # FastAPI returns JSON detail for 404
         content_type = resp.headers.get("content-type", "")
         assert "application/json" in content_type, (
             f"Expected JSON error response, got content-type: {content_type}"
         )
         data = resp.json()
-        assert "detail" in data, (
-            f"Expected 'detail' in 404 error response: {data}"
-        )
+        assert "detail" in data, f"Expected 'detail' in 404 error response: {data}"
 
     def test_new_route_works_old_route_404(self, service_url):
         """POST /invocations stream works while old child routes are 404."""
@@ -298,7 +304,7 @@ class TestScenario5PlaygroundRedirectNewPath:
         sp.stop()
 
     def test_playground_new_path_redirects(self, service_url):
-        """GET /invocations/playground returns 307 redirect to /invocations/playground/."""
+        """GET /invocations/playground redirects to the trailing-slash path."""
         resp = httpx.get(
             f"{service_url}/invocations/playground", follow_redirects=False
         )

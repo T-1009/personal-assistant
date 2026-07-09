@@ -1,4 +1,4 @@
-"""E2E tests for Feature 10a — Outbound Email: Microsoft 365 邮件处理.
+"""Service integration tests for Feature 10a — Outbound Email.
 
 Tests email conversation flows through the POST /invocations endpoint
 with a mocked AgentHandler that returns canned email-specific responses.
@@ -732,8 +732,8 @@ def _make_passthrough_decorator(*args, **kwargs):
 def _import_email_tools():
     """Import email_tools with agentarts.sdk mocked.
 
-    agentarts-sdk is NOT installed in the E2E venv, so we mock it at the
-    sys.modules level before the module is imported.
+    The real SDK is not needed for these tool contract checks, so the
+    decorator boundary is mocked before the module is imported.
     """
     import sys
     from unittest.mock import MagicMock

@@ -16,9 +16,7 @@ from pathlib import Path
 import pytest
 
 # Ensure the service directory is on sys.path
-SERVICE_DIR = (
-    Path(__file__).resolve().parent.parent.parent.parent / "personal-assistant-service"
-)
+SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture(autouse=True)
@@ -37,7 +35,7 @@ class TestBug4CWDSensitiveChainlitMount:
     """Verify app.main can be imported regardless of CWD."""
 
     def test_import_app_main_from_project_root(self):
-        """Import app.main from project root CWD — succeeds after BUG-4 fix (46d6b58)."""
+        """Import app.main from project root CWD after BUG-4 fix."""
         saved_cwd = os.getcwd()
         # Go to project root (two levels above SERVICE_DIR)
         project_root = SERVICE_DIR.parent

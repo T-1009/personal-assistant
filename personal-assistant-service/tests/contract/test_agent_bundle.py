@@ -1,20 +1,17 @@
-"""E2E contracts for the renewable process-scoped Agent Bundle."""
+"""Service contract tests for the renewable process-scoped Agent Bundle."""
 
 from pathlib import Path
 
 import pytest
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
-SERVICE_DIR = PROJECT_ROOT / "personal-assistant-service"
+SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
 @pytest.mark.feature
 class TestAgentBundleContract:
     def test_agent_bundle_ttl_is_discoverable_and_defaulted(self):
         env_catalog = (SERVICE_DIR / ".env.example").read_text(encoding="utf-8")
-        settings_source = (SERVICE_DIR / "app/settings.py").read_text(
-            encoding="utf-8"
-        )
+        settings_source = (SERVICE_DIR / "app/settings.py").read_text(encoding="utf-8")
 
         assert "LLM_AGENT_BUNDLE_TTL_SECONDS" in env_catalog
         assert "llm_agent_bundle_ttl_seconds" in settings_source
