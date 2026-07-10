@@ -103,8 +103,9 @@ GitHub 官方 remote MCP Server default endpoint 为 `https://api.githubcopilot.
 
 身份模型说明：
 
-- 当前方案的 GitHub Target 出站认证使用固定 GitHub PAT，因此 GitHub MCP Server 看到的 `me` 是该 PAT 所属 GitHub 账号。
-- 若报表需要表达“Web Chat 当前登录用户在 GitHub 上做了什么”，后续必须引入 per-user GitHub delegation；否则该 GitHub data source 只能表示固定服务账号 / 单用户 demo 的工程活动。
+- GitHub MCP source 使用 **personal assistant agent 平台身份**，不代表 Web Chat 当前登录用户。
+- `target-github-mcp` 中的 GitHub PAT 是平台侧凭证；GitHub MCP Server 看到的 `me` 是该 PAT 所属 GitHub 账号 / platform GitHub account。
+- 因此 GitHub MCP source 适合汇总平台配置仓库、平台账号可见范围内的工程活动。它不回答“当前登录用户自己的 GitHub 活动”；如未来需要该语义，应作为单独的 user-delegated GitHub data source 设计。
 
 ### 2.5 触发场景
 
@@ -115,8 +116,8 @@ Report root tool 的触发条件是：用户请求日/周/月报、工作总结�
 - “帮我生成今天的日报”
 - “帮我生成本周周报”
 - “帮我整理这个月的月报”
-- “总结我今天在 GitHub 上做了什么”
-- “本周我有哪些 PR、commit、issue 进展”
+- “总结 personal-assistant 仓库今天的工程活动”
+- “本周平台 GitHub 数据源有哪些 PR、commit、issue 进展”
 - “帮我汇总 personal-assistant 仓库这周的开发进展”
 
 触发后的工具调用链路：
@@ -125,7 +126,7 @@ Report root tool 的触发条件是：用户请求日/周/月报、工作总结�
 2. `generate_report` 解析 report type、时间窗口、timezone 和用户指定 source。
 3. `generate_report` 复用现有 Email / Calendar functions 拉取邮件和日历数据。
 4. 当工程活动数据需要纳入报表时，调用 GitHub MCP source：
-   - `github_mcp_resolve_identity` 确认 GitHub 身份。
+   - `github_mcp_resolve_identity` 确认 GitHub MCP Target 的平台授权身份。
    - 如用户未指定仓库，调用 `github_mcp_list_repositories` 获取候选仓库。
    - 调用 `github_mcp_search_activity` 按时间窗口拉取 commits、pull requests、issues、reviews / comments。
    - 对需要展开的关键活动，调用 `github_mcp_get_detail` 获取详情。
@@ -293,7 +294,7 @@ sequenceDiagram
 
 ### 3.2 `github_mcp_resolve_identity`
 
-解析 GitHub MCP Target 当前授权身份，用于筛选 GitHub activity source 中“我参与的”活动。若 Gateway 使用固定 GitHub PAT，则该身份是 PAT 所属 GitHub 账号，不等同于 Web Chat 当前登录用户。
+解析 GitHub MCP Target 的平台授权身份，用于筛选 GitHub activity source 中 platform account 参与或可见的活动。该身份来自 Gateway Target 中配置的 GitHub PAT，不映射 Web Chat 当前登录用户。
 
 输入：
 
@@ -366,7 +367,7 @@ sequenceDiagram
   "timezone": "Asia/Shanghai",
   "provider": "github",
   "repositories": ["git-malu/personal-assistant"],
-  "actor": "me",
+  "actor": "platform",
   "event_types": ["commit", "pull_request", "issue", "review", "comment"],
   "limit": 100,
   "cursor": null
@@ -448,7 +449,7 @@ GitHub source 映射：
 
 | GitHub activity source function | 调用的官方 GitHub MCP 原子工具 | 聚合职责 |
 |---|---|---|
-| `github_mcp_resolve_identity` | `get_me` | 获取 GitHub MCP Target 授权身份的 login、display name、profile URL，用于 `actor = me` 和活动归因。 |
+| `github_mcp_resolve_identity` | `get_me` | 获取 GitHub MCP Target 平台授权身份的 login、display name、profile URL，用于 `actor = platform` 和活动归因。 |
 | `github_mcp_list_repositories` | `search_repositories`，以及 runtime `tools/list` 中可用的 repository listing 工具 | 根据关键词、更新时间和权限范围筛选候选仓库；隐藏不适合报表的归档仓库 / 不可访问仓库。 |
 | `github_mcp_search_activity` | commits: `list_commits` / `get_commit`；pull requests: `list_pull_requests` / `search_pull_requests` / `pull_request_read`；issues: `list_issues` / `search_issues` / `issue_read`；actions 可选：`actions_list` / `actions_get` | 按时间窗口、仓库、actor、event type 聚合活动，拉取必要详情，归一化为 `GitHubActivityEvent` 列表。 |
 | `github_mcp_get_detail` | `get_commit`、`pull_request_read`、`issue_read`，以及 runtime 中可用的 comments / reviews / files 相关只读工具 | 对单条 commit / PR / issue 拉取详情、评论、review、文件变更和统计信息，用于报表展开说明。 |
@@ -456,7 +457,7 @@ GitHub source 映射：
 `github_mcp_search_activity` 聚合流程：
 
 1. 将用户输入的 `start_at` / `end_at` 按 `timezone` 归一化为 GitHub 查询使用的 UTC 时间窗口。
-2. 调用 `github_mcp_resolve_identity` 解析 GitHub MCP Target 授权身份；当 `actor = "me"` 时，用该 login 过滤 commits、PR、issues、reviews 和 comments。
+2. 调用 `github_mcp_resolve_identity` 解析 GitHub MCP Target 平台授权身份；当 `actor = "platform"` 时，用该 login 过滤 commits、PR、issues、reviews 和 comments。
 3. 如果用户没有指定 `repositories`，先调用 `github_mcp_list_repositories` 获取候选仓库，再按更新时间和 limit 选择扫描范围。
 4. 按 `event_types` 分批调用官方 MCP 原子工具；每类数据独立分页，避免某一类事件过多阻塞整体报表。
 5. 对列表结果先做轻量过滤；只有当报表需要统计或展开时，才调用 `get_commit` / `pull_request_read` / `issue_read` 补充详情。
@@ -546,7 +547,7 @@ GitHub source 映射：
   - 时间窗口。
   - provider 固定为 `github`。
   - repository filter。
-  - actor = `me`。
+  - actor = `platform`。
   - event type filter。
   - limit / cursor。
 - GitHub mock 覆盖 commits、pull requests、issues、reviews、comments、分页、401、403、429。
@@ -575,7 +576,7 @@ GitHub source 映射：
 - Report 是 root capability；GitHub MCP Gateway 只是 Report 内部使用的数据源之一。
 - 首个 MCP Gateway data source 只做 GitHub 工程活动源；Gitee 后续作为独立能力扩展。
 - 邮件 / 日历在首期报表中复用现有 local tools，不通过 MCP Gateway 重新实现。
-- 固定 GitHub PAT 方案只代表 PAT 所属账号的 GitHub 活动；多用户 current-user 报表需要后续引入 per-user GitHub delegation。
+- GitHub MCP source 代表 personal assistant agent 平台身份，只汇总 PAT / platform GitHub account 可见范围内的工程活动；当前用户个人 GitHub 活动不属于该 MCP source 的语义。
 - 后续“AgentArts Memory 的 skill 能力”负责沉淀用户报表偏好、常用仓库、常用收件人和摘要风格。
 - 后续“AgentArts Sandbox 的 CLI 工具能力”负责可重复的报告渲染、diff 统计或本地仓库分析，不在本 Feature 中实现。
 
