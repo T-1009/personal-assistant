@@ -70,7 +70,7 @@ generate_report 内部复用:
 实施方式：
 
 - `gateway-github-mcp` 与 `target-github-mcp` 在华为云 AgentArts 控制台手动创建和维护，本 Feature 不通过代码创建 / 更新 Gateway 或 Target。
-- AgentArts MCP Gateway 入站认证选择 IAM，Service 只消费已配置好的 Gateway URL，并以 IAM 认证方式调用 Gateway；
+- AgentArts MCP Gateway 入站认证选择 IAM。Service 只消费已配置好的 Gateway URL，并通过 AgentArts Runtime 中的 WAT → AgentArts Identity STS provider → 临时 IAM 凭据链路签名调用 Gateway；不在 Runtime 环境变量中配置长期 AK/SK。
 - GitHub MCP Target 指向 GitHub remote MCP 的 read-only endpoint：`https://api.githubcopilot.com/mcp/readonly`。如 AgentArts Target 支持自定义 header，同步设置 `X-MCP-Readonly: true`，并用 `X-MCP-Toolsets: repos,issues,pull_requests` 约束报表所需 toolsets。
 - GitHub MCP Target 出站认证固定选择 API Key，凭证值使用 GitHub PAT，并由 Gateway 在出站请求中注入 `Authorization: Bearer <GitHub PAT>`；PAT 不作为 MCP tool 参数暴露，也不进入 Service 配置。
 - Service 连接 AgentArts MCP Gateway 时使用 LangChain / LangGraph 生态的开源 MCP 集成（优先评估 `langchain-mcp-adapters`），由开源库负责远程 MCP tools 加载与调用；项目内 `app/mcp/` 只做配置封装、IAM 认证注入、超时控制、错误映射和结果解析，不自实现 MCP 协议。
@@ -477,14 +477,33 @@ GitHub source 映射：
 
 ## 4. 实现变更
 
-### 4.1 AgentArts MCP Gateway配置
+### 4.1 AgentArts MCP Gateway 配置
 
 - 在华为云 AgentArts 控制台手动创建 `gateway-github-mcp`，协议类型为 MCP。Gateway 入站认证选择 IAM。
 - 在该 Gateway 下手动创建 `target-github-mcp`，GitHub Target 指向官方 GitHub MCP Server read-only endpoint：`https://api.githubcopilot.com/mcp/readonly`，传输方式使用 Streamable HTTP。
 - 若 AgentArts Target 支持自定义 header，额外配置 `X-MCP-Readonly: true`，并设置 `X-MCP-Toolsets: repos,issues,pull_requests`，让 Target 层只暴露报表所需的只读 GitHub capabilities。
-- GitHub Target 出站认证选择 API Key，凭证值使用 GitHub PAT；Gateway 负责在出站请求中携带 `Authorization: Bearer <GitHub PAT>`，不把 PAT 作为 MCP tool 参数暴露。
+- GitHub Target 出站认证选择 API Key，凭证值使用 GitHub PAT；Gateway 负责在出站请求中携带 `Authorization: Bearer <GitHub PAT>`，不把 PAT 作为 MCP tool 参数暴露。具体 Target 出站认证配置如下：
+
+| 配置项 | 值 |
+|---|---|
+| Target URL | `https://api.githubcopilot.com/mcp/readonly` |
+| 出站认证类型 | API Key |
+| 注入位置 | Header / 请求头 |
+| Header name / 参数名称 | `Authorization` |
+| Prefix / 前缀 | `Bearer` |
+| Secret value / API Key 值 | `<GitHub PAT>` |
+| 实际出站 header | `Authorization: Bearer <GitHub PAT>` |
+
 - GitHub PAT 优先使用 fine-grained PAT，并限制到报表需要读取的 repository；权限只授予 Metadata read、Contents read、Issues read、Pull requests read 等只读权限。若只能使用 classic PAT，则必须在文档和 staging 配置中明确其权限范围和 demo 边界。
 - 代码侧不使用 `MCPGatewayClient` 自动创建 / 更新 Gateway；Service 只通过配置读取已创建 Gateway 的访问地址。
+
+Gateway 入站 IAM 签名凭据路径：
+
+- Production Runtime：Web Chat 请求进入 Service 时，AgentArts Gateway 已向 Runtime 容器注入 `X-HW-AgentGateway-Workload-Access-Token`。`main.py` 按现有架构将该 header 写入 `AgentArtsRuntimeContext`；GitHub MCP source 通过 AgentArts Identity STS provider 获取临时 IAM 凭据，再用华为云 API signing SDK 对调用 `GITHUB_MCP_GATEWAY_URL` 的 HTTP 请求签名。
+- 本地开发：没有 `X-HW-AgentGateway-Workload-Access-Token` header 时，沿用现有 SDK fallback：从 `.agent_identity.json` / customer-owned local workload 获取 WAT，再向 AgentArts Identity 换取 STS 临时凭据。需要真实连云调试前，先按 `personal-assistant-meta/architecture/cloud-service/huaweicloud/agent-identity.md` 创建或验证 `pa-local-jwt-workload`。
+- 不把长期 AK/SK 放进 `.agentarts_config.yaml`、`.env`、tool schema、日志或 LLM-visible error。若手动 smoke test 需要 `HUAWEICLOUD_SDK_AK` / `HUAWEICLOUD_SDK_SK`，仅限本地 CLI / helper script 使用，不作为 Service 默认运行路径。
+- 失败模式：缺少 Gateway URL、STS provider 未配置、WAT 缺失、STS 兑换失败或 IAM 签名 401 / 403 时，GitHub MCP source 返回 typed warning，`generate_report` 继续输出 Email / Calendar 等可用 source 的部分报表；日志只记录 provider name、状态码和 request id，不记录 token、PAT、AK/SK 或签名 header。
+- Target 出站 401 优先排查 `Authorization` header name、`Bearer` prefix 和 PAT 值；Target 出站 403 优先排查 PAT repo 范围和只读权限。
 
 ### 4.2 Service 侧变更
 
@@ -496,6 +515,8 @@ GitHub source 映射：
 - 新增 typed settings：
   - `GITHUB_MCP_ENABLED`
   - `GITHUB_MCP_GATEWAY_URL`
+  - `GITHUB_MCP_AUTH_MODE`，首期固定为 `iam`
+  - `GITHUB_MCP_STS_PROVIDER_NAME`
   - `GITHUB_MCP_TIMEOUT_SECONDS`
   - `GITHUB_MCP_TOOL_PREFIX`
 - `SYSTEM_PROMPT` 增加报表工具选择规则：
@@ -558,11 +579,13 @@ GitHub source 映射：
 - `GITHUB_MCP_ENABLED=true` 时，`generate_report` 可以调用 GitHub MCP activity source。
 - GitHub MCP source 启动检查确认 Gateway Target 使用 read-only endpoint 或 `X-MCP-Readonly: true`，且不提供通用 raw MCP tool passthrough。
 - MCP Gateway 不可用时，GitHub activity source 降级为 unavailable，并记录 warning；`generate_report` 仍可使用邮件 / 日历 source 生成部分报表。
+- `GITHUB_MCP_AUTH_MODE=iam` 时，缺少 `GITHUB_MCP_STS_PROVIDER_NAME`、STS 兑换失败或 IAM 签名返回 401 / 403，均映射为 GitHub source warning，不暴露 token、PAT、AK/SK 或签名 header。
 - Agent 请求“生成本周周报”时，优先调用 `generate_report`；`generate_report` 在需要工程活动时调用 `github_mcp_search_activity`。
 
 ### 5.3 E2E / Staging 验证
 
 - 真实或 staging Gateway 按 IAM 入站、GitHub PAT 出站配置后：
+  - Production Runtime 请求路径能从 `X-HW-AgentGateway-Workload-Access-Token` 进入 `AgentArtsRuntimeContext`，并通过 `GITHUB_MCP_STS_PROVIDER_NAME` 换取临时 IAM 凭据完成 Gateway 调用。
   - Gateway Target 指向 `https://api.githubcopilot.com/mcp/readonly`，或等效配置 `X-MCP-Readonly: true`。
   - Gateway Target 注入 `Authorization: Bearer <GitHub PAT>`，PAT 使用只读最小权限。
   - 用户请求“生成本周周报”。
@@ -577,6 +600,7 @@ GitHub source 映射：
 - 首个 MCP Gateway data source 只做 GitHub 工程活动源；Gitee 后续作为独立能力扩展。
 - 邮件 / 日历在首期报表中复用现有 local tools，不通过 MCP Gateway 重新实现。
 - GitHub MCP source 代表 personal assistant agent 平台身份，只汇总 PAT / platform GitHub account 可见范围内的工程活动；当前用户个人 GitHub 活动不属于该 MCP source 的语义。
+- Service 调 AgentArts MCP Gateway 的生产认证路径依赖 Gateway 注入 WAT 与 AgentArts Identity STS provider；Runtime 不配置长期 AK/SK。若该链路不可用，本 Feature 降级为无 GitHub source 的部分报表。
 - 后续“AgentArts Memory 的 skill 能力”负责沉淀用户报表偏好、常用仓库、常用收件人和摘要风格。
 - 后续“AgentArts Sandbox 的 CLI 工具能力”负责可重复的报告渲染、diff 统计或本地仓库分析，不在本 Feature 中实现。
 
@@ -589,7 +613,7 @@ personal-assistant/
 ├── personal-assistant-meta/
 │   ├── issues/features/backlog/feature-17-github-mcp/
 │   │   ├── plan.md                    # 已新增：Report + MCP data source 设计文档
-│   │   └── issue.md                   # 可选新增：正式 feature issue
+│   │   └── issue.md                   # 已新增：正式 feature issue
 │   ├── specs/
 │   │   ├── overall_specifications.md   # 修改：登记 Report root capability
 │   │   ├── dictionary.md               # 修改：补充 ReportEvidence / GitHubActivityEvent / GitHub MCP 术语
