@@ -71,20 +71,21 @@ generate_report 内部复用:
 
 - `gateway-github-mcp` 与 `target-github-mcp` 在华为云 AgentArts 控制台手动创建和维护，本 Feature 不通过代码创建 / 更新 Gateway 或 Target。
 - AgentArts MCP Gateway 入站认证选择 IAM，Service 只消费已配置好的 Gateway URL，并以 IAM 认证方式调用 Gateway；
-- GitHub MCP Target 出站认证固定选择 API Key，凭证值使用 GitHub PAT，并由 Gateway 在出站请求中注入给 `https://api.githubcopilot.com/mcp/`；PAT 不作为 MCP tool 参数暴露，也不进入 Service 配置。
+- GitHub MCP Target 指向 GitHub remote MCP 的 read-only endpoint：`https://api.githubcopilot.com/mcp/readonly`。如 AgentArts Target 支持自定义 header，同步设置 `X-MCP-Readonly: true`，并用 `X-MCP-Toolsets: repos,issues,pull_requests` 约束报表所需 toolsets。
+- GitHub MCP Target 出站认证固定选择 API Key，凭证值使用 GitHub PAT，并由 Gateway 在出站请求中注入 `Authorization: Bearer <GitHub PAT>`；PAT 不作为 MCP tool 参数暴露，也不进入 Service 配置。
 - Service 连接 AgentArts MCP Gateway 时使用 LangChain / LangGraph 生态的开源 MCP 集成（优先评估 `langchain-mcp-adapters`），由开源库负责远程 MCP tools 加载与调用；项目内 `app/mcp/` 只做配置封装、IAM 认证注入、超时控制、错误映射和结果解析，不自实现 MCP 协议。
 - Service 工具层新增 `report_tools.py` 暴露 `generate_report`；新增 `github_mcp_tools.py` 作为 Report 内部的 GitHub activity source wrapper，而不是把 GitHub 的全部原子工具直接交给 Agent。
 - 报表侧统一消费 `GitHubActivityEvent`，由 `github_mcp_tools.py` 完成 GitHub 原始返回到统一事件模型的归一化。
 
 ### 2.4 GitHub MCP Server 连接方案对比
 
-GitHub 官方 remote MCP Server endpoint 为 `https://api.githubcopilot.com/mcp/`。本 Feature 有两种连接方式：通过 AgentArts MCP Gateway 间接连接，或由 Service 直连 GitHub 官方 remote MCP。
+GitHub 官方 remote MCP Server default endpoint 为 `https://api.githubcopilot.com/mcp/`，同时支持 read-only endpoint `https://api.githubcopilot.com/mcp/readonly` 和 `X-MCP-Readonly` / `X-MCP-Toolsets` headers。本 Feature 有两种连接方式：通过 AgentArts MCP Gateway 间接连接，或由 Service 直连 GitHub 官方 remote MCP。
 
 | 对比项 | 方案 A：通过 AgentArts MCP Gateway | 方案 B：Service 直连 GitHub 官方 remote MCP |
 |---|---|---|
-| 连接路径 | Service → AgentArts MCP Gateway → GitHub MCP Target → `https://api.githubcopilot.com/mcp/` | Service → `https://api.githubcopilot.com/mcp/` |
+| 连接路径 | Service → AgentArts MCP Gateway → GitHub MCP Target → `https://api.githubcopilot.com/mcp/readonly` | Service → `https://api.githubcopilot.com/mcp/readonly` |
 | 入站认证 | Gateway 入站使用 IAM，Service 调 Gateway 时走华为云 IAM 认证 | 无 AgentArts Gateway 入站层；Service 直接向 GitHub MCP 发请求 |
-| GitHub 出站认证 | Target 出站使用 API Key，凭证值为 GitHub PAT，由 Gateway 注入给 GitHub MCP | Service 直接持有或从凭证服务获取 GitHub PAT / access token，并写入 `Authorization: Bearer <token>` |
+| GitHub 出站认证 | Target 出站使用 API Key，凭证值为 GitHub PAT，由 Gateway 注入 `Authorization: Bearer <GitHub PAT>` | Service 直接持有或从凭证服务获取 GitHub PAT / access token，并写入 `Authorization: Bearer <token>` |
 | 凭证边界 | GitHub PAT 留在 AgentArts Gateway Target / 凭证配置中，不进入 Agent tool schema | GitHub PAT 需要进入 Service 运行时配置或 Service 侧凭证读取逻辑 |
 | 平台治理 | 复用 AgentArts MCP Gateway 的 target 管理、权限、网络和观测能力 | 绕过 AgentArts MCP Gateway，治理能力主要由 Service 自己实现 |
 | 实现复杂度 | 需要配置 Gateway、Target、IAM 权限和出站 API Key；多一层平台依赖 | 链路更短，适合本地 POC；但 Service 需要自行处理 GitHub MCP headers、token、重试和审计 |
@@ -95,7 +96,7 @@ GitHub 官方 remote MCP Server endpoint 为 `https://api.githubcopilot.com/mcp/
 - **平台能力闭环**：真正落地“先用 AgentArts MCP Gateway 增加 MCP 工具能力”的阶段目标，而不是绕过 Gateway 只做普通远程 MCP client。
 - **凭证隔离更清晰**：GitHub PAT 保存在 Gateway Target / 凭证配置中，由 Gateway 出站注入；Service 和 Agent tool schema 不需要直接持有 GitHub PAT。
 - **治理与运维集中**：Gateway 统一管理 Target、入站 IAM、出站认证、网络模式和后续观测配置，后续接入更多 MCP Target 时可以沿用同一平台模式。
-- **Service 逻辑更聚焦**：Service 只负责报表业务编排、tool filtering、结果归一化和错误映射，不承担 GitHub MCP endpoint 凭证注入与 target 管理职责。
+- **Service 逻辑更聚焦**：Service 只负责报表业务编排、GitHub activity source 封装、结果归一化和错误映射，不承担 GitHub MCP endpoint 凭证注入与 target 管理职责。
 - **后续扩展更顺**：未来接入其他代码平台、企业内部 API 或更多 MCP Server 时，可以继续通过 Gateway 增加 Target，而不是在 Service 中堆多个直连实现。
 
 结论：本 Feature 采用 **方案 A：通过 AgentArts MCP Gateway 连接 GitHub 官方 remote MCP**。方案 B 只作为本地验证或 Gateway 不可用时的诊断路径，不作为首期正式架构。
@@ -181,8 +182,8 @@ flowchart TB
     GitHubSource["tools/github_mcp_tools.py<br/>GitHub activity source"]
     Adapter["LangChain / LangGraph MCP adapter<br/>app/mcp config wrapper"]
     Gateway["AgentArts MCP Gateway<br/>入站 IAM"]
-    Target["GitHub MCP Target<br/>出站 API Key: GitHub PAT"]
-    GitHubMCP["GitHub MCP Server<br/>https://api.githubcopilot.com/mcp/"]
+    Target["GitHub MCP Target<br/>Authorization: Bearer PAT<br/>read-only"]
+    GitHubMCP["GitHub MCP Server<br/>https://api.githubcopilot.com/mcp/readonly"]
     GitHubAPI["GitHub API"]
 
     Client --> Service
@@ -228,7 +229,7 @@ sequenceDiagram
     Report->>GitHubSource: github_mcp_resolve_identity
     GitHubSource->>Adapter: 调用开源 MCP adapter
     Adapter->>Gateway: IAM 认证调用 Gateway
-    Gateway->>GitHubMCP: Streamable HTTP + API Key(GitHub PAT)
+    Gateway->>GitHubMCP: Streamable HTTP + Authorization: Bearer PAT + read-only
     GitHubMCP->>GitHubAPI: 读取 Target 授权身份
     GitHubAPI-->>GitHubMCP: GitHub 身份
     GitHubMCP-->>Gateway: MCP tool result
@@ -238,7 +239,7 @@ sequenceDiagram
     Report->>GitHubSource: github_mcp_search_activity
     GitHubSource->>Adapter: 调用开源 MCP adapter
     Adapter->>Gateway: IAM 认证调用 Gateway
-    Gateway->>GitHubMCP: Streamable HTTP + API Key(GitHub PAT)
+    Gateway->>GitHubMCP: Streamable HTTP + Authorization: Bearer PAT + read-only
     GitHubMCP->>GitHubAPI: 查询 commits / pull requests / issues / reviews
     GitHubAPI-->>GitHubMCP: GitHub 活动数据
     GitHubMCP-->>Gateway: MCP tool result
@@ -438,9 +439,10 @@ GitHub 官方 MCP Server 暴露的是 GitHub API 级别的原子工具；本 Fea
 运行时能力发现：
 
 - Service 启动或首次启用 GitHub MCP 时，通过 LangChain / LangGraph MCP adapter 获取远程 `tools/list`。
-- `app/mcp/` 维护一个 tool registry，记录当前 Gateway 下可用的官方 GitHub MCP tools。
-- `github_mcp_tools.py` 只调用 registry 中通过 allow-list 的只读工具；如果关键工具缺失，当前 wrapper 返回结构化错误，并提示 Gateway / Target 配置不完整。
-- 官方工具名称以运行时 `tools/list` 为准；若 GitHub MCP Server 后续发生工具重命名，Service 通过 registry alias 做兼容，不在 Agent prompt 中硬编码全部原子工具。
+- `app/mcp/` 记录当前 Gateway 下可用的官方 GitHub MCP tools，用于启动检查和错误诊断。
+- `github_mcp_tools.py` 不提供通用 raw MCP tool passthrough，只实现报表所需的 GitHub activity source functions。
+- 如果报表所需的 GitHub MCP capability 缺失，当前 source function 返回结构化错误，并提示 Gateway / Target 配置不完整。
+- 官方工具名称以运行时 `tools/list` 为准；若 GitHub MCP Server 后续发生工具重命名，Service 通过 source function 内部适配做兼容，不在 Agent prompt 中硬编码全部原子工具。
 
 GitHub source 映射：
 
@@ -477,8 +479,10 @@ GitHub source 映射：
 ### 4.1 AgentArts MCP Gateway配置
 
 - 在华为云 AgentArts 控制台手动创建 `gateway-github-mcp`，协议类型为 MCP。Gateway 入站认证选择 IAM。
-- 在该 Gateway 下手动创建 `target-github-mcp`，GitHub Target 指向官方 GitHub MCP Server：`https://api.githubcopilot.com/mcp/`，传输方式使用 Streamable HTTP。
-- GitHub Target 出站认证选择 API Key，凭证值使用 GitHub PAT；Gateway 负责在出站请求中携带该凭证，不把 PAT 作为 MCP tool 参数暴露。
+- 在该 Gateway 下手动创建 `target-github-mcp`，GitHub Target 指向官方 GitHub MCP Server read-only endpoint：`https://api.githubcopilot.com/mcp/readonly`，传输方式使用 Streamable HTTP。
+- 若 AgentArts Target 支持自定义 header，额外配置 `X-MCP-Readonly: true`，并设置 `X-MCP-Toolsets: repos,issues,pull_requests`，让 Target 层只暴露报表所需的只读 GitHub capabilities。
+- GitHub Target 出站认证选择 API Key，凭证值使用 GitHub PAT；Gateway 负责在出站请求中携带 `Authorization: Bearer <GitHub PAT>`，不把 PAT 作为 MCP tool 参数暴露。
+- GitHub PAT 优先使用 fine-grained PAT，并限制到报表需要读取的 repository；权限只授予 Metadata read、Contents read、Issues read、Pull requests read 等只读权限。若只能使用 classic PAT，则必须在文档和 staging 配置中明确其权限范围和 demo 边界。
 - 代码侧不使用 `MCPGatewayClient` 自动创建 / 更新 Gateway；Service 只通过配置读取已创建 Gateway 的访问地址。
 
 ### 4.2 Service 侧变更
@@ -486,7 +490,7 @@ GitHub source 映射：
 - 新增 `app/tools/report_tools.py`，注册 `generate_report` high-level tool 进 `build_tools()`，作为报表 root capability。
 - `generate_report` 内部直接复用现有 `email_tools.py` / `calendar_tools.py` 中的 async functions；无需迁移邮件或日历工具。
 - 引入 LangChain / LangGraph 生态的开源 MCP 集成（优先评估 `langchain-mcp-adapters`），将 AgentArts MCP Gateway 暴露的远程 MCP tools 转成 Service 内部可调用的 GitHub activity source。
-- 新增轻量 `app/mcp/` 配置封装层，只负责 Gateway URL、IAM 认证、timeout、tool filtering 和错误映射；不手写 MCP protocol client。
+- 新增轻量 `app/mcp/` 配置封装层，只负责 Gateway URL、IAM 认证、timeout、source capability check 和错误映射；不手写 MCP protocol client。
 - 新增 `app/tools/github_mcp_tools.py`，封装 GitHub MCP activity source functions，并归一化为 `GitHubActivityEvent`。
 - 新增 typed settings：
   - `GITHUB_MCP_ENABLED`
@@ -551,12 +555,15 @@ GitHub source 映射：
 
 - `build_tools()` 注册 `generate_report` root tool。
 - `GITHUB_MCP_ENABLED=true` 时，`generate_report` 可以调用 GitHub MCP activity source。
+- GitHub MCP source 启动检查确认 Gateway Target 使用 read-only endpoint 或 `X-MCP-Readonly: true`，且不提供通用 raw MCP tool passthrough。
 - MCP Gateway 不可用时，GitHub activity source 降级为 unavailable，并记录 warning；`generate_report` 仍可使用邮件 / 日历 source 生成部分报表。
 - Agent 请求“生成本周周报”时，优先调用 `generate_report`；`generate_report` 在需要工程活动时调用 `github_mcp_search_activity`。
 
 ### 5.3 E2E / Staging 验证
 
 - 真实或 staging Gateway 按 IAM 入站、GitHub PAT 出站配置后：
+  - Gateway Target 指向 `https://api.githubcopilot.com/mcp/readonly`，或等效配置 `X-MCP-Readonly: true`。
+  - Gateway Target 注入 `Authorization: Bearer <GitHub PAT>`，PAT 使用只读最小权限。
   - 用户请求“生成本周周报”。
   - Agent 调用 `generate_report`。
   - `generate_report` 读取 Calendar / Email，并通过 GitHub MCP source 拉取工程活动。
@@ -601,7 +608,7 @@ personal-assistant/
 │   │   │   ├── __init__.py             # 新增
 │   │   │   ├── langchain_client.py     # 新增：基于开源 MCP adapter 连接 Gateway
 │   │   │   ├── auth.py                 # 新增：IAM 调用认证与 headers/session 封装
-│   │   │   ├── adapters.py             # 新增：tool filtering / error mapping / result parsing
+│   │   │   ├── adapters.py             # 新增：capability check / error mapping / result parsing
 │   │   │   └── schemas.py              # 新增：GitHubActivityEvent 等 MCP 类型
 │   │   └── tools/
 │   │       ├── __init__.py             # 修改：注册 generate_report
