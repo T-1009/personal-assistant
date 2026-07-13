@@ -1,48 +1,46 @@
-# Feature 14 Spike: Runtime Session Pre-warm 与 Conversation API 边界
+# Feature 14 Spike: Runtime Session、Cookie 与提前唤醒
 
-> 日期：2026-07-07
-> 状态：部分完成；live lifecycle 行为仍需有效 CUSTOM_JWT 后复测
+> 日期：2026-07-13
+> 状态：文档与代码静态验证完成；Gateway trust、custom path 和 latency 仍需 deployed probe
 
 ## 结论摘要
 
-1. **Runtime Session header resolution 必须发生在 AgentArts Gateway 之前。**
-   `X-Hw-Agentarts-Session-Id` 是调用 `ExecuteRuntime` /
-   `ExecuteRuntimeWithPrefix` 的必选 header，Gateway 在进入 FastAPI 容器前已经使用它完成 Runtime Session routing。因此 FastAPI 不能为当前这一次
-   `/invocations` 请求“补注入” Runtime Session ID。
-2. **将 Conversation 管理 API 放在 Agent Runtime 内是可实现但不作为目标方案。**
-   AgentArts `ExecuteRuntimeWithPrefix` 文档明确要求 custom route 也携带
-   `X-Hw-Agentarts-Session-Id`。因此 `/conversations`、`/messages` 这类
-   metadata API 如果通过 Gateway 访问，也会被建模为 Runtime execution call。
-   若目标是不让 metadata API 本身触发或依赖 Runtime execution instance，应把
-   Conversation API 放到 Service-owned Control Plane，而不是 Runtime 容器内。
-3. **当前 Cloudflare Pages Function 是 pre-Gateway BFF 的唯一现成位置，但它没有
-   business state ownership。**
-   采纳后的目标是：Pages Function 作为 Thin BFF，只做 same-origin proxy、调用
-   Control Plane、注入 Runtime Session header 和代理 SSE。Runtime lease state
-   machine、Conversation ownership、数据库访问与 `sessions-start` / `sessions-stop`
-   调用由 Service-owned Control Plane 负责。
-4. **本环境无法完成 live `sessions-start` 成功路径验证。**
-   仓库中配置的 dev API key 对当前 Gateway 返回 `401 Authentication failed!`；
-   环境中没有 Microsoft ID token / `AGENTARTS_BEARER_TOKEN`。需要用有效
-   CUSTOM_JWT 重新执行 live spike。
-5. **已知平台行为：底层 Runtime 自动回收不要求 Session ID rotation。**
-   底层 execution instance 被平台自动回收后，再次使用相同
-   `runtime_session_id` 调用 `/invocations` 会重新创建 instance。应用应把该 ID
-   视为稳定逻辑路由键，而不是物理 instance identity。
+1. **AgentArts 官方 API 文档没有定义 pre-warm/warm-up API。**
+   `sessions-start` 的官方语义是创建 Runtime Session；文档没有 readiness、TTL 或
+   首条 Invocation latency guarantee。
+2. **`sessions-start` 不接收调用者提供的 Session ID。**
+   请求无 body，成功后由平台返回 `data.session_id`。因此它不能启动 BFF 预先生成的
+   Cookie ID。
+3. **Invocation 隐式创建已满足正确性。**
+   应用可直接使用合法自生成 ID；底层 instance 被自动回收后，同一个 ID 可再次触发
+   创建，无需 replacement ID。
+4. **选择 random HttpOnly Cookie，而不是数据库 Runtime lease。**
+   Cloudflare BFF 生成 opaque routing key、写 Cookie并覆盖 upstream Session header。
+   Runtime ID 不代表用户身份，不写 DB。
+5. **Conversation API 放在现有 FastAPI Service。**
+   请求经显式 Pages Function 和 AgentArts Gateway custom path 进入 Runtime；不创建
+   独立 Control Plane，也没有 BFF-only internal API。
+6. **进入 Chat 的 Conversation list 是 application-level warm-up。**
+   它本来就是产品需要的请求，同时会隐式启动 Runtime。是否降低第一条消息延迟仍需
+   benchmark，失败不影响直接 Invocation。
+7. **BFF 不校验 JWT。**
+   AgentArts Gateway 负责验证；FastAPI 在 Gateway 后从已验证 token 派生 `user_id`。
+   该方案以 Gateway 转发 Authorization 且 Runtime 无 public bypass 为 blocking 前提。
 
-## 本地环境检查
+## Spike 问题
 
-- 当前 worktree 没有安装 `agentarts` CLI。
-- `wrangler.toml` 包含 production Gateway URL：
-  `defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com`。
-- `.agentarts_config.yaml` 的 runtime name 是 `personal-assistant`。
-- `.agentarts_config.yaml` 配置 `authorizer_type: CUSTOM_JWT`，并带有
-  `key_auth` dev key；但 live Gateway 对该 key 的所有 header 形式均返回 401。
-- 当前 shell 有 HuaweiCloud AK/SK 环境变量，但 Runtime invocation/lifecycle API 的认证取决于 Runtime inbound auth。该 AK/SK 不能替代 CUSTOM_JWT 调用当前
-  Gateway。
-- GitNexus 当前 worktree 未注册；本次只使用 sibling worktree index 做导航，并以本地文件为准。
+本次 spike 回答：
 
-## AgentArts PDF 验证结果
+1. AgentArts 是否存在文档化的预热 API？
+2. `sessions-start` 是否允许指定已有 Session ID？
+3. 自生成 Session ID 是否可直接用于 Invocation 和自动重建？
+4. Runtime ID 应由 browser、BFF、Service 还是 AgentArts 生成？
+5. 为了复用 Runtime，是否必须持久化 lease？
+6. Conversation API 是否必须部署在 Gateway 前？
+7. 不让 BFF 校验 JWT 时，业务身份如何可信？
+8. 如何用可观测实验判断提前请求是否真的改善 latency？
+
+## AgentArts PDF 证据
 
 PDF：`personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts-api-pdf.pdf`
 
@@ -50,171 +48,244 @@ PDF：`personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts-
 
 - Section：4.7.1.1
 - URI：`POST /runtimes/{runtime_name}/sessions-start`
-- Request header：
-  - `Authorization` required
-  - `X-Sdk-Content-Sha256` optional for IAM auth
-- Documented 200 response body：
-  - `code`
-  - `message`
-  - `data.session_id`
-- `data.session_id` constraints：
-  - English letters, digits, `-`, `_`
-  - max length 64
-- PDF oddity：request example text says `sessions-stop` under the
-  `sessions-start` section. Treat the URI/table as source of truth and keep a
-  live API spike before implementation freeze.
+- Required header：`Authorization`
+- Optional header：`X-Sdk-Content-Sha256`（IAM auth）
+- 文档没有 request body，也没有 caller-supplied Session ID 参数
+- 200 response：`code`、`message`、`data.session_id`
+- `data.session_id`：英文字母、数字、`-`、`_`，最长 64 字符
+- PDF 的 request example 在该 section 中误写了 `sessions-stop`；URI 和参数表应作为
+  文档依据，live probe 仍需防御该文档问题
+
+文档未给出：
+
+- `ready` flag 或 readiness query；
+- `expires_at`、`ttl`、`session_timeout`；
+- start latency 或 first-invocation latency guarantee；
+- caller-selected ID；
+- repeated start idempotency；
+- “pre-warm”或“warm-up”术语。
+
+因此，`sessions-start` 可以被应用尝试用于提前创建，但不能被写成平台承诺的预热 API。
 
 ### `ExecuteRuntimeWithPrefix`
 
 - Section：4.7.1.2
 - URI：`POST /runtimes/{runtime_name}/invocations/{custom_path}`
-- Requires Runtime `url_match_type=PREFIX_MATCH`.
-- `custom_path` must not start with `/`.
-- Request header:
-  - `X-Hw-Agentarts-Session-Id` required
-  - `X-Hw-Agentgateway-User-Id` optional by platform docs, required by this app
-  - `Authorization` required
-  - `X-Sdk-Content-Sha256` optional for IAM auth
-- Design consequence：Conversation metadata routes behind this API still require a Runtime Session ID.
+- Runtime access 必须配置 `url_match_type=PREFIX_MATCH`
+- `custom_path` 不以 `/` 开头
+- Required headers：`X-Hw-Agentarts-Session-Id`、`Authorization`
+- `X-Hw-Agentgateway-User-Id` 在平台文档中为 optional
+
+PDF 以 POST 描述该接口，但项目 Calendar callback 设计还需要 GET custom path；Feature 14
+的 Conversation API 还需要 GET/PATCH/DELETE。因此 method pass-through 必须做 deployed
+contract probe，不能只从 FastAPI route 能力推断 Gateway 行为。
 
 ### `ExecuteRuntime`
 
 - Section：4.7.1.3
 - URI：`POST /runtimes/{runtime_name}/invocations`
-- Request header:
-  - `X-Hw-Agentarts-Session-Id` required
-  - `X-Hw-Agentgateway-User-Id` optional by platform docs, required by this app
-  - `Authorization` required
-- Current app already uses this path for chat.
+- Required headers：`X-Hw-Agentarts-Session-Id`、`Authorization`
+- 当前 Web Chat 已使用该 path
 
 ### `StopRuntimeSession`
 
 - Section：4.7.1.7
 - URI：`POST /runtimes/{runtime_name}/sessions-stop`
-- Request header:
-  - `X-Hw-Agentarts-Session-Id` required
-  - `Authorization` required
-- Purpose：destroy the instance corresponding to the session.
+- Required headers：`X-Hw-Agentarts-Session-Id`、`Authorization`
+- 官方用途：销毁该 Session 对应的 instance
 
-### 已确认的 Runtime Session ID 复用行为
+Feature 14 不接入该 API，因为没有后台 service credential 模型，也不需要 stop 才能保证
+Conversation correctness。登出只丢弃 Cookie，底层 instance 由平台自动回收。
 
-- 底层 Runtime execution instance 被平台自动回收后，相同
-  `runtime_session_id` 仍可用于后续 `/invocations`；
-- AgentArts 会为该 ID 隐式重新创建 execution instance；
-- 应用无需仅因平台自动回收生成 replacement ID；
-- 相同 ID 不代表底层物理 instance 相同，只代表稳定的逻辑 Session 路由键；
-- 该条件不等同于已验证显式 `sessions-stop` 后的行为，后者仍保留为 live spike
-  问题。
+### API 预热结论
 
-## Live Probe Attempt
+AgentArts 产品材料提到低冷启动延迟，但产品能力描述不等于 API contract。当前 API PDF
+没有独立 pre-warm endpoint，也没有把 `sessions-start` 与“ready for first message”绑定。
 
-Target Gateway:
+结论用语固定为：
+
+> AgentArts 提供 Runtime Session lifecycle API；Personal Assistant 使用业务初始化请求
+> 实现 application-level warm-up。性能收益必须实测，不属于平台 API 保证。
+
+## 已确认的 Runtime 复用行为
+
+项目已确认：
+
+- 合法的 application-generated `runtime_session_id` 可直接用于 Invocation；
+- 底层 Runtime execution instance 被平台自动回收后，同一 ID 仍可继续使用；
+- 下一次 Invocation 会为该逻辑 ID 隐式创建 instance；
+- 应用无需仅因自动回收生成 replacement ID；
+- 相同 ID 不保证物理 instance identity；
+- 平台自动回收后的复用不等同于显式 `sessions-stop` 后的复用，后者没有成为本 Feature
+  的依赖。
+
+## 当前代码静态检查
+
+### Client/BFF Runtime ID
+
+Current path：
 
 ```text
-https://defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com
+src/lib/chat/session.ts
+  -> browser localStorage generates agentarts-session-id
+src/lib/chat/chat-api-client.ts
+  -> sends x-hw-agentarts-session-id
+functions/_shared/agentarts-proxy.js
+  -> forwards caller header unchanged
 ```
 
-Probes attempted:
+Target path：
 
-| Probe | Result |
-|-------|--------|
-| `GET /runtimes/personal-assistant/invocations/openapi.json` without session | `401 Authentication failed!` |
-| `POST /runtimes/personal-assistant/sessions-start` with configured dev key | `401 Authentication failed!` |
-| Same with raw Authorization, `X-Api-Key`, `Api-Key`, and key name variants | `401 Authentication failed!` |
-| `POST /runtimes/personal-assistant/invocations` with generated session id and dev key | `401 Authentication failed!` |
+```text
+functions/_shared/runtime-session.js
+  -> reads/generates pa_runtime_session HttpOnly Cookie
+functions/_shared/agentarts-proxy.js
+  -> drops caller header and injects Cookie value
+src/lib/chat/chat-api-client.ts
+  -> no Runtime Session header
+```
 
-No Runtime Session was successfully created in this run. Cleanup `sessions-stop`
-also returned 401 because no valid Runtime auth was available.
+UUID v4 contains only hexadecimal digits and `-`, length 36, so it fits the documented AgentArts
+character and length limits.
 
-上面的自动回收复用语义是项目采用的已知平台条件，不是本次因 401 阻塞的 probe
-所得结果。
+### Current identity weakness
 
-## Blocked Live Questions
+Current production flow is:
 
-These remain open until a valid Microsoft ID token or a KEY_AUTH-enabled Runtime
-endpoint is available:
+```text
+Browser decodes JWT without signature verification
+  -> sends X-HW-AgentGateway-User-Id
+BFF forwards it unchanged
+FastAPI trusts it as verified identity
+```
 
-- Does `sessions-start` accept no body in the real environment?
-- Does it return a platform-generated `data.session_id` as documented?
-- Does it accept a client-specified Session ID via header or body?
-- Is repeated start idempotent for the same desired Session ID?
-- Does start completion mean the execution instance is ready for immediate
-  invocation?
-- What is measured start latency and first invocation latency after start?
-- What happens if the same Session ID is used after `sessions-stop`?
-- Does a custom metadata route with a valid auth token but no session header fail
-  specifically for missing `X-Hw-Agentarts-Session-Id`, as the docs imply?
+AgentArts project documentation records that CUSTOM_JWT Gateway validates JWT but does not itself
+inject that user header. A valid user could therefore change only the header and attempt to select
+another user's DB rows once Feature 14 adds Conversation APIs.
+
+Target flow removes the header as ownership source:
+
+```text
+Browser -> Authorization JWT
+BFF -> forwards JWT, no validation
+Gateway -> validates JWT
+FastAPI -> parses validated token sub, authorizes DB query
+```
+
+This is safe only when the FastAPI request is guaranteed to have passed Gateway. The deployed probe
+must verify that trust assumption before Conversation data is exposed.
+
+### OAuth callback coupling
+
+`functions/_shared/callback-context.js` currently reads
+`x-hw-agentarts-session-id` from the browser request to create
+`pa_oauth2_callback_session`. Once Client stops sending that header, the snapshot would disappear.
+
+Required change: `proxyInvocationsRequest()` passes the BFF-resolved Session ID explicitly into the
+callback helper. Add a regression where the main Runtime Cookie rotates after authorization starts;
+the callback must still use the captured Session context and signed state.
+
+## Alternatives Evaluated
+
+| Alternative | Result | Reason |
+|-------------|--------|--------|
+| Browser localStorage ID | Reject | JS-readable/caller-controlled; mixes product and routing identity |
+| Deterministic ID derived from `user_id` | Reject | BFF would need trusted identity or token validation; stable identifiers leak correlation and complicate rotation |
+| Service-owned Control Plane + DB lease | Reject | new deployment/auth/DB/lifecycle worker for an optimization; no platform ready/TTL state to mirror |
+| BFF direct PostgreSQL/Hyperdrive | Reject | puts ownership and DB logic at edge, duplicates Service business boundary |
+| `sessions-start` then save returned ID in Cookie | Defer | technically possible but no documented warm-up benefit; adds lifecycle call and alternate ID source |
+| Random BFF HttpOnly Cookie + implicit Invocation | **Choose** | opaque, simple, no DB state, same-tab sharing, works with confirmed implicit recreation |
+
+## Why No Lease Store
+
+A durable lease is useful when multiple workers must coordinate exclusive ownership, renewal,
+takeover or cleanup. Feature 14 needs none of those for correctness:
+
+- Cookie provides routing-key reuse;
+- Gateway JWT + Service ownership protects business data;
+- Runtime auto-recreation handles platform recycle;
+- no service credential means a background stop worker would be fictional;
+- no platform TTL/readiness means local status would drift;
+- an initial two-Tab duplicate only consumes temporary resources.
+
+The lease store would create more state than it observes. It is therefore removed rather than
+simplified.
+
+## Live Probe Status
+
+The previous environment had HuaweiCloud AK/SK but the deployed Runtime used CUSTOM_JWT. Attempts to
+call lifecycle endpoints with the available credential returned authentication failure, so no live
+claim is made about successful `sessions-start` response timing or repeated-start behavior.
+
+This no longer blocks Feature 14 because production does not call lifecycle endpoints.
+
+Still required deployed probes:
+
+| Probe | Expected evidence |
+|-------|-------------------|
+| Valid JWT root Invocation | Gateway accepts and FastAPI can read Authorization |
+| Forged/expired JWT custom path | Gateway rejects before FastAPI |
+| Valid JWT + forged user header | Service-derived user remains token `sub` |
+| Direct Runtime/container access attempt | no production public bypass |
+| GET/POST/PATCH/DELETE custom paths | method/path reach intended FastAPI routes |
+| Same Session ID after platform recycle | request succeeds and durable Conversation restores |
+
+## Warm-up Benchmark Design
+
+### Hypothesis
+
+Calling `GET /api/conversations` with a fresh Runtime Session ID before the first chat Invocation may
+move Runtime cold start and Service initialization outside the first-message critical path.
+
+### Cohorts
+
+1. **Baseline**: fresh ID -> `POST /invocations`.
+2. **Application warm-up**: fresh ID -> `GET /api/conversations` -> same-ID Invocation.
+3. **Optional lifecycle**: valid auth -> `sessions-start` -> returned-ID Invocation.
+
+### Measurements
+
+- warm-up request duration;
+- Invocation time to first SSE byte;
+- time to first model token when distinguishable;
+- total response time;
+- failure/timeout count;
+- p50 and p95 over repeated fresh IDs;
+- Runtime version, region and observation timestamp.
+
+Do not compare one warm request with one cold request. Do not publish a “ready” state because an HTTP
+200 from Conversation list only proves that request completed; it does not define future platform TTL.
+
+### Decision rule
+
+- Conversation list remains required regardless of latency outcome.
+- If first-token latency improves, describe the behavior as measured application warm-up.
+- If it does not improve, remove pre-warm performance claims while keeping the simpler Cookie/session
+  architecture.
+- Do not add `sessions-start` unless the optional cohort shows repeatable material benefit and a new
+  design supplies auth, error and lifecycle ownership.
+
+## Remaining Questions
+
+Blocking before implementation:
+
+- Does Gateway forward the validated original Authorization header to all custom paths?
+- Can production Runtime be reached by any route that bypasses Gateway auth?
+- Does PREFIX_MATCH preserve GET/PATCH/DELETE in the deployed configuration?
+
+Non-blocking research:
+
+- Does `sessions-start` provide measurable first-token benefit over useful-work warm-up?
+- What happens when reusing an ID after an explicit `sessions-stop`?
+- Does AgentArts expose future official readiness/TTL metadata?
 
 ## Design Consequences
 
-### Recommended Boundary
-
-Use a **pre-Gateway Thin BFF** for Runtime Session header injection, and delegate
-Runtime Session lifecycle to Service-owned Control Plane:
-
-图类型：**Flowchart（架构边界图）**。用于说明 Browser、BFF、AgentArts Gateway
-和 FastAPI Runtime 的调用边界。
-
-```mermaid
-flowchart LR
-    Browser["Browser"] --> BFF["Cloudflare Pages Function<br/>Thin BFF"]
-    BFF -->|"ensure / invocation context"| CP["Service-owned Control Plane"]
-    CP -->|"lease state + messages"| DB["PostgreSQL"]
-    CP -->|"sessions-start / sessions-stop"| Gateway["AgentArts Gateway"]
-    BFF -->|"inject X-Hw-Agentarts-Session-Id"| Runtime["ExecuteRuntime / ExecuteRuntimeWithPrefix"]
-    Runtime --> FastAPI["FastAPI Agent Runtime"]
-    FastAPI --> DB
-```
-
-Service side should own:
-
-- Conversation ownership checks;
-- `conversation_id -> thread_id` derivation;
-- `conversation_messages` read model;
-- Runtime lease state machine and lifecycle API client;
-- LangGraph checkpoint execution state.
-
-BFF should only own:
-
-- same-origin proxy behavior;
-- authenticated calls to Control Plane;
-- injection of `X-Hw-Agentarts-Session-Id`;
-- SSE forwarding without parsing or teeing Agent payload.
-
-### BFF Storage Options Considered
-
-| Option | Fit | Trade-off |
-|--------|-----|-----------|
-| Service-owned Control Plane with PostgreSQL access | Target design | Requires a non-session-scoped endpoint reachable by Thin BFF before Gateway invocation |
-| Cloudflare Durable Object / KV lease store | Prototype only | Adds Cloudflare stateful dependency and duplicates Runtime lease truth outside PostgreSQL |
-| Keep lifecycle in Pages Function and use browser/localStorage | Fastest prototype | Violates server-side multi-Tab invariant; not acceptable as final Feature 14 |
-| FastAPI-only lease lookup | Not sufficient | Too late to inject the header for the current Gateway request |
-
-### Route Placement Recommendation
-
-Target after plan review:
-
-```text
-Browser /api/conversations/* -> Thin BFF -> Control Plane -> PostgreSQL
-Browser /invocations          -> Thin BFF -> Control Plane invocation context
-                               -> AgentArts Gateway -> FastAPI
-```
-
-Rejected for final Feature 14: routing Conversation metadata through Gateway custom
-routes that themselves require `X-Hw-Agentarts-Session-Id`.
-
-## Implementation Plan Updates Suggested
-
-1. Add a mandatory `Control Plane placement` decision before Service/Client implementation starts.
-2. Do not implement `ensureUserRuntimeSession()` only inside FastAPI.
-3. Cloudflare Pages Function must call Control Plane for user-scoped leases; do not
-   keep the lease store in browser/localStorage or BFF-local state.
-4. Keep Service `POST /invocations` responsible for `conversation_id` ownership
-   and `thread_id = user_id:conversation_id`, never `runtime_session_id`.
-5. Add a live-spike prerequisite requiring a valid CUSTOM_JWT token:
-
-```bash
-export AGENTARTS_BEARER_TOKEN="<valid Microsoft ID token or accepted Runtime token>"
-```
-
-Then rerun start/stop/idempotency probes before freezing request/response parsing.
+- `runtime_session_id` cardinality is browser-session-scoped, not strictly user-scoped.
+- Same user on multiple devices may consume multiple temporary Runtime instances.
+- Runtime ID never appears in browser JavaScript or PostgreSQL.
+- Conversation state and ownership remain stable across Runtime ID rotation.
+- No Control Plane placement, BFF service credential, background cleanup worker or lifecycle state
+  machine is required.
+- `sessions-start` knowledge remains documented for future experiments without contaminating the
+  production contract.

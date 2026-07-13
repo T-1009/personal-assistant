@@ -560,6 +560,32 @@ Personal Assistant 已确认以下 AgentArts Runtime 行为：
 当前未返回 Runtime Session 的 `expires_at`、`ttl` 或 `session_timeout`；应用自己的
 idle cleanup policy 不应被解释为平台实际有效期。
 
+##### StartRuntimeSession 与“预热”语义
+
+AgentArts API PDF §4.7.1.1 定义了显式 lifecycle API：
+
+```http
+POST /runtimes/{runtime_name}/sessions-start
+Authorization: Bearer <credential>
+```
+
+该请求没有文档化的 request body，也不接收调用者指定的 Runtime Session ID。成功响应
+由平台生成并返回 `data.session_id`；该值只允许英文字母、数字、`-`、`_`，最长 64
+字符。随后 Invocation 才把返回值放入 `X-Hw-Agentarts-Session-Id`。
+
+需要严格区分：
+
+- 官方文档把它称为 `StartRuntimeSession`，没有定义独立的 PreWarm/WarmUp API；
+- response 没有 readiness、`expires_at`、TTL 或首次 Invocation latency guarantee；
+- HTTP 200 只能证明 start 请求成功，不能从文档推导“首条消息必然更快”；
+- 应用也可以不调用 `sessions-start`，直接用合法的自生成 ID 调用 Invocation，让平台
+  隐式创建或重建底层 instance。
+
+Personal Assistant Feature 14 的目标方案由 Cloudflare BFF 生成随机 HttpOnly Cookie，
+并把该值注入 Invocation header。因此 baseline 不调用 `sessions-start`；进入 Chat 时的
+Conversation list 请求属于 application-level warm-up。只有 benchmark 证明显式 lifecycle
+start 有额外且稳定的收益后，才应另行设计它的认证、失败处理和生命周期 ownership。
+
 #### 7.3.2 网关管理 API
 
 | 接口 | 方法 | 路径 | 说明 |
@@ -758,12 +784,15 @@ flowchart LR
 
 ### 11.2 Header 来源与职责
 
+图类型：**Data Flow / Trust Boundary Diagram（数据流 / 信任边界图）**。用于说明
+CUSTOM_JWT、Session header 与 caller-provided user header 的来源和可信度。
+
 ```mermaid
 flowchart LR
     subgraph CLIENT["调用方 (agentarts invoke / curl / 浏览器)"]
         GEN_SESSION["生成 session-id<br/>(UUID)"]
         GEN_JWT["提供 JWT<br/>Authorization: Bearer &lt;jwt&gt;"]
-        GEN_UID["提取 sub/oid claim<br/>→ X-HW-AgentGateway-User-Id"]
+        GEN_UID["Legacy caller hint<br/>X-HW-AgentGateway-User-Id"]
     end
 
     subgraph GATEWAY["AgentArts Gateway"]
@@ -774,20 +803,27 @@ flowchart LR
         APP["POST /invocations<br/>读取 header 使用"]
     end
 
-    GEN_SESSION -->|"header: x-hw-agentarts-session-id<br/>调用方传入（必填）"| APP
-    GEN_UID -->|"header: X-HW-AgentGateway-User-Id<br/>调用方传入（可选，但 app 需要）"| APP
+    GEN_SESSION -->|"x-hw-agentarts-session-id<br/>调用方传入（必填）"| VALIDATE
+    GEN_UID -->|"caller-provided user header<br/>未与 JWT claim 绑定"| VALIDATE
     GEN_JWT -->|"header: Authorization"| VALIDATE
-    VALIDATE -->|"✅ 验证通过<br/>转发请求到容器"| APP
-    VALIDATE -->|"❌ 验证失败"| ERR401["401 Authentication failed!"]
+    VALIDATE -->|"JWT 验证通过<br/>转发 headers 到容器"| APP
+    VALIDATE -->|"JWT 验证失败"| ERR401["401 Authentication failed!"]
 ```
 
 | Header | 谁提供 | 必填？ | 说明 |
 |--------|--------|--------|------|
 | `Authorization` | **调用方**传入 | ✅ | `Bearer <JWT>` 或 `Bearer <api-key>` |
-| `x-hw-agentarts-session-id` | **调用方**传入 | ✅ | `agentarts invoke` 自动生成 UUID；浏览器需前端代码生成 |
-| `X-HW-AgentGateway-User-Id` | **调用方**传入 | 否 | Gateway **不会自动注入**。需调用方从 JWT payload 提取 `sub` 或 `oid` claim 手动设置 |
+| `x-hw-agentarts-session-id` | **调用方**传入 | ✅ | `agentarts invoke` 自动生成 UUID；Feature 14 目标方案由 Cloudflare BFF 从随机 HttpOnly Cookie 注入，浏览器 JavaScript 不再生成或提交 |
+| `X-HW-AgentGateway-User-Id` | **调用方**传入 | 否 | Gateway **不会自动注入**。调用方可以填写，但它不是经过 Gateway 与 JWT claim 绑定的可信业务身份 |
 
-> **重要发现**：AgentArts Gateway 在 CUSTOM_JWT 模式下验证 JWT 后，**不会自动注入** `X-HW-AgentGateway-User-Id` header。`agentarts invoke` CLI 能工作是因为它内部从 JWT 解码后补了这个 header。浏览器端如果漏传此 header，会出现 App 层 401。
+> **重要发现**：AgentArts Gateway 在 CUSTOM_JWT 模式下验证 JWT 后，**不会自动注入**
+> `X-HW-AgentGateway-User-Id` header。`agentarts invoke` CLI 能工作，是因为 CLI 从 JWT
+> payload 提取 claim 后补了该 header；这不等于 Gateway 校验了 header 与 JWT 的绑定。
+> Feature 14 实现前，当前 App 缺少该 header 会返回 App 层 401；Feature 14 目标是让
+> Gateway 后的 FastAPI 从已验证 Authorization token 派生 canonical `user_id`，不再把
+> browser-provided user header 用作 Conversation ownership 依据。该目标以前提
+> “Gateway 转发原始 Authorization 且 production Runtime 无绕过 Gateway 的 public
+> ingress”为 blocking gate。
 
 ### 11.3 `agentarts invoke` CLI 与 CUSTOM_JWT 的兼容性
 
