@@ -6,7 +6,7 @@
 
 ## 1. 概要
 
-本 Feature 的 root capability 是 **Report（报表）**：用户可以通过自然语言生成日/周/月报、工作总结或研发进展总结。Report 能力统一编排多个 data source，包括现有 Email / Calendar tools，以及 Feature 17 新增的 GitHub MCP activity data source。
+本 Feature 的 root capability 是 **Report（报表）**：用户可以通过自然语言生成日/周/月报、工作总结或研发进展总结。Report 能力统一编排多个 data source，包括现有 Email / Calendar tools，以及 Feature 17 新增的 GitHub MCP internal activity source。Feature 17 的 Agent-visible GitHub activity tools 继续服务独立查询场景。
 
 本 Feature 不处理 AgentArts MCP Gateway / GitHub Target 的底层接入；该基础能力由 Feature 17 提供。Report 只消费稳定的 source contract。
 
@@ -27,13 +27,15 @@ Agent 可见 root tool:
 generate_report 内部复用:
   - email_tools.py: list_emails / search_emails / get_email
   - calendar_tools.py: list_calendar_events / search_calendar_events / get_calendar_event
-  - github_mcp_tools.py: github_mcp_search_activity / github_mcp_get_detail
+  - app/mcp/github_activity.py: github_mcp_search_activity / github_mcp_get_detail
 ```
 
 设计原则：
 
 - Agent 默认只需要选择 `generate_report`。
+- 单独查询指定 repository 和时间窗口内的工程活动时，Agent 使用 Feature 17 的 `github_search_activity`。
 - `generate_report` 负责 report type、时间窗口、timezone、source selection、部分失败降级、数据归一化和去重。
+- `generate_report` 直接调用 internal source contract，不调用 Feature 17 的 Agent-facing tool object。
 - Skill 只负责报表意图识别、写作风格和数据可信边界说明；不承担数据采集和编排职责。
 - GitHub MCP source 不替代现有 GitHub repository browsing tools。
 
@@ -53,6 +55,7 @@ Report root tool 的触发条件是：用户请求日/周/月报、工作总结�
 
 - 纯聊天、问答或不需要生成报表的请求。
 - 只是查看 GitHub 仓库文件、目录或代码搜索。
+- 只是查询指定仓库和时间窗口内的 commits、PR、issues、reviews / comments；此时使用 Feature 17 的 GitHub activity tools。
 - 只是 star 仓库等非报表动作。
 - 只是查询 / 发送邮件或查询日历，此时继续直接使用现有 Email / Calendar tools。
 
@@ -68,7 +71,7 @@ flowchart TB
     ReportTool["tools/report_tools.py<br/>generate_report"]
     EmailTools["tools/email_tools.py"]
     CalendarTools["tools/calendar_tools.py"]
-    GitHubSource["tools/github_mcp_tools.py<br/>Feature 17"]
+    GitHubSource["mcp/github_activity.py<br/>Feature 17 internal source"]
     ReportResult["ReportResult"]
 
     Client --> Service
@@ -91,7 +94,7 @@ sequenceDiagram
     participant Report as generate_report
     participant Email as email_tools.py
     participant Calendar as calendar_tools.py
-    participant GitHub as github_mcp_tools.py
+    participant GitHub as mcp/github_activity.py
 
     User->>Client: 生成本周周报
     Client->>Agent: /invocations
@@ -198,6 +201,7 @@ sequenceDiagram
   - custom：使用用户指定 `start_at` / `end_at`。
 - 复用现有 Email / Calendar async functions。
 - 接入 Feature 17 的 GitHub activity source。
+- 通过 typed internal source contract 接入，不调用 `github_search_activity` / `github_get_activity_detail` Agent tool object。
 - 将各 source 原始数据归一化为 `ReportEvidence`。
 - 对 source error 做 warning aggregation。
 
@@ -208,7 +212,8 @@ sequenceDiagram
 - 日/周/月报、工作总结、研发进展总结优先使用 `generate_report`。
 - 邮件 / 日历单独查询继续使用现有 Microsoft 365 tools。
 - GitHub 仓库浏览、文件读取、代码搜索和 star 继续使用现有 GitHub local tools。
-- GitHub MCP activity source 不直接作为 root capability 暴露。
+- 单独查询 GitHub 工程活动时继续使用 Feature 17 的 `github_search_activity`。
+- Report 意图不得退化为 Agent 自行串联 GitHub activity tools。
 - 写操作仍遵守 Guard。
 
 ### 7.3 Client / Infra
@@ -235,6 +240,7 @@ sequenceDiagram
 - `build_tools()` 注册 `generate_report` root tool。
 - Agent 请求“生成本周周报”时，优先调用 `generate_report`。
 - `GITHUB_MCP_ENABLED=true` 时，`generate_report` 可以调用 GitHub MCP activity source。
+- 验证 `generate_report` 调用 internal source contract，而不是 Agent-facing GitHub activity tool object。
 - MCP Gateway unavailable 时，GitHub source 降级为 warning；`generate_report` 仍可使用邮件 / 日历 source 生成部分报表。
 
 ### 8.3 E2E / Staging 验证
@@ -271,10 +277,12 @@ personal-assistant/
 
 ## 10. 依赖 Feature 17 的契约
 
-Feature 18 只依赖以下稳定契约：
+Feature 18 只依赖 Feature 17 的稳定 internal source contract：
 
-- `github_mcp_search_activity(...) -> list[GitHubActivityEvent]`；
-- `github_mcp_get_detail(...) -> GitHubActivityEvent detail`；
+- `github_mcp_search_activity(GitHubActivityQuery) -> GitHubActivityResult`；
+- `github_mcp_get_detail(GitHubActivityRef) -> GitHubActivityDetail`；
 - source unavailable / partial failure 以 typed warning 表达；
 - GitHub MCP source 不泄露 credential；
 - `actor = platform` 表示 PAT / platform GitHub account。
+
+Feature 18 不依赖 `GITHUB_ACTIVITY_TOOLS` 或 Agent-facing tool schema；这些 tools 与 Report 共享 internal source，但保持独立调用边界。

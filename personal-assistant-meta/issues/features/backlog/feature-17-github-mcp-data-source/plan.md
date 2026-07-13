@@ -1,21 +1,23 @@
-# Feature 17：GitHub MCP Activity Data Source Implementation Plan
+# Feature 17：GitHub MCP Activity Data Source and Tools Implementation Plan
 
 > 状态：Draft  
 > 日期：2026-07-10  
-> 范围：通过 AgentArts MCP Gateway 接入 GitHub 官方 remote MCP，新增 Service 内部 GitHub activity data source；不新增 Report root capability。
+> 范围：通过 AgentArts MCP Gateway 接入 GitHub 官方 remote MCP，新增 Service 内部 GitHub activity data source 和 curated Agent-visible tools；不新增 Report root capability。
 
 ## 1. 概要
 
-本 Feature 先实现 **GitHub MCP activity data source**，为后续 Report root capability 提供工程活动输入。它的目标是验证并固化 AgentArts MCP Gateway 的接入方式、凭据链路、Target read-only 配置、GitHub MCP 原子工具映射和统一事件模型。
+本 Feature 实现 **GitHub MCP activity data source 和 curated Agent-visible tools**。它的目标是验证并固化 AgentArts MCP Gateway 的接入方式、凭据链路、Target read-only 配置、GitHub MCP 原子工具映射和统一事件模型，同时让 Agent 可以直接查询 GitHub 工程活动。
 
-本 Feature 不面向用户新增报表能力，不注册 `generate_report`，也不把 GitHub MCP 的全部原子工具直接交给 Agent。Service 只暴露内部 source wrapper，由后续 Feature 18 消费。
+本 Feature 不新增报表能力，也不注册 `generate_report`。Service 将 transport-level `github_mcp_*` source functions 与 Agent-facing facade 分层：Agent 只看到 `github_search_activity` 和 `github_get_activity_detail`。Feature 18 直接复用内部 source contract；现在建立 Agent-visible tool surface，则是为未来 AgentArts MCP Gateway Cedar feature 做准备。
 
 设计目标：
 
 - 使用 AgentArts MCP Gateway 连接 GitHub 官方 remote MCP。
 - GitHub Target 使用 read-only endpoint 和最小 PAT 权限。
 - Service 通过 WAT → STS provider → 临时 IAM 凭据调用 Gateway，不在 Runtime 配置长期 AK/SK。
-- 在 Service 内封装 `github_mcp_tools.py`，输出 `GitHubActivityEvent`。
+- 在 `app/mcp/github_activity.py` 封装内部 source contract，输出 `GitHubActivityResult` / `GitHubActivityEvent`。
+- 在 `app/tools/github_activity_tools.py` 提供 curated、read-only 的 Agent-facing tools。
+- 为 Feature 18 保持稳定、可 mock 的 data source boundary，并为未来 AgentArts MCP Gateway Cedar feature 建立明确的 Agent-visible tool boundary。
 - 对 401 / 403 / 429 / Gateway unavailable 等错误做 typed warning 映射。
 
 ## 2. 架构边界
@@ -24,8 +26,9 @@
 
 ```mermaid
 flowchart TB
-    Service["personal-assistant-service"]
-    Source["tools/github_mcp_tools.py<br/>GitHub activity source"]
+    Agent["Agent"]
+    ToolFacade["tools/github_activity_tools.py<br/>curated Agent tools"]
+    Source["mcp/github_activity.py<br/>internal activity source"]
     MCPConfig["app/mcp<br/>Gateway config + IAM signing"]
     Adapter["LangChain / LangGraph MCP adapter"]
     Gateway["AgentArts MCP Gateway<br/>入站 IAM"]
@@ -33,13 +36,17 @@ flowchart TB
     GitHubMCP["GitHub remote MCP<br/>/mcp/readonly"]
     GitHubAPI["GitHub API"]
 
-    Service --> Source
+    Agent --> ToolFacade
+    ToolFacade --> Source
     Source --> MCPConfig
     MCPConfig --> Adapter
     Adapter --> Gateway
     Gateway --> Target
     Target --> GitHubMCP
     GitHubMCP --> GitHubAPI
+
+    Report["Feature 18 Report"] -.-> Source
+    Cedar["Future Cedar feature"] -.-> ToolFacade
 ```
 
 ### 2.1 不做 Report
@@ -47,7 +54,11 @@ flowchart TB
 本 Feature 的输出是 GitHub 工程活动数据源，不是用户可见的报表能力。
 
 ```text
-本 Feature 新增:
+本 Feature 新增 Agent-visible tools:
+  github_search_activity(...)
+  github_get_activity_detail(...)
+
+本 Feature 新增 internal source:
   github_mcp_resolve_identity(...)
   github_mcp_list_repositories(...)
   github_mcp_search_activity(...)
@@ -57,6 +68,8 @@ flowchart TB
   generate_report(...)
 ```
 
+`github_search_activity` 等 curated tools 直接服务“查询本周仓库工程活动”等非报表意图。Report 意图仍由 Feature 18 的 `generate_report` 统一处理。现在定义稳定的 Agent-visible tool boundary，也是为未来 AgentArts MCP Gateway Cedar feature 做准备；本 Feature 不预设 Cedar 的具体实现。
+
 ### 2.2 不替代现有 GitHub local tools
 
 当前 GitHub local tools 继续负责 repository browsing、目录、文件读取、代码搜索和 star。GitHub MCP data source 只补齐 activity timeline。
@@ -64,6 +77,7 @@ flowchart TB
 | 能力 | 本 Feature 处理方式 |
 |---|---|
 | commits / PR / issue / review / comment activity | 新增 GitHub MCP activity source |
+| 直接查询指定 repository / 时间窗口的工程活动 | 新增 curated GitHub activity tools |
 | 仓库目录 / 文件读取 / 代码搜索 / star | 继续使用现有 GitHub local tools |
 | GitHub 写操作 | 不实现 |
 | user-delegated GitHub activity | 不实现，后续单独设计 |
@@ -165,7 +179,7 @@ Production Runtime：
 
 Service 连接 AgentArts MCP Gateway 时优先评估 `langchain-mcp-adapters`。项目内不自实现 MCP 协议。
 
-### 5.3 新增 `app/tools/github_mcp_tools.py`
+### 5.3 新增 `app/mcp/github_activity.py`
 
 内部 source functions：
 
@@ -176,9 +190,29 @@ Service 连接 AgentArts MCP Gateway 时优先评估 `langchain-mcp-adapters`。
 | `github_mcp_search_activity` | 按时间窗口、repository、actor、event type 聚合 commits / PR / issues / reviews / comments |
 | `github_mcp_get_detail` | 对 commit / PR / issue 拉取详情、评论、review、文件变更和统计信息 |
 
-这些 functions 可以作为 Service 内部 callable 实现，也可以在 LangGraph 内作为非 root tool 使用；首期不把它们作为用户可主动选择的 root capability。
+这些 functions 是 transport-aware 的 Service internal source，不使用 `@tool` 装饰器、不导出任何 `*_TOOLS` 集合，也不加入 `build_tools()`。Feature 18、Agent-facing facade 和其他内部编排代码均直接调用这层 contract。
+
+### 5.4 新增 `app/tools/github_activity_tools.py`
+
+Agent-facing facade：
+
+| Tool | 职责 |
+|---|---|
+| `github_search_activity` | 查询指定 repository、时间窗口和 event types 的工程活动 |
+| `github_get_activity_detail` | 展开单条 commit / PR / issue activity 的详情 |
+
+本模块导出 `GITHUB_ACTIVITY_TOOLS`，并在 `GITHUB_MCP_ENABLED=true` 时加入 `build_tools()`。facade 只负责 LLM-friendly 参数校验、调用 internal source 和安全序列化，不包含 MCP transport、IAM signing 或数据聚合实现。
+
+以下边界必须由代码和测试共同保证：
+
+- `build_tools()` 只注册 curated domain tools，不注册任何 `github_mcp_*` function。
+- GitHub remote MCP 的 `get_me`、`list_commits`、`pull_request_read` 等原子工具不直接暴露给 Agent。
+- tool description 和 result 明确数据来自 platform GitHub account，使用 `identity_scope = platform`。
+- `GITHUB_MCP_ENABLED=false` 时不注册 `GITHUB_ACTIVITY_TOOLS`。
 
 ## 6. 数据模型
+
+`GitHubActivityQuery` 封装时间窗口、repository、event types、limit / cursor 等查询条件；`GitHubActivityResult` 封装 `events`、`warnings`、`next_cursor` 和固定为 `platform` 的 `identity_scope`。Feature 18 依赖这些 typed models，不解析 Agent tool 的序列化结果。
 
 `GitHubActivityEvent`：
 
@@ -236,7 +270,9 @@ Service 连接 AgentArts MCP Gateway 时优先评估 `langchain-mcp-adapters`。
 
 ### 8.1 单元测试
 
-- MCP source schema 不包含 `access_token`、`api_key`、`secret`、PAT、AK/SK 或 STS 字段。
+- Agent-facing tool schema 不包含 `access_token`、`api_key`、`secret`、PAT、AK/SK、STS 或 MCP transport 字段。
+- `github_search_activity` / `github_get_activity_detail` 正确转换输入并复用 internal source。
+- tool result 包含 `identity_scope = platform`，且不把 platform account 表述为当前用户身份。
 - `github_mcp_search_activity` 正确处理：
   - 时间窗口；
   - provider 固定为 `github`；
@@ -249,6 +285,9 @@ Service 连接 AgentArts MCP Gateway 时优先评估 `langchain-mcp-adapters`。
 ### 8.2 集成测试
 
 - `GITHUB_MCP_ENABLED=true` 时，Service 可以初始化 GitHub MCP source。
+- `GITHUB_MCP_ENABLED=true` 时，`build_tools()` 包含 `github_search_activity` 和 `github_get_activity_detail`。
+- `GITHUB_MCP_ENABLED=false` 时，`build_tools()` 不包含 GitHub activity tools。
+- `build_tools()` 不包含任何 `github_mcp_*` function 或 GitHub remote MCP 原子工具。
 - GitHub MCP source 启动检查确认 Gateway Target 使用 read-only endpoint 或 `X-MCP-Readonly: true`。
 - 不提供通用 raw MCP tool passthrough。
 - Gateway unavailable 降级为 unavailable warning。
@@ -260,6 +299,7 @@ Service 连接 AgentArts MCP Gateway 时优先评估 `langchain-mcp-adapters`。
 - Gateway Target 指向 `https://api.githubcopilot.com/mcp/readonly`，或等效配置 `X-MCP-Readonly: true`。
 - Gateway Target 注入 `Authorization: Bearer <GitHub PAT>`，PAT 使用只读最小权限。
 - `github_mcp_search_activity` 能返回 staging repository 的 commits / PR / issues。
+- Agent 可以通过 `github_search_activity` 直接查询 staging repository 的工程活动。
 - token、PAT、AK/SK、STS、签名 header 不进入 SSE、日志、tool result 或 LLM-visible error。
 
 ## 9. 预期项目文件目录
@@ -281,21 +321,40 @@ personal-assistant/
     │   ├── mcp/
     │   │   ├── __init__.py
     │   │   ├── gateway_client.py
-    │   │   └── github_activity.py
+    │   │   └── github_activity.py      # internal source contract
     │   ├── tools/
-    │   │   └── github_mcp_tools.py
-    │   └── config.py
+    │   │   ├── __init__.py             # 修改：条件注册 GITHUB_ACTIVITY_TOOLS
+    │   │   └── github_activity_tools.py # curated Agent-facing facade
+    │   ├── models/
+    │   │   └── github_activity.py
+    │   └── settings.py                  # 修改：新增 GitHub MCP typed settings
     └── tests/
-        ├── test_github_mcp_tools.py
+        ├── test_github_activity_source.py
+        ├── test_github_activity_tools.py
         └── test_mcp_gateway_auth.py
 ```
 
-## 10. 完成后交付给 Feature 18 的契约
+## 10. 完成后交付给后续 Feature 的边界
 
-Feature 18 只依赖以下稳定契约：
+### 10.1 Feature 18 internal source contract
 
-- `github_mcp_search_activity(...) -> list[GitHubActivityEvent]`；
-- `github_mcp_get_detail(...) -> GitHubActivityEvent detail`；
+Feature 18 只依赖以下稳定 internal source contract：
+
+- `github_mcp_search_activity(GitHubActivityQuery) -> GitHubActivityResult`；
+- `github_mcp_get_detail(GitHubActivityRef) -> GitHubActivityDetail`；
 - source unavailable / partial failure 以 typed warning 表达；
 - GitHub MCP source 不泄露 credential；
 - `actor = platform` 表示 PAT / platform GitHub account。
+
+Agent-facing `github_search_activity` / `github_get_activity_detail` 是 internal source 的消费者，但不属于 Feature 18 的依赖契约。其他 Service 内部编排也可以复用 source contract，而不耦合 LangChain tool schema。
+
+### 10.2 未来 AgentArts MCP Gateway Cedar feature 准备
+
+本 Feature 提前建立以下 Agent-visible tool boundary，供未来 Cedar feature 延续：
+
+- Agent 只看到 curated `github_search_activity` / `github_get_activity_detail`，不看到 raw MCP 原子工具；
+- tool schema 不包含 credential 或 MCP transport 参数；
+- tool result 明确 `identity_scope = platform`；
+- `GITHUB_MCP_ENABLED` 控制 tool 是否注册。
+
+本 Feature 只准备稳定的 tool exposure boundary，不实现或推测 Cedar 的具体行为。
