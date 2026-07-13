@@ -63,8 +63,10 @@ Checkpoint 内部格式的接口。
    的永久身份，也不是对话历史的存储位置。**
 3. **Runtime Session 默认按 User 管理：一个用户的多个 Conversation 与多个浏览器
    Tab 共用一个 active Runtime Session；不同用户绝不共享 Runtime Session。**
-4. **Runtime Session ID 在有效期内持续复用，不按消息或 Conversation 重新生成；
-   失效、停止或被平台回收后创建新的 replacement ID。**
+4. **`runtime_session_id` 是稳定复用的逻辑路由键，不等于某个物理 execution
+   instance 的永久 ID。底层 Runtime 被平台自动回收后，再次使用相同 ID 调用
+   `/invocations` 会重新创建 execution instance；应用无需因自动回收主动生成
+   replacement ID。**
 
 由此，当前复用同一个 `session_id` 同时表达 Conversation、LangGraph thread 和
 Runtime Session 的做法必须被拆分。
@@ -116,7 +118,8 @@ flowchart LR
   - 用户登录/进入 Chat 时调用 `sessions-start` 进行 pre-warm；
   - 一个用户的多个 Conversation 和 Tab 复用同一 active Runtime Session；
   - 不同用户使用不同 Runtime Session；
-  - 登出、idle cleanup、Session 失效时调用 `sessions-stop` 或创建 replacement；
+  - 登出、idle cleanup 或显式资源回收时调用 `sessions-stop`；平台自动回收底层
+    instance 时继续使用相同 Runtime Session ID；
   - 记录 pre-warm latency、成功/失败与 fallback；
   - 防止多 Tab/并发请求为同一用户重复创建 Runtime Session。
 - **Service / BFF**
@@ -172,18 +175,25 @@ thread_id = f"{user_id}:{conversation_id}"
 AgentArts 管理的临时 execution resource，用于请求路由、pre-warm、命令/文件操作
 和实例生命周期管理。通过 `X-HW-AgentArts-Session-Id` 传递。
 
-Runtime Session 可以过期、失败、停止或被平台回收。同一 Conversation 可在不同
-时间经由同一用户的多个 replacement Runtime Session 执行。默认情况下，一个用户
-任一时刻最多拥有一个 active Runtime Session，该 Session 可承载该用户的多个
-Conversation。
+Runtime execution instance 可以过期、失败、停止或被平台回收，但
+`runtime_session_id` 可以跨底层 instance incarnation 持续复用。同一 Conversation
+可在不同时间经由同一用户、同一逻辑 Runtime Session ID 对应的多个底层 execution
+instance 执行。默认情况下，一个用户任一时刻最多拥有一个 active Runtime Session
+ID，该 ID 可承载该用户的多个 Conversation。
 
 Runtime Session ID 管理规则：
 
 - active/ready 期间复用同一个 ID，不按消息生成；
 - 创建、切换或删除 Conversation 不主动更换 ID；
-- Session expired、404、stop 或平台回收后，创建新的 replacement ID；
+- 底层 Runtime 被平台自动回收后继续使用相同 ID；下一次 `/invocations` 会由平台
+  隐式重新创建 execution instance；
+- 只有平台明确拒绝继续使用该 ID、用户隔离边界变化或应用执行显式安全轮换时，
+  才生成 replacement ID；
 - 旧 ID 不得分配给其他用户；
 - 多 Tab 通过服务端 user-scoped lease 共享 ID，不依赖 Tab-local storage 协调。
+
+因此，相同 `runtime_session_id` 不保证底层物理 instance 相同；它只保证应用和
+Gateway 使用同一个逻辑 Session 路由键。
 
 ### 4. Code Interpreter Sandbox Session
 
@@ -205,7 +215,7 @@ Runtime Session 和 Sandbox Session 都是临时资源，但解决的问题完�
 | 是否跨 Conversation 共享 | 同一用户的多个 Conversation 默认共享一个 active Runtime Session | 不跨 Conversation 共享，避免文件和代码执行上下文串扰 |
 | 是否保存聊天历史 | 不保存 | 不保存 |
 | 是否决定 LangGraph state key | 不决定；不得派生 `thread_id` | 不决定；不得派生 `thread_id` |
-| 失效后的影响 | 创建 replacement Runtime Session 后，同一 Conversation 仍可用稳定 `thread_id` 恢复 | 沙箱临时文件/执行环境可能需要重建或清理 |
+| 失效后的影响 | 平台自动回收后使用相同 Runtime Session ID 隐式重建底层 instance；同一 Conversation 仍用稳定 `thread_id` 恢复 | 沙箱临时文件/执行环境可能需要重建或清理 |
 
 普通聊天只经过 Runtime Session：
 
@@ -430,8 +440,9 @@ user_id -> 当前可复用的 runtime_session_id
   Runtime Session；
 - **并发协调**：多 Tab 同时进入 Chat 时，由 server-side store + unique constraint
   保证同一个用户默认最多一个 active Runtime Session；
-- **可替换资源建模**：平台回收、`sessions-stop`、404 或 timeout 后，可以将旧 lease
-  标记失效并创建 replacement，而 Conversation 与 `thread_id` 不受影响；
+- **可替换资源建模**：平台自动回收底层 instance 后保留原 lease 和 Session ID；
+  只有平台明确拒绝该 ID 或执行显式安全轮换时才创建 replacement，而 Conversation
+  与 `thread_id` 始终不受影响；
 - **清理依据**：后续 idle cleanup 需要知道哪个 Runtime Session 最近使用过、是否应
   调用 `sessions-stop`；
 - **可观测与排障**：记录 pre-warm 成功、失败、fallback、expired 和 stop 失败原因，
@@ -540,9 +551,10 @@ stateDiagram-v2
     [*] --> WARMING: 用户登录或进入 Chat / pre-warm
     WARMING --> READY: sessions-start 成功
     WARMING --> DEGRADED: timeout / error
-    DEGRADED --> READY: invocation 隐式创建成功
-    READY --> EXPIRED: 平台回收 / 404
-    EXPIRED --> WARMING: 创建 replacement Runtime Session
+    READY --> DEGRADED: 底层 instance 不可用 / 自动回收被感知
+    DEGRADED --> READY: 相同 runtime_session_id invocation 隐式创建成功
+    READY --> EXPIRED: 平台明确拒绝继续使用该 ID
+    EXPIRED --> WARMING: 显式生成 replacement ID
     READY --> STOPPING: logout / idle cleanup / explicit recycle
     STOPPING --> STOPPED: sessions-stop 成功
     STOPPING --> STOP_FAILED: stop 失败
@@ -551,8 +563,10 @@ stateDiagram-v2
 ```
 
 Conversation 状态与 Runtime 状态必须分开。例如多个 Conversation 可以保持
-`active`，同时用户的 Runtime lease 为 `expired`；下一次进入 Chat 或发送消息时
-重新 pre-warm 即可。
+`active`，同时用户的 Runtime lease 因底层 instance 不可用进入 `degraded`；下一次
+进入 Chat 或发送消息时继续使用相同 `runtime_session_id`，由 `/invocations` 隐式
+重建底层 execution instance 即可。只有平台明确拒绝继续使用该 ID 时才进入
+`expired` 并生成 replacement ID。
 
 ### Invocation contract
 
@@ -631,10 +645,13 @@ Runtime pre-warm 是 user-scoped，而不是 Conversation-scoped：
    保证只创建一个 active Runtime Session；
 5. 用户发送首条消息而 pre-warm 尚未完成时，不等待无限期，使用短 timeout 后进入
    implicit creation fallback；
-6. Session expired、404、stop 或平台回收后，将旧 lease 标记为 terminal，并创建
-   新的 replacement ID；
+6. 底层 Runtime 被平台自动回收后保留原 lease 与 `runtime_session_id`；下一次
+   `/invocations` 使用同一 ID 触发隐式重建，成功后恢复 `ready`；
 7. logout、长时间 idle 或显式资源回收时调用 `sessions-stop`；
 8. Sandbox Session 只在 Tool 首次需要代码/文件执行时 lazy-create，普通聊天不创建。
+
+显式 `sessions-stop` 后再次使用相同 ID 的具体行为仍由 live spike 确认；平台自动
+回收则已知无需主动生成 replacement ID。
 
 ### 多 Tab 与多用户规则
 
@@ -759,6 +776,9 @@ Runtime Session 只在用户登出、长期 idle、Session 失效或显式资源
 
 - **已验证**：客户端生成合法 Session ID，直接调用 `/invocations` 可以正常工作；
   AgentArts 会隐式创建或绑定 Runtime Session。这是当前生产链路的现状。
+- **已确认的平台行为**：底层 Runtime execution instance 被平台自动回收后，再次
+  使用相同 `runtime_session_id` 调用 `/invocations`，平台会重新创建 instance；应用
+  无需主动生成 replacement ID。该 ID 是逻辑路由键，不是物理 instance identity。
 - **高概率但尚未验证**：显式调用 `sessions-start` 时由平台生成并返回 Session ID，
   后续 `/invocations` 复用该 ID。
 - **设计推断**：平台可能同时支持显式 platform-generated ID 与 implicit
@@ -773,6 +793,8 @@ Implementation 前必须在目标 Region `cn-southwest-2` 完成剩余 spike：
 - [ ] 确认 start 完成是否代表 execution instance 已 ready；
 - [ ] 测量 start latency，以及 start 后首个 `/invocations` latency；
 - [x] 确认未调用 start 时，client-generated ID 可直接用于 `/invocations`；
+- [x] 确认底层 Runtime 被平台自动回收后，相同 Session ID 可通过 `/invocations`
+  隐式重新创建 instance；
 - [ ] 确认 automatic idle timeout、最大 Session 数和并发配额；
 - [ ] 确认一个 Runtime Session 处理同一用户多个 Conversation/并发 invocation 的
   实际行为和平台限制；
@@ -860,8 +882,10 @@ Feature 上线前可能已经存在“只有 LangGraph Checkpoint、没有
 - [ ] 同一用户的多个 Conversation 共用一个 active Runtime Session；
 - [ ] 不同用户绝不共享 Runtime Session；
 - [ ] 一个用户默认任一时刻最多一个 active Runtime Session；
-- [ ] Runtime Session ID 在有效期内跨消息、跨 Conversation、跨 Tab 复用；
-- [ ] Runtime Session 失效后使用新 replacement ID，旧 ID 不复用给其他用户；
+- [ ] Runtime Session ID 在用户逻辑绑定期间跨消息、跨 Conversation、跨 Tab 复用；
+- [ ] 底层 Runtime 被平台自动回收后继续使用相同 Runtime Session ID，并由下一次
+  invocation 隐式重新创建 instance；仅在明确拒绝、安全轮换或用户隔离边界变化时
+  生成 replacement ID；
 - [ ] 用户无 active Runtime Session 时仍可通过 implicit creation fallback 继续调用；
 - [ ] Sandbox Session ID 不得被当作 Runtime Session ID 或 `thread_id` 使用。
 

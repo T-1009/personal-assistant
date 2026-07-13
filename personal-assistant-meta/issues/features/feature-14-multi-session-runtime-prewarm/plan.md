@@ -24,6 +24,11 @@ LangGraph `thread_id`”的设计拆开，升级为：
 Service-owned Control Plane，再实现 Conversation read/write model 与 Client remote
 thread UI，最后接入 pre-Gateway Thin BFF 的 Runtime header injection。
 
+已知平台行为：`runtime_session_id` 是可跨底层 execution instance incarnation 复用的
+逻辑路由键。底层 Runtime 被平台自动回收后，再次使用相同 ID 调用
+`/invocations` 会重新创建 execution instance；应用不得仅因平台自动回收主动生成
+replacement ID。
+
 ## 0. Readiness Gates
 
 Implementation 开始前必须通过以下 gate。未通过时只能继续 spike 或 prototype，不能进入
@@ -288,6 +293,10 @@ crash 后 stale takeover。`degraded` 状态必须写入 app-generated fallback
 `runtime_session_id`，让 Thin BFF 仍可注入 header 并依赖 AgentArts implicit creation。
 `started_at`、`ready_at`、`last_used_at`、`failure_reason` 同时写入，作为 Phase 2
 cleanup/observability 的基础。
+
+Lease row 表示 `user_id -> runtime_session_id` 的逻辑绑定，不表示某一次物理
+execution instance。平台自动回收底层 instance 时保留同一 row 和
+`runtime_session_id`；下一次 invocation 隐式重建成功后将状态恢复为 `ready`。
 
 #### `sandbox_session_leases`
 
@@ -568,7 +577,8 @@ lease table directly.
 `ensureUserRuntimeSession(user_id)` algorithm:
 
 1. Query active lease by `user_id`.
-2. If status is `ready` and not stale, return it.
+2. If status is `ready` or `degraded` and has a valid `runtime_session_id`, return the same ID;
+   the next invocation may reuse or implicitly recreate the underlying instance.
 3. If an active `starting` lease exists and `lease_expires_at > now()`, return `warming` and let
    callers poll/bounded-wait.
 4. If no active lease or the active `starting` lease is stale, insert/take over a `starting`
@@ -579,8 +589,12 @@ lease table directly.
 7. On timeout/error, generate a valid app fallback Runtime Session ID, write it with
    `status=degraded` and `failure_reason`, and let invocation use AgentArts implicit creation.
 8. Concurrent callers that lose the insert/takeover race poll/read the existing active lease.
-9. Replacement after `expired`/`stopped`/`stop_failed` creates a new active lease; terminal
-   statuses do not participate in the partial unique index.
+9. If AgentArts automatically recycles the underlying instance, keep the same lease and
+   `runtime_session_id`; mark it `degraded`/not-ready if observable, then let the next successful
+   invocation transition it back to `ready`.
+10. Generate a replacement ID only when AgentArts explicitly rejects reuse, the user isolation
+    boundary changes, or an explicit security rotation policy requires it. Behavior after an
+    application-issued `sessions-stop` remains part of G0 live validation.
 
 ### 4.6 OpenAPI
 
@@ -737,6 +751,7 @@ Required scenarios:
 | send message, refresh, hydrate history | `conversation_messages` read model |
 | pre-warm success before first message | ready status and reused Runtime Session |
 | pre-warm failure | degraded status and implicit fallback |
+| platform auto-recycles Runtime | same `runtime_session_id` implicitly recreates instance; no replacement ID |
 | multi-tab ensure | max one active Runtime lease per user |
 | two users | no Conversation/message/Runtime lease leakage |
 | delete/archive | UI removal, Runtime not stopped |
@@ -890,6 +905,8 @@ Manual staging:
 - Run valid `sessions-start` / `sessions-stop` probe.
 - Confirm one user has at most one active Runtime lease.
 - Confirm two users never share Runtime Session IDs.
+- Confirm platform auto-recycle followed by the same Runtime Session ID implicitly recreates the
+  instance without lease/ID rotation.
 - Measure first message latency with and without pre-warm.
 - Verify rollback leaves additive schema intact and old invocation path still works during
   compatibility window.

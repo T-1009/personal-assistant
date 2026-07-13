@@ -25,6 +25,10 @@
    仓库中配置的 dev API key 对当前 Gateway 返回 `401 Authentication failed!`；
    环境中没有 Microsoft ID token / `AGENTARTS_BEARER_TOKEN`。需要用有效
    CUSTOM_JWT 重新执行 live spike。
+5. **已知平台行为：底层 Runtime 自动回收不要求 Session ID rotation。**
+   底层 execution instance 被平台自动回收后，再次使用相同
+   `runtime_session_id` 调用 `/invocations` 会重新创建 instance。应用应把该 ID
+   视为稳定逻辑路由键，而不是物理 instance identity。
 
 ## 本地环境检查
 
@@ -92,6 +96,16 @@ PDF：`personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts-
   - `Authorization` required
 - Purpose：destroy the instance corresponding to the session.
 
+### 已确认的 Runtime Session ID 复用行为
+
+- 底层 Runtime execution instance 被平台自动回收后，相同
+  `runtime_session_id` 仍可用于后续 `/invocations`；
+- AgentArts 会为该 ID 隐式重新创建 execution instance；
+- 应用无需仅因平台自动回收生成 replacement ID；
+- 相同 ID 不代表底层物理 instance 相同，只代表稳定的逻辑 Session 路由键；
+- 该条件不等同于已验证显式 `sessions-stop` 后的行为，后者仍保留为 live spike
+  问题。
+
 ## Live Probe Attempt
 
 Target Gateway:
@@ -111,6 +125,9 @@ Probes attempted:
 
 No Runtime Session was successfully created in this run. Cleanup `sessions-stop`
 also returned 401 because no valid Runtime auth was available.
+
+上面的自动回收复用语义是项目采用的已知平台条件，不是本次因 401 阻塞的 probe
+所得结果。
 
 ## Blocked Live Questions
 

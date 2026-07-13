@@ -1,6 +1,6 @@
 # AgentArts (智果) 智能体平台 - 开发参考
 
-> 信息来源：华为云官方文档，最后更新于 2026-06-02
+> 信息来源：华为云官方文档，最后更新于 2026-07-13
 > 本文档用于 Personal Assistant 基于 AgentArts 平台开发的架构参考。
 
 ---
@@ -541,6 +541,24 @@ X-Hw-Agentarts-Session-Id: session-001
 
 {"input": "你好，帮我查一下明天的日程"}
 ```
+
+##### Runtime Session ID 复用与底层实例回收
+
+Personal Assistant 已确认以下 AgentArts Runtime 行为：
+
+- `runtime_session_id` 是稳定的逻辑 Session 路由键，不是某个物理 execution
+  instance 的永久 identity；
+- 底层 Runtime execution instance 被平台自动回收后，再次使用相同
+  `X-Hw-Agentarts-Session-Id` 调用 `/invocations`，平台会重新创建 instance；
+- 应用无需仅因平台自动回收主动生成 replacement ID；
+- 相同 ID 在不同时间可能对应不同的底层 execution instance，因此 Conversation
+  identity、LangGraph `thread_id` 和 durable history 不得依赖物理 Runtime instance；
+- 只有平台明确拒绝继续使用该 ID、用户隔离边界变化或应用执行显式安全轮换时，
+  才需要生成 replacement ID。
+
+这是项目确认的运行时行为，不是 `sessions-start` 响应中的 TTL contract。官方 API
+当前未返回 Runtime Session 的 `expires_at`、`ttl` 或 `session_timeout`；应用自己的
+idle cleanup policy 不应被解释为平台实际有效期。
 
 #### 7.3.2 网关管理 API
 
