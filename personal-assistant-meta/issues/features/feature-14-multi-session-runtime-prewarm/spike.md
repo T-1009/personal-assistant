@@ -1,6 +1,6 @@
 # Feature 14 Spike: Runtime Session、Cookie 与提前唤醒
 
-> 日期：2026-07-13
+> 日期：2026-07-14
 > 状态：文档与代码静态验证完成；Gateway trust、custom path 和 latency 仍需 deployed probe
 
 ## 结论摘要
@@ -26,6 +26,18 @@
 7. **BFF 不校验 JWT。**
    AgentArts Gateway 负责验证；FastAPI 在 Gateway 后从已验证 token 派生 `user_id`。
    该方案以 Gateway 转发 Authorization 且 Runtime 无 public bypass 为 blocking 前提。
+8. **Feature 14 不建立 `invocation_runs`，也不自动重试 Invocation。**
+   Message row 自身记录 `in_progress/completed/failed/interrupted`；重复
+   `client_message_id` 返回 409，用户主动重发使用新 ID。
+9. **Conversation Store 只实现 PostgreSQL。**
+   in-memory fake 用于纯 Unit Test；Store/migration/lock/local integration 使用真实
+   PostgreSQL；SQLite 不作为 PostgreSQL 语义替身。
+10. **Delete 是同步永久删除。**
+    当前锁定依赖中的 `AsyncPostgresSaver` 已确认提供 `adelete_thread()`；messages 通过
+    PostgreSQL `ON DELETE CASCADE` 删除，不设计 soft delete 或后台 purge。
+11. **跨 Runtime 并发使用 PostgreSQL session-level Advisory Lock。**
+    Invocation 与 Delete 使用同一 lock key；`pg_try_advisory_lock` 拿不到就返回 409，
+    不无限等待、不自动重试。
 
 ## Spike 问题
 
@@ -39,6 +51,10 @@
 6. Conversation API 是否必须部署在 Gateway 前？
 7. 不让 BFF 校验 JWT 时，业务身份如何可信？
 8. 如何用可观测实验判断提前请求是否真的改善 latency？
+9. 是否需要 Invocation Run ledger 和自动 retry？
+10. Feature 14 的本地/集成测试应使用 SQLite、PostgreSQL 还是 in-memory？
+11. Delete 应当 soft delete 还是立即永久删除？
+12. 多 Runtime instance 如何避免同一 Conversation 并发执行或边执行边删除？
 
 ## AgentArts PDF 证据
 
@@ -195,6 +211,51 @@ the callback must still use the captured Session context and signed state.
 | BFF direct PostgreSQL/Hyperdrive | Reject | puts ownership and DB logic at edge, duplicates Service business boundary |
 | `sessions-start` then save returned ID in Cookie | Defer | technically possible but no documented warm-up benefit; adds lifecycle call and alternate ID source |
 | Random BFF HttpOnly Cookie + implicit Invocation | **Choose** | opaque, simple, no DB state, same-tab sharing, works with confirmed implicit recreation |
+| `invocation_runs` + automatic retry/replay | Reject | current product does not require transparent retry; adds failed/interrupted/replay state machine and request fingerprinting |
+| No automatic Invocation retry + Message status | **Choose** | duplicate id returns 409; network ambiguity is resolved by history refresh or deliberate new send |
+| SQLite Conversation Store | Reject | does not validate PostgreSQL JSONB, cascade, migration, concurrency or Advisory Lock behavior |
+| In-memory production/local Store | Reject | process-scoped and non-durable; retain only as a Unit Test fake |
+| PostgreSQL Store in local/integration/production | **Choose** | one schema and one concurrency model across environments |
+| Soft delete + retention/purge worker | Reject | no Trash, legal hold or retention requirement in Feature 14 |
+| Immediate Checkpoint + cascade hard delete | **Choose** | matches user-visible Delete semantics and avoids lifecycle state |
+| `asyncio.Lock` | Reject | cannot coordinate different Runtime instances/devices |
+| Long `SELECT FOR UPDATE` transaction | Reject | would hold a database transaction for the whole LLM/SSE duration |
+| Redis/distributed lease | Reject | new infrastructure and TTL/ownership complexity are unnecessary |
+| PostgreSQL session-level Advisory Lock | **Choose** | cross-instance mutual exclusion, no long transaction, automatic release on connection loss |
+
+## Message、Delete 与并发验证
+
+### Checkpointer 删除能力
+
+在当前锁定依赖中检查 `AsyncPostgresSaver` 和 `BaseCheckpointSaver`，两者均提供
+`adelete_thread(thread_id)`。其 PostgreSQL 实现删除该 thread 的 `checkpoints`、
+`checkpoint_blobs` 和 `checkpoint_writes`。因此 Feature 14 可以调用 library public API，
+不需要解析或直接依赖 LangGraph 内部表结构。
+
+### 为什么不用 Run ledger
+
+浏览器 `fetch`、BFF 和 Service 都可以明确禁止自动重放 `POST /invocations`。网络断开时：
+
+- 若 assistant commit 已完成，刷新 history 可以恢复答案；
+- 若未完成，user message 显示 failed/interrupted；
+- 用户主动重新发送会生成新的 `client_message_id`，表示新操作；
+- 相同 ID 再次到达只返回 `409 duplicate_message`。
+
+这已经满足当前正确性要求，不需要记录每次 Agent attempt 或设计 replay transport。
+
+### Advisory Lock 选择
+
+同一个用户可以从不同设备、不同 Runtime Session ID 同时访问一条 Conversation，因此
+进程锁不够。目标实现使用：
+
+- stable Conversation -> signed 64-bit lock key helper；
+- session-level `pg_try_advisory_lock`；
+- Invocation 和 Delete 共用同一 key；
+- dedicated lock connection pool，普通 CRUD 使用另一个 query pool；
+- `finally` unlock，pool reset 执行 `pg_advisory_unlock_all()`；
+- bounded process admission；Conversation busy 返回 409，server capacity busy 返回 429。
+
+锁只提供互斥，不提供 retry、ownership 或 durable status。
 
 ## Why No Lease Store
 
@@ -285,6 +346,13 @@ Non-blocking research:
 - Same user on multiple devices may consume multiple temporary Runtime instances.
 - Runtime ID never appears in browser JavaScript or PostgreSQL.
 - Conversation state and ownership remain stable across Runtime ID rotation.
+- Only `conversations` and `conversation_messages` are added as Feature 14 business tables.
+- Invocation has no automatic retry or Run ledger.
+- Local/integration Store tests use PostgreSQL; in-memory is Unit-Test-only and SQLite is not a
+  Conversation Store backend.
+- Delete is immediate and permanent: `adelete_thread()` plus message cascade.
+- Invocation and Delete share a bounded PostgreSQL Advisory Lock.
+- BFF rollout is dual-mode until legacy Client header usage reaches zero, then becomes Cookie-only.
 - No Control Plane placement, BFF service credential, background cleanup worker or lifecycle state
   machine is required.
 - `sessions-start` knowledge remains documented for future experiments without contaminating the

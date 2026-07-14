@@ -1,6 +1,6 @@
 # Feature 14 Implementation Plan: 多 Conversation 与 Runtime 提前唤醒
 
-> 版本：v0.2 | 状态：Meta Draft | 日期：2026-07-13
+> 版本：v0.3 | 状态：Meta Draft | 日期：2026-07-14
 > Issue: [`issue.md`](./issue.md) | Spike: [`spike.md`](./spike.md)
 
 ## Executive Summary
@@ -25,6 +25,11 @@ Browser -> Cloudflare Pages Function -> AgentArts Gateway -> FastAPI -> PostgreS
 `GET /api/conversations` 使用 Cookie Session ID 经 Gateway 进入 Runtime，从而把可能的
 cold start 移到用户发送第一条消息之前。这是 application-level warm-up，效果以实测为准。
 
+Message persistence 不建立 `invocation_runs`，也不自动重试 `POST /invocations`。同一
+Conversation 的 Invocation 与永久 Delete 由 bounded PostgreSQL session-level Advisory
+Lock 互斥。Feature 14 Conversation Store 在 local/integration/production 统一使用
+PostgreSQL；in-memory repository 只用于纯 Unit Test，SQLite 不实现第二套业务 Store。
+
 ## 0. Readiness Gates
 
 ### Blocking gates
@@ -41,7 +46,7 @@ cold start 移到用户发送第一条消息之前。这是 application-level wa
 |------|------|
 | G3 Invocation compatibility | 先允许 legacy body 缺少 `conversation_id`，完成 Client rollout 后再改为 required |
 | G4 OAuth callback | callback Session context 来自 BFF Cookie resolver，不再读取 browser-provided Runtime header |
-| G5 Local development | Vite direct proxy 为 FastAPI 注入 local-only Session/User fixture；Pages preview 验证真实 Cookie path |
+| G5 Local development | Feature 14 local/integration 环境提供 disposable PostgreSQL；Vite direct proxy 注入 local-only Session/User fixture；Pages preview 验证真实 Cookie path |
 
 ### Optimization gate
 
@@ -94,7 +99,7 @@ flowchart LR
 | Cloudflare BFF | same-origin routing, opaque Cookie lifecycle, Session header overwrite, auth forwarding, SSE pass-through | JWT validation, DB access, Conversation CRUD logic, SSE parsing |
 | AgentArts Gateway | production JWT validation, Runtime routing, platform instance lifecycle | Conversation ownership or message persistence |
 | FastAPI Service | trusted `user_id` derivation after Gateway, CRUD, ownership, Agent invocation, Message write model | generating/persisting browser Runtime ID |
-| PostgreSQL | Conversation metadata/messages/runs and LangGraph checkpoint | Runtime readiness/TTL mirror |
+| PostgreSQL | Conversation metadata/messages, Advisory Locks and LangGraph checkpoint | Runtime readiness/TTL mirror, Invocation Run ledger |
 
 ## 2. Runtime Cookie And Warm-up Flow
 
@@ -277,7 +282,7 @@ Revision sequence:
 | Revision | Contents |
 |----------|----------|
 | `20260713_01_app_schema_baseline` | Adopt/create `oauth2_callback_states` compatibly; no data rewrite |
-| `20260713_02_conversations` | Create `conversations`, `invocation_runs`, `conversation_messages`, indexes and constraints |
+| `20260713_02_conversations` | Create `conversations`, `conversation_messages`, cascades, indexes and constraints |
 
 The baseline must work both when `oauth2_callback_states` already exists and when starting from an
 empty database. If an existing table has incompatible columns or constraints, migration fails with a
@@ -295,44 +300,19 @@ CREATE TABLE conversations (
     user_id TEXT NOT NULL,
     title TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active'
-        CHECK (status IN ('active', 'archived', 'deleted')),
+        CHECK (status IN ('active', 'archived')),
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    archived_at TIMESTAMPTZ,
-    deleted_at TIMESTAMPTZ
+    archived_at TIMESTAMPTZ
 );
 
 CREATE INDEX conversations_user_updated_idx
     ON conversations (user_id, status, updated_at DESC, id DESC);
 ```
 
-All item reads and mutations use both `id` and trusted `user_id`. `DELETE` is a soft delete in the
-request path; physical cleanup and Checkpoint retention are separate jobs/features.
-
-#### `invocation_runs`
-
-```sql
-CREATE TABLE invocation_runs (
-    id UUID PRIMARY KEY,
-    conversation_id UUID NOT NULL REFERENCES conversations(id),
-    client_message_id TEXT NOT NULL,
-    status TEXT NOT NULL
-        CHECK (status IN ('running', 'completed', 'failed', 'interrupted')),
-    failure_code TEXT,
-    started_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    completed_at TIMESTAMPTZ,
-    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (conversation_id, client_message_id)
-);
-
-CREATE INDEX invocation_runs_stale_idx
-    ON invocation_runs (status, updated_at)
-    WHERE status = 'running';
-```
-
-The unique key makes an invocation retry idempotent. A completed retry reads the existing assistant
-message; a running retry reports/reconnects according to the API contract rather than starting a
-second Agent run.
+All item reads and mutations use both `id` and trusted `user_id`. Archive uses the reversible
+`status=archived` state. `DELETE` permanently removes the row; there is no `deleted` state or
+`deleted_at` retention period.
 
 #### `conversation_messages`
 
@@ -340,12 +320,16 @@ second Agent run.
 CREATE TABLE conversation_messages (
     sequence BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     id UUID NOT NULL UNIQUE,
-    conversation_id UUID NOT NULL REFERENCES conversations(id),
-    invocation_run_id UUID REFERENCES invocation_runs(id),
+    conversation_id UUID NOT NULL
+        REFERENCES conversations(id) ON DELETE CASCADE,
+    reply_to_message_id UUID REFERENCES conversation_messages(id),
     role TEXT NOT NULL CHECK (role IN ('user', 'assistant', 'system', 'tool')),
     content JSONB NOT NULL,
     client_message_id TEXT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    status TEXT NOT NULL DEFAULT 'completed'
+        CHECK (status IN ('in_progress', 'completed', 'failed', 'interrupted')),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX conversation_messages_page_idx
@@ -355,13 +339,16 @@ CREATE UNIQUE INDEX conversation_messages_client_user_idx
     ON conversation_messages (conversation_id, client_message_id)
     WHERE role = 'user' AND client_message_id IS NOT NULL;
 
-CREATE UNIQUE INDEX conversation_messages_run_role_idx
-    ON conversation_messages (invocation_run_id, role)
-    WHERE invocation_run_id IS NOT NULL AND role IN ('user', 'assistant');
+CREATE UNIQUE INDEX conversation_messages_assistant_reply_idx
+    ON conversation_messages (reply_to_message_id)
+    WHERE role = 'assistant' AND reply_to_message_id IS NOT NULL;
 ```
 
 `sequence` provides a stable cursor and ordering. `content JSONB` preserves structured message parts
-without exposing LangGraph's internal checkpoint format.
+without exposing LangGraph's internal checkpoint format. User messages move through
+`in_progress -> completed|failed|interrupted`; assistant messages are inserted as `completed` only.
+The Service updates `conversations.updated_at` in the same short transaction as message state changes
+so sidebar ordering remains correct.
 
 ### 4.4 Deliberately absent tables
 
@@ -369,7 +356,8 @@ The migration must not create:
 
 - `runtime_session_leases`;
 - `sandbox_session_leases`;
-- `idempotency_records` separate from `invocation_runs`;
+- `invocation_runs` or another Run ledger;
+- a retry/outbox table;
 - a BFF user/session mapping table;
 - a legacy Checkpoint copy table unless the implementation spike proves it is necessary.
 
@@ -382,9 +370,11 @@ The migration must not create:
 flowchart LR
     Backup["RDS snapshot / backup check"] --> Migrate["alembic upgrade head"]
     Migrate --> Service["Deploy backward-compatible Service"]
-    Service --> BFF["Deploy Cookie-aware BFF routes"]
-    BFF --> Client["Deploy remote Conversation UI"]
-    Client --> Verify["E2E + latency observation"]
+    Service --> BFFCompat["Deploy dual-mode BFF<br/>legacy header or Cookie"]
+    BFFCompat --> Client["Deploy Client<br/>legacy import then stop header"]
+    Client --> Observe["Observe legacy-header telemetry"]
+    Observe --> BFFFinal["Enable forced Cookie overwrite"]
+    BFFFinal --> Verify["E2E + latency observation"]
 ```
 
 Rules:
@@ -402,6 +392,16 @@ Rules:
 - revisions are immutable after any shared environment applies them;
 - migrations are additive and transactional where PostgreSQL permits;
 - application rollback does not run `alembic downgrade`; the old Service ignores new tables;
+- dual-mode BFF behavior during compatibility:
+  - a request with a syntactically valid legacy Runtime Session header keeps that header for
+    `/invocations`, preserving the old `user_id:legacy_session_id` Checkpoint key;
+  - a request without that header, including the new Client, uses the random HttpOnly Cookie;
+  - `/api/conversations*` always uses the Cookie because the old Client never calls those routes;
+- new Client must call `POST /api/conversation-imports` with its old localStorage Session ID and wait
+  for success before it stops sending the old header;
+- only after legacy-header telemetry reaches zero may BFF ignore/overwrite all caller Session headers;
+- after new Client rollout, do not roll BFF back below dual-mode support; otherwise a cached new
+  Client that no longer sends the header will receive a Gateway 400;
 - destructive column/table cleanup requires a later expand/contract migration;
 - deployment fails if `alembic current` is not the expected head;
 - test both empty DB and a fixture matching current production schema.
@@ -416,8 +416,10 @@ Rules:
 | `app/conversations/models.py` | add | Pydantic Request/Response/Event models |
 | `app/conversations/store.py` | add | async psycopg CRUD, ownership and message pagination |
 | `app/conversations/service.py` | add | business rules, import and status transitions |
+| `app/conversations/locks.py` | add | stable lock key, session-level Advisory Lock context manager |
 | `app/conversations/routes.py` | add | `/api/conversations*` routes |
-| `app/invocations/service.py` | add/refactor | run ledger, idempotency, stream commit boundary |
+| `app/invocations/service.py` | add/refactor | no-retry message lifecycle and stream commit boundary |
+| `app/db/pools.py` | add | separate query pool and long-held lock connection pool |
 | `app/main.py` | modify | include routers and keep transport concerns thin |
 | `app/agent_handler.py` | modify | accept `conversation_id`; build stable `thread_id` |
 
@@ -441,17 +443,17 @@ Target models include:
 - `ConversationMessageResponse` / `ConversationMessageListResponse`;
 - `ConversationImportRequest` / `ConversationImportResponse`;
 - extended `InvocationRequest` with `conversation_id` and `client_message_id`;
-- terminal SSE payload retaining current fields plus stable run/message identifiers if needed.
+- terminal SSE payload retaining current fields plus stable message identifiers if needed.
 
 ### 5.3 Conversation API rules
 
 | Method | Behavior |
 |--------|----------|
-| `GET /api/conversations` | cursor pagination ordered by `updated_at DESC, id DESC`; exclude deleted by default |
+| `GET /api/conversations` | cursor pagination ordered by `updated_at DESC, id DESC`; exclude archived by default |
 | `POST /api/conversations` | server UUID, initial title, idempotent only when explicit request key is later added |
 | `GET /api/conversations/{id}` | return 404 for absent or foreign-owned ID to avoid enumeration |
 | `PATCH /api/conversations/{id}` | allow title and active/archive transition; validate max length |
-| `DELETE /api/conversations/{id}` | idempotent soft delete; no Runtime Cookie change |
+| `DELETE /api/conversations/{id}` | permanent delete under Conversation lock: Checkpoint first, then Conversation row with message cascade; no Runtime Cookie change |
 | `GET .../messages` | ascending stable `sequence` page; never return raw Checkpoint rows |
 | `POST /api/conversation-imports` | create/adopt one Conversation for legacy local Session ID under authenticated user |
 
@@ -475,11 +477,16 @@ Rollout stages:
 
 1. Service temporarily accepts optional `conversation_id` and `client_message_id` for the legacy
    Client.
-2. Missing `conversation_id` resolves through a user-owned imported/default Conversation; a missing
-   `client_message_id` receives a server-generated value and has no retry idempotency guarantee. Log
-   deprecation counters without logging Session ID.
-3. New Client always sends both IDs.
-4. After compatibility telemetry reaches zero, make `conversation_id` and
+2. While dual-mode BFF preserves the old header, a missing `conversation_id` uses the validated
+   legacy Runtime Session UUID as `conversation_id`, creates/adopts that user-owned Conversation, and
+   therefore preserves the old `thread_id = user_id:legacy_session_id`. It must never use a newly
+   generated Cookie ID as a legacy Conversation fallback.
+3. A missing `client_message_id` receives a server-generated value. This path has no duplicate
+   protection and exists only for old Client compatibility; log deprecation counters without logging
+   either ID.
+4. New Client imports the old localStorage Session, then always sends both body IDs and no Runtime
+   header.
+5. After compatibility telemetry reaches zero, make `conversation_id` and
    `client_message_id` required in a follow-up contract change.
 
 Change Agent config construction from Runtime Session to Conversation:
@@ -503,39 +510,111 @@ sequenceDiagram
     participant Agent as LangGraph Agent
     participant UI as Client
 
-    API->>DB: acquire session-level advisory lock on dedicated connection
-    API->>DB: insert run(running) + user message
-    DB-->>API: commit
-    API->>Agent: execute stable thread_id
-    loop visible chunks
-        Agent-->>API: chunk
-        API-->>UI: SSE token
+    API->>DB: pg_try_advisory_lock(conversation_key)
+    alt lock busy
+        DB-->>API: false
+        API-->>UI: 409 conversation_busy
+    else lock acquired
+        DB-->>API: true
+        API->>DB: insert user message(in_progress); commit
+        API->>Agent: execute stable thread_id
+        loop visible chunks
+            Agent-->>API: chunk
+            API-->>UI: SSE token
+        end
+        API->>DB: insert assistant + complete user + touch Conversation; commit
+        API-->>UI: SSE done=true
+        API->>DB: pg_advisory_unlock; release connection
     end
-    API->>DB: insert assistant message + run(completed)
-    DB-->>API: commit
-    API-->>UI: SSE done=true
-    API->>DB: release advisory lock and connection
 ```
 
 Implementation rules:
 
-- acquire a PostgreSQL session-level advisory lock on a dedicated pooled connection and hold that
-  connection, but no open transaction, for the Agent run; the lock releases automatically if the
-  connection/process dies and serializes one active run per Conversation;
-- write run + user message before any assistant token;
+- derive one stable signed 64-bit lock key from the Conversation UUID in a single shared helper;
+- enforce an app-level `MAX_CONCURRENT_INVOCATIONS` semaphore before acquiring a lock connection;
+- use `pg_try_advisory_lock`, never unbounded `pg_advisory_lock`; return
+  `409 conversation_busy` when the same Conversation is occupied and `429 server_busy` when process
+  admission capacity is exhausted;
+- acquire the session-level lock on a dedicated lock pool connection and hold that connection, but
+  no open transaction, for the Agent call; the lock releases automatically if the
+  connection/process dies;
+- configure lock pool capacity at least equal to `MAX_CONCURRENT_INVOCATIONS`; use a separate query
+  pool for CRUD/history so long streams cannot starve ordinary API requests;
+- pool reset executes `pg_advisory_unlock_all()` before a lock connection is reused;
+- release the lock in `finally` on success, error, cancellation and client disconnect;
+- run a lightweight periodic heartbeat on the held lock connection; heartbeat failure cancels the
+  Agent task and forbids final message commit because PostgreSQL has released the session lock;
+- before final assistant commit, health-check the held lock connection; if it was lost, abort the
+  commit and terminal `done=true` because mutual exclusion is no longer guaranteed;
+- after acquiring the lock and before inserting a new user message, mark prior `in_progress`
+  messages for that Conversation as `interrupted`;
+- write an `in_progress` user message before any assistant token;
+- if `(conversation_id, client_message_id)` already exists, return
+  `409 duplicate_message`; do not replay or call the Agent;
 - accumulate trusted visible assistant output in Service, not BFF;
-- write assistant message and complete run atomically;
+- write the completed assistant message, set the user message to `completed`, and update
+  `conversations.updated_at` atomically;
 - emit terminal `done=true` only after commit;
-- on handled error mark run `failed`; on the next lock acquisition mark older orphan `running` rows
-  as `interrupted` before starting another run;
-- a duplicate completed `client_message_id` must not call the Agent again; return/replay durable
-  output according to selected transport;
+- on handled error mark the user message `failed`; an old `in_progress` message left by process death
+  is represented as `interrupted` by the next lock holder; history read may perform the same
+  reconciliation only after a successful non-blocking short lock probe, and leaves it
+  `in_progress` while another holder is active;
+- Client, BFF and Service never automatically retry `POST /invocations`; a deliberate user resend
+  gets a new `client_message_id` and is a new operation;
 - do not persist every token in Feature 14.
 
 This gives the client a clear rule: token chunks before `done=true` are provisional; terminal done
 means the answer is durable.
 
-### 5.6 Legacy import
+### 5.6 Permanent delete
+
+Delete uses the same Conversation lock as Invocation:
+
+图类型：**Sequence Diagram（时序图）**。用于说明永久删除与 active Invocation 互斥，
+以及 Checkpoint 和业务数据的删除顺序。
+
+```mermaid
+sequenceDiagram
+    participant UI as Client
+    participant API as FastAPI Conversation Service
+    participant Lock as PostgreSQL Lock Pool
+    participant CP as LangGraph Checkpointer
+    participant DB as PostgreSQL Query Pool
+
+    UI->>API: DELETE /api/conversations/{conversation_id}
+    API->>DB: check ownership
+    API->>Lock: pg_try_advisory_lock(conversation_key)
+    alt lock busy
+        Lock-->>API: false
+        API-->>UI: 409 conversation_busy
+    else lock acquired
+        Lock-->>API: true
+        API->>DB: re-check ownership
+        API->>CP: adelete_thread(user_id:conversation_id)
+        CP-->>API: checkpoint deleted
+        API->>DB: DELETE conversation; messages cascade
+        DB-->>API: commit
+        API-->>UI: 204 No Content
+        API->>Lock: pg_advisory_unlock in finally
+    end
+```
+
+1. Query `(user_id, conversation_id)` ownership. Return `204` for an absent/foreign row so the API
+   stays idempotent without exposing resource existence.
+2. Acquire `pg_try_advisory_lock(conversation_key)`; return `409 conversation_busy` if an Invocation
+   owns it.
+3. Re-check ownership after acquiring the lock.
+4. Call the supported LangGraph API
+   `await checkpointer.adelete_thread(f"{user_id}:{conversation_id}")`.
+5. In a short transaction delete the Conversation row; `ON DELETE CASCADE` deletes all messages.
+6. Return `204` only after both operations succeed; release in `finally`.
+
+Checkpoint deletion happens first. If it fails, the Conversation remains untouched. If Checkpoint
+deletion succeeds but the following row delete fails, return an error and allow the same idempotent
+Delete to be submitted again; do not introduce soft-delete or a background purge state machine for
+this rare partial failure.
+
+### 5.7 Legacy import
 
 Current Checkpoint key is generally `user_id:legacy_session_id`. If the legacy ID is a valid UUID,
 the import endpoint may adopt it as `conversation_id`, making the new thread key identical and avoiding
@@ -560,8 +639,14 @@ helper:
 - resolves Runtime Cookie;
 - builds a fresh allowlisted upstream header set;
 - forwards Authorization, Accept and Content-Type;
-- drops caller Runtime Session and user identity headers;
-- injects the resolved Runtime Session header;
+- always drops caller user identity headers;
+- in `compat` mode, preserves a syntactically valid caller Runtime Session header for legacy
+  `/invocations`; requests without it and all Conversation API routes use the Cookie resolver;
+- in final `cookie_only` mode, drops every caller Runtime Session header and injects only the
+  Cookie-derived value;
+- defines one `effective_runtime_session_id` as the exact value injected upstream and passes that
+  value, whether legacy or Cookie-derived, to the OAuth callback context helper;
+- records aggregate compat-header usage without logging Session IDs;
 - streams upstream body without buffering/teeing;
 - preserves relevant response headers and appends `Set-Cookie` when generated;
 - passes the resolved ID explicitly to OAuth callback context helpers;
@@ -574,7 +659,10 @@ Add unit/contract coverage for:
 - absent Cookie -> cryptographically random ID + secure Set-Cookie;
 - valid Cookie -> exact reuse and no redundant Set-Cookie;
 - invalid/oversized Cookie -> rotation;
-- caller Session header -> ignored/overwritten;
+- compat mode legacy invocation -> caller Session header preserved;
+- compat mode OAuth snapshot -> captures the same preserved legacy header;
+- compat mode request without caller header -> Cookie-derived header injected;
+- cookie-only mode caller Session header -> ignored/overwritten;
 - generated Cookie survives upstream 4xx/5xx, timeout and BFF 502 response paths;
 - raw browser Cookie is not forwarded upstream;
 - caller user header -> not treated as identity;
@@ -591,6 +679,7 @@ No new Control Plane, Hyperdrive, DB or lifecycle credential is required.
 | Variable | Purpose |
 |----------|---------|
 | `AGENTARTS_INVOCATIONS_URL` | existing Gateway Runtime root |
+| `RUNTIME_SESSION_HEADER_MODE` | `compat` during migration, then `cookie_only`; production must reject unknown values |
 | local-only secure Cookie flag | permit HTTP Pages preview; forbidden in production |
 
 Remove old plan references to `CONTROL_PLANE_URL`, `CONTROL_PLANE_BFF_SECRET`,
@@ -600,8 +689,16 @@ Remove old plan references to `CONTROL_PLANE_URL`, `CONTROL_PLANE_BFF_SECRET`,
 
 ### 7.1 API adapter
 
-Client stops importing `getSessionId()` for production requests and stops sending both Gateway
-Session and user identity headers. `buildHeaders()` retains Authorization, Accept and Content-Type.
+The new Client performs migration before removing the old header:
+
+1. Read the old localStorage Session ID.
+2. Call `POST /api/conversation-imports` and wait for success.
+3. Mark that browser profile migrated and select the returned Conversation.
+4. Only then stop calling `getSessionId()` and stop sending the Gateway Session header.
+5. Stop sending the user identity header after Service identity derivation is deployed.
+
+If import fails, keep the old header and offer a retry; do not silently start a new thread. After
+migration, `buildHeaders()` retains only Authorization, Accept and Content-Type.
 
 Add:
 
@@ -622,12 +719,34 @@ localized in the API adapter.
   Conversation that has history;
 - New Chat creates a Conversation and does not rotate Runtime Cookie;
 - switch/rename/archive/delete never manipulates Runtime state;
+- Delete is permanent and, while a response is being generated, surfaces
+  `409 conversation_busy` instead of silently scheduling cleanup;
 - remove Reset Session semantics that regenerate a Runtime ID;
 - do not show warming/ready/degraded badges because the platform exposes no such contract;
 - a failed list request is retryable and does not prevent a selected/new Conversation from invoking;
 - token output remains provisional until terminal SSE done.
+- the Client never automatically retries `POST /invocations`; duplicate protection errors and
+  connection loss require history refresh or a deliberate new send with a new `client_message_id`.
 
 ### 7.3 Local development
+
+Feature 14 Web Chat mode requires PostgreSQL locally. Add a documented disposable PostgreSQL 17
+service, for example a repository `compose.yaml`, and run Alembic before Service startup:
+
+```bash
+docker compose up -d postgres
+cd personal-assistant-service
+uv run alembic upgrade head
+```
+
+Testing split:
+
+- pure Conversation service Unit Tests use an in-memory repository fake;
+- Store, Alembic, cascade, Advisory Lock and concurrency tests use disposable PostgreSQL;
+- Client component tests mock the HTTP API;
+- SQLite remains available only for existing lightweight Checkpointer/playground scenarios and is
+  not a Feature 14 Conversation Store implementation;
+- starting full Web Chat mode without `POSTGRES_DSN` fails fast with a clear configuration error.
 
 For `npm run dev`, extend Vite proxy rules:
 
@@ -656,7 +775,10 @@ Required changes:
 4. Preserve `POSTGRES_DSN` secret ownership in Service/Infra deployment.
 5. Add Cloudflare functions/routes without adding secrets beyond existing Gateway URL.
 6. Verify production cookies are Secure and host-only.
-7. Update `architecture/api.md` production mapping only when routes are implemented.
+7. Configure and capacity-check `DB_QUERY_POOL_MAX_SIZE`, `DB_LOCK_POOL_MAX_SIZE`,
+   `DB_LOCK_HEARTBEAT_SECONDS` (positive, default 5) and `MAX_CONCURRENT_INVOCATIONS`; require
+   `MAX_CONCURRENT_INVOCATIONS <= DB_LOCK_POOL_MAX_SIZE`.
+8. Update `architecture/api.md` production mapping only when routes are implemented.
 
 ## 9. E2E And Performance Plan
 
@@ -666,7 +788,7 @@ Required changes:
 |----------|-----------|
 | Create -> invoke -> refresh | Conversation and committed messages restore |
 | Two Conversations | stable independent `thread_id`; context does not cross |
-| Rename/archive/delete | ownership/status enforced and list updated |
+| Rename/archive/delete | ownership enforced; archive reversible; Delete permanently removes messages and Checkpoint |
 | Cross-user ID probe | returns 404/forbidden without data disclosure |
 | Forged user header | cannot change Service-derived user identity |
 | Runtime auto recycle | same Cookie ID can restore durable Conversation |
@@ -675,14 +797,24 @@ Required changes:
 | Initial multi-Tab race | no data corruption; later requests converge on stored Cookie |
 | Account switch/logout | Cookie expires and next account gets a new ID |
 | OAuth callback | captured Runtime context survives main Cookie rotation |
+| Two sends to one Conversation | one executes; the other receives `409 conversation_busy` |
+| Send racing Delete | same lock prevents overlap; losing operation receives `409 conversation_busy` |
+| Two different Conversations | execute concurrently when process capacity is available |
+| Legacy Client during rollout | old Session header preserves existing Checkpoint until import succeeds |
 
 ### 9.2 Failure and consistency E2E
 
 - Conversation list timeout followed by direct successful Invocation;
 - upstream 401/403 clears auth state but does not expose Cookie;
-- duplicate `client_message_id` after network retry does not execute twice;
-- process failure before assistant commit yields no terminal done and a stale/interrupted run;
+- duplicate `client_message_id` returns `409 duplicate_message` and does not execute twice;
+- Client, BFF and Service never automatically retry an Invocation;
+- process failure before assistant commit yields no terminal done and an interrupted user message;
 - commit succeeds but terminal event is dropped; history reload contains assistant answer;
+- lock is released on success, exception, cancellation, disconnect and connection loss;
+- loss of the lock connection before final commit prevents durable assistant write and terminal done;
+- lock heartbeat failure cancels the Agent before another Runtime can safely take over;
+- lock pool saturation returns `429 server_busy` without starving Conversation read APIs;
+- permanent Delete failure is returned to the UI rather than converted into a background purge;
 - SSE proxy does not buffer or alter token ordering;
 - migration from existing OAuth table preserves rows.
 
@@ -714,12 +846,14 @@ region, Runtime version, timestamp and whether the platform reused an instance w
 2. **Introduce Alembic**: baseline current application table, then Conversation schema; pass G2.
 3. **Service identity**: derive user from Gateway-validated Authorization; forged-header tests.
 4. **Conversation read/write API**: CRUD, messages, ownership and OpenAPI.
-5. **Invocation run ledger**: stable thread ID, idempotency and commit-before-done.
-6. **BFF Cookie resolver**: `/invocations`, explicit `/api/*` functions, callback integration, logout.
-7. **Compatibility deploy**: Service first, then BFF.
-8. **Client remote Conversation UI**: import legacy Session, stop sending Runtime/User headers.
-9. **E2E and performance**: functional, failure, OAuth and G6 measurement.
-10. **Documentation sync**: API mapping, session state, Cloudflare, AgentArts and deployment runbook.
+5. **Lock + Message lifecycle**: separate pools, bounded admission, no-retry messages,
+   commit-before-done and permanent Delete.
+6. **Dual-mode BFF**: explicit `/api/*` routes and legacy-header-or-Cookie invocation behavior.
+7. **Compatibility deploy**: Service first, then dual-mode BFF.
+8. **Client remote Conversation UI**: import legacy Session, then stop sending Runtime/User headers.
+9. **Cookie-only cutover**: legacy-header telemetry reaches zero, then force overwrite.
+10. **E2E and performance**: functional, concurrency, failure, OAuth and G6 measurement.
+11. **Documentation sync**: API mapping, session state, Cloudflare, AgentArts and deployment runbook.
 
 No phase depends on `sessions-start`, `sessions-stop`, Runtime lease schema or a new deployable service.
 
@@ -735,11 +869,13 @@ No phase depends on `sessions-start`, `sessions-stop`, Runtime lease schema or a
 ### Service / DB
 
 - [ ] Add Alembic and baseline migration.
-- [ ] Add Conversation schema migration; assert lease tables absent.
+- [ ] Add Conversation schema migration; assert lease and Run ledger tables absent.
 - [ ] Migrate OAuth startup DDL ownership safely.
 - [ ] Add production identity derivation and local-only fixture mode.
 - [ ] Add Conversation models/store/service/routes.
-- [ ] Add run ledger and message persistence ordering.
+- [ ] Add separate query/lock pools, bounded admission and Advisory Lock helper.
+- [ ] Add no-retry message status lifecycle and commit-before-done ordering.
+- [ ] Add synchronous permanent Delete using `adelete_thread()` and message cascade.
 - [ ] Change `AgentHandler` config to `user_id:conversation_id`.
 - [ ] Add legacy import path.
 - [ ] Regenerate and review `openapi.json`.
@@ -747,7 +883,8 @@ No phase depends on `sessions-start`, `sessions-stop`, Runtime lease schema or a
 ### BFF
 
 - [ ] Add runtime Cookie parser/generator/resolver.
-- [ ] Overwrite Session header on all Gateway routes.
+- [ ] Add explicit `compat` and `cookie_only` Session header modes.
+- [ ] Preserve valid legacy Invocation header in compat mode; force overwrite only after telemetry.
 - [ ] Stop treating browser user header as authoritative.
 - [ ] Add explicit Conversation Pages Functions.
 - [ ] Add BFF-only logout route.
@@ -759,8 +896,8 @@ No phase depends on `sessions-start`, `sessions-stop`, Runtime lease schema or a
 - [ ] Add Conversation API and assistant-ui remote adapters.
 - [ ] Build sidebar/actions/hydration states.
 - [ ] Send `conversation_id` and `client_message_id`.
-- [ ] Remove production Session/User header generation.
-- [ ] Convert old local Session into one-time import input.
+- [ ] Convert old local Session into one-time import input and wait for success.
+- [ ] Remove production Session/User header generation only after import succeeds.
 - [ ] Integrate BFF logout/account-switch Cookie expiry.
 - [ ] Update Vite local proxy fixtures.
 
@@ -768,7 +905,8 @@ No phase depends on `sessions-start`, `sessions-stop`, Runtime lease schema or a
 
 - [ ] Verify PREFIX_MATCH and Gateway auth for all methods.
 - [ ] Add serialized Alembic release step and schema-head check.
-- [ ] Add multi-user/multi-device/Cookie/consistency E2E.
+- [ ] Add disposable PostgreSQL local/integration test setup; do not use SQLite for Feature 14 Store.
+- [ ] Add multi-user/multi-device/Cookie/lock/delete/consistency E2E.
 - [ ] Run warm-up benchmark and publish results.
 - [ ] Update active architecture docs after implementation lands.
 
@@ -777,6 +915,7 @@ No phase depends on `sessions-start`, `sessions-stop`, Runtime lease schema or a
 ### Service
 
 ```bash
+docker compose up -d postgres
 cd personal-assistant-service
 uv sync
 uv run alembic upgrade head
@@ -830,6 +969,12 @@ Before any implementation commit, run `gitnexus_detect_changes()` as required by
 | Cookie remains across account switch | High | BFF logout integration and E2E |
 | OAuth callback loses Runtime context | High | explicit resolved-ID helper parameter and rotation regression |
 | Assistant answer visible before durable commit | High | terminal done only after transaction commit |
+| Legacy header is overwritten before Client import | High | dual-mode BFF; force cookie-only only after legacy telemetry reaches zero |
+| Same Conversation is invoked or deleted concurrently across Runtime instances | High | shared session-level Advisory Lock; busy returns 409 |
+| Long-held locks exhaust normal DB connections | High | separate lock/query pools, admission semaphore, pool reset unlock and RDS capacity check |
+| Automatic POST retry duplicates an Agent operation | High | no automatic retry in Client, BFF or Service; duplicate id returns 409 |
+| Permanent Delete partially fails after Checkpoint removal | Medium | return failure, keep/retry Conversation row delete idempotently; no false success |
+| SQLite tests pass while PostgreSQL behavior fails | High | real PostgreSQL for Store/migration/lock tests; in-memory only for pure Unit Tests |
 | Migration conflicts with startup DDL | High | compatible baseline, old-schema fixture, staged DDL ownership removal |
 | Initial multi-Tab creates transient duplicate Runtime | Low | accept optimization race; platform recycle; no correctness state in Runtime |
 | Conversation list does not improve first-token latency | Medium | measurement, no readiness claim, no extra lifecycle machinery |
@@ -845,17 +990,22 @@ Before any implementation commit, run `gitnexus_detect_changes()` as required by
 | Identity security | §0, §3, §9.1 |
 | Warm-up | §2.3, §9.3 |
 | Message consistency | §4.3, §5.5, §9.2 |
+| Advisory Lock / Delete | §5.5, §5.6, §9.1-§9.2 |
 | Migration | §4, §8 |
+| Local test database | §7.3, §12 |
 | Client/E2E | §7, §9 |
 
 ## 15. Four-Question Gate
 
 | Question | Answer | Evidence |
 |----------|--------|----------|
-| Is it best practice? | **Yes** | Opaque HttpOnly routing Cookie, Gateway authentication, Service authorization, commit-before-terminal-event and versioned migration separate security, business and optimization state. |
-| Is it industry standard? | **Yes** | Thin BFF, API Gateway, REST resources, PostgreSQL read model and Alembic are familiar production patterns. |
-| Is it conventional? | **Yes** | Only existing deployables participate; no unexplained Control Plane, BFF DB access or custom distributed lease state machine. |
-| Is it modern? | **Yes** | Web Crypto, SameSite/Secure Cookie, caller-header distrust, measured warm-up and structured streaming consistency reflect current practice. |
+| Is it best practice? | **Conditional Yes** | Opaque HttpOnly Cookie, no automatic POST retry, hard-delete cascade, bounded session-level Advisory Lock and commit-before-done are sound; G0/G1 must still pass. |
+| Is it industry standard? | **Conditional Yes** | Thin BFF, API Gateway, PostgreSQL/Alembic and Advisory Locks are established patterns; Gateway custom method pass-through remains unverified. |
+| Is it conventional? | **Yes** | Existing deployables only, two business tables, explicit dual-mode rollout, no Control Plane/Redis/lease/Run ledger. |
+| Is it modern? | **Yes** | Web Crypto Cookie, caller-header distrust, real-PostgreSQL integration tests and bounded admission follow current practice. |
+
+Gate status is **Pending G0/G1**. Mark all four answers unconditionally Yes only after the deployed
+identity and custom-method probes pass.
 
 The design intentionally gives up a strict “one Runtime ID per user across all devices” invariant.
 That invariant would require durable user/session coordination before Gateway and would recreate the

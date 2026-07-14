@@ -65,6 +65,12 @@ Feature 14 将这些身份拆开，并把进入 Chat 时的 Conversation 列表�
 7. **进入 Chat 时的 `GET /api/conversations` 同时完成有用的数据读取和 Runtime
    implicit start；不增加单独的 readiness/no-op API。**
 8. **Sandbox 不在 Feature 14 实现，因此不提前创建 `sandbox_session_leases`。**
+9. **Feature 14 不做自动 Invocation retry，也不建立 `invocation_runs`；网络失败后由
+   用户刷新 history 或主动重新发送。**
+10. **Conversation Store 以 PostgreSQL 为唯一真实实现；in-memory fake 只用于 Unit
+    Test，SQLite 不用于 Feature 14 的数据层验证。**
+11. **同一 Conversation 的发送与永久删除使用 PostgreSQL session-level Advisory
+    Lock 互斥；拿不到锁立即返回冲突，不等待、不自动重试。**
 
 这意味着 Runtime cardinality 从旧方案的“每 User 一个数据库 lease”改为：
 
@@ -303,7 +309,7 @@ Invocation request：
 ```json
 {
   "conversation_id": "6f5d2d9a-1478-4c4a-8a65-4ebd7c2e7610",
-  "client_message_id": "client-generated-idempotency-key",
+  "client_message_id": "client-generated-message-id",
   "message": "你好",
   "stream": true
 }
@@ -319,8 +325,6 @@ LangGraph Checkpoint 表由其 library 自己管理，不在图中展开。
 ```mermaid
 erDiagram
     CONVERSATIONS ||--o{ CONVERSATION_MESSAGES : contains
-    CONVERSATIONS ||--o{ INVOCATION_RUNS : executes
-    INVOCATION_RUNS ||--|{ CONVERSATION_MESSAGES : records
 
     CONVERSATIONS {
         uuid id PK
@@ -330,26 +334,17 @@ erDiagram
         timestamptz created_at
         timestamptz updated_at
         timestamptz archived_at
-        timestamptz deleted_at
     }
     CONVERSATION_MESSAGES {
         bigint sequence PK
         uuid id UK
         uuid conversation_id FK
-        uuid invocation_run_id FK
+        uuid reply_to_message_id FK
         text role
         jsonb content
         text client_message_id
-        timestamptz created_at
-    }
-    INVOCATION_RUNS {
-        uuid id PK
-        uuid conversation_id FK
-        text client_message_id
         text status
-        text failure_code
-        timestamptz started_at
-        timestamptz completed_at
+        timestamptz created_at
         timestamptz updated_at
     }
 ```
@@ -358,13 +353,13 @@ Feature 14 只新增：
 
 - `conversations`；
 - `conversation_messages`；
-- `invocation_runs`；
 - application schema migration metadata（由 migration tool 管理）。
 
 不新增：
 
 - `runtime_session_leases`；
 - `sandbox_session_leases`；
+- `invocation_runs`；
 - 为 BFF 服务的 ownership/session mapping 表。
 
 ## Message persistence contract
@@ -374,18 +369,74 @@ FastAPI Service 是 Message write model 的唯一 owner。BFF 不 tee/解析 SSE
 为避免“浏览器已经收到完整答案，但 Service 尚未写入历史”的永久缺口，流式调用遵循：
 
 1. 验证 `(user_id, conversation_id)` ownership；
-2. 在发送任何 assistant token 前，原子写入 user message 和 `invocation_runs(running)`；
-3. Service 流式发送 token，同时在内存累积可见 assistant content；
-4. Agent 成功后，在同一 transaction 写 assistant message 并把 run 标记为
+2. 获取该 Conversation 的 Advisory Lock；若已被发送或删除占用，返回
+   `409 conversation_busy`；
+3. 在发送任何 assistant token 前写入 `status=in_progress` 的 user message；
+4. 相同 `(conversation_id, client_message_id)` 再次到达时返回
+   `409 duplicate_message`，不重放、不重新调用 Agent；
+5. Service 流式发送 token，同时在内存累积可见 assistant content；
+6. Agent 成功后，在同一 transaction 写 assistant message，并把 user message 改为
    `completed`；
-5. **DB commit 成功后才发送 terminal SSE `done=true` event**；
-6. 若在 commit 前失败，run 标记 `failed`；浏览器只把已看到的 partial output 视为
+7. **DB commit 成功后才发送 terminal SSE `done=true` event**；
+8. 明确失败时把 user message 改为 `failed`；浏览器只把已看到的 partial output 视为
    interrupted，不把它当 durable history；
-7. 若进程崩溃留下 `running` row，下一次取得该 Conversation execution lock 的请求将
-   stale run 标记为 `interrupted`。
+9. 进程崩溃留下的旧 `in_progress` message 在后续 history/read 或下一次取得锁时呈现为
+   `interrupted`；
+10. Client、BFF 和 Service 都不得自动重试 `POST /invocations`。用户主动重新发送时生成
+    新的 `client_message_id`，表示一条新的产品操作。
 
 这样，客户端只要看到了 `done=true`，对应 assistant message 就已经 durable。若 commit
 成功但 terminal event 丢失，刷新 history 仍能恢复完整答案。
+
+## Conversation Advisory Lock
+
+Advisory Lock 是 PostgreSQL 中由应用定义 key 的互斥锁。本 Feature 以稳定的
+Conversation lock key 保护两条写路径：
+
+- `POST /invocations` 对该 Conversation 执行 Agent；
+- `DELETE /api/conversations/{conversation_id}` 永久删除该 Conversation。
+
+锁 contract：
+
+1. 使用 session-level `pg_try_advisory_lock`，不用无限等待的
+   `pg_advisory_lock`；
+2. 拿不到锁立即返回 `409 conversation_busy`，不在 Server 内排队或自动重试；
+3. Agent stream 期间只持有 lock connection，不保持长 transaction；
+4. 必须在 `finally` 中调用 `pg_advisory_unlock`；connection 断开时 PostgreSQL 自动
+   释放 session lock；
+5. lock connection pool 与普通 query pool 分开；pool reset 执行
+   `pg_advisory_unlock_all()`；
+6. `MAX_CONCURRENT_INVOCATIONS` 不得超过 lock pool 容量，超过时返回
+   `429 server_busy`；
+7. assistant 最终 commit 前必须在 lock connection 上做 health check；若 connection/lock
+   已丢失则中止 commit 和 terminal `done=true`；
+8. stream 期间由 lock manager 定时在同一 connection 执行轻量 heartbeat；heartbeat
+   失败立即取消 Agent task，避免锁已自动释放而旧 Agent 仍继续写 Checkpoint；
+9. 新 Invocation 取得锁后，先把同一 Conversation 遗留的 `in_progress` message 改为
+   `interrupted`；history read 可以用一次非阻塞短锁完成同样 reconciliation，busy 时只
+   返回当前 `in_progress` 状态；
+10. metadata read、普通 history read 和 rename/archive 不持有长锁，使用普通短
+   transaction。
+
+进程内 `asyncio.Lock` 不能覆盖不同 Runtime instance；`SELECT FOR UPDATE` 又会要求在整个
+LLM/SSE 期间保持长 transaction。PostgreSQL session-level Advisory Lock 在不增加 Redis
+或数据库 lease 表的前提下，能够跨 Runtime instance 互斥，并在 connection 消失时自动
+释放。
+
+## 永久删除 Contract
+
+Feature 14 的 Delete 表示永久删除，不提供 Trash、retention period 或后台 purge：
+
+1. 用可信 `user_id` 检查 ownership；
+2. 获取与发送消息相同的 Conversation Advisory Lock；忙时返回
+   `409 conversation_busy`；
+3. 调用当前 LangGraph Checkpointer 已提供的
+   `await checkpointer.adelete_thread(thread_id)` 删除该 thread 的 checkpoint 与 writes；
+4. 执行 `DELETE FROM conversations WHERE id = ? AND user_id = ?`；
+5. `conversation_messages.conversation_id` 使用 `ON DELETE CASCADE`，由 PostgreSQL 同步
+   删除所有可见消息；
+6. 全部成功后返回 `204 No Content`，任一步失败则返回错误，不把失败伪装成成功；
+7. Archive 是单独的可恢复状态，不等于 Delete。
 
 ## 交互流程
 
@@ -438,15 +489,22 @@ sequenceDiagram
     UI->>BFF: POST /invocations {conversation_id, client_message_id, message}
     BFF->>GW: forward + Cookie-derived Session header
     GW->>API: validated request
-    API->>DB: validate ownership; insert user message + running run
-    API->>LG: invoke thread_id = user_id:conversation_id
-    loop token stream
-        LG-->>API: token
-        API-->>UI: SSE token
+    API->>DB: validate ownership; pg_try_advisory_lock
+    alt Conversation busy
+        DB-->>API: lock not acquired
+        API-->>UI: 409 conversation_busy
+    else Lock acquired
+        API->>DB: insert user message(status=in_progress)
+        API->>LG: invoke thread_id = user_id:conversation_id
+        loop token stream
+            LG-->>API: token
+            API-->>UI: SSE token
+        end
+        API->>DB: insert assistant + complete user message
+        DB-->>API: commit
+        API-->>UI: SSE done=true
+        API->>DB: pg_advisory_unlock
     end
-    API->>DB: insert assistant message + complete run
-    DB-->>API: commit
-    API-->>UI: SSE done=true
 ```
 
 ### OAuth callback compatibility
@@ -466,7 +524,8 @@ signed OAuth state 决定，callback user cookie 不是授权依据。
 - `conversation_id`、`thread_id`、Runtime Session ID 的职责拆分；
 - BFF 随机 HttpOnly Runtime Cookie 与 header overwrite；
 - Conversation APIs 经 Gateway custom path 进入 FastAPI；
-- `invocation_runs` 一致性 contract；
+- PostgreSQL Advisory Lock、无自动 Invocation retry 和 Message commit-before-done contract；
+- 同步永久删除 Conversation、messages 与 LangGraph thread；
 - versioned PostgreSQL schema migration；
 - legacy `localStorage` session 的一次性 Conversation import；
 - warm-up latency baseline/measurement；
@@ -480,13 +539,17 @@ signed OAuth state 决定，callback user cookie 不是授权依据。
 - Cloudflare Hyperdrive / BFF 直连 PostgreSQL；
 - Sandbox Tool 和 `sandbox_session_leases`；
 - 跨 Conversation semantic Memory；
-- 把 partial SSE token 持久化为可恢复草稿。
+- 把 partial SSE token 持久化为可恢复草稿；
+- 自动 Invocation retry、Run ledger、Trash、retention period 和后台 purge worker。
 
 ## 数据库 migration 原则
 
 - 使用成熟的 versioned migration tool；Implementation Plan 固定采用 Alembic，但业务
   store 继续直接使用 async psycopg，不引入 ORM；
 - LangGraph Checkpointer 自有表继续由 `AsyncPostgresSaver.setup()` 管理；
+- Feature 14 Conversation Store、migration、Advisory Lock 和 integration test 统一使用
+  PostgreSQL；SQLite 不实现第二套业务 schema；
+- Unit Test 可以使用实现同一 repository protocol 的 in-memory fake；
 - 已存在的 `oauth2_callback_states` 先纳入兼容 baseline，不破坏线上数据；
 - Conversation schema 采用 additive migration，先部署 DB，再部署兼容 Service，最后
   部署 Client；
@@ -519,6 +582,8 @@ signed OAuth state 决定，callback user cookie 不是授权依据。
 - [ ] 首个 Gateway-bound request 生成随机、合法的 HttpOnly Cookie；
 - [ ] Cookie 使用 `Secure`、`SameSite=Lax`、`Path=/`、host-only production 属性；
 - [ ] BFF 忽略并覆盖浏览器提供的 Runtime Session header；
+- [ ] rollout 兼容窗口先允许旧 Client 的合法 Session header 继续路由；新 Client 完成
+  legacy import 并停止发送 header 后，才启用强制覆盖；
 - [ ] 同一 Cookie jar 后续请求复用同一 ID；不同 Cookie jar 使用不同 ID；
 - [ ] logout/account switch expire Cookie；
 - [ ] BFF 不访问 PostgreSQL、不解析 SSE、不执行 Conversation ownership。
@@ -542,20 +607,33 @@ signed OAuth state 决定，callback user cookie 不是授权依据。
 
 ### AC6 Message consistency
 
-- [ ] user message 与 running run 在首个 assistant token 前 durable；
+- [ ] `status=in_progress` 的 user message 在首个 assistant token 前 durable；
 - [ ] assistant message commit 在 terminal `done=true` 前完成；
-- [ ] `client_message_id` retry 不重复写 user message或启动第二次已完成 run；
-- [ ] crash/stale `running` run 可被标记为 `interrupted`；
+- [ ] 相同 `client_message_id` 返回 `409 duplicate_message`，不会再次执行 Agent；
+- [ ] Client、BFF、Service 都不自动重试 Invocation；
+- [ ] crash 遗留的旧 `in_progress` message 显示为 `interrupted`；
 - [ ] BFF 不写 message read model。
 
-### AC7 Migration
+### AC7 Advisory Lock 与永久删除
+
+- [ ] 同一 Conversation 最多一个 active Invocation；不同 Conversation 可以并发；
+- [ ] Invocation 或 Delete 拿不到锁时返回 `409 conversation_busy`；
+- [ ] Agent stream 期间没有长 transaction；任何退出路径都释放 lock connection；
+- [ ] Delete 调用 `adelete_thread()` 并通过 `ON DELETE CASCADE` 删除 messages；
+- [ ] Delete 成功返回 `204` 后，Conversation、messages 和 Checkpoint 均不可恢复；
+- [ ] 不创建 soft-delete、Trash、retention 或后台 purge 状态机。
+
+### AC8 Migration 与测试数据库
 
 - [ ] Alembic 从空库和包含现有 `oauth2_callback_states` 的库均可升级到 head；
 - [ ] migration 不创建 Runtime/Sandbox lease 表；
+- [ ] migration 不创建 `invocation_runs`；
+- [ ] Store/migration/lock integration tests 使用真实 PostgreSQL；
+- [ ] Unit tests 可用 in-memory fake；SQLite 不作为 Feature 14 数据层测试替身；
 - [ ] 旧 Service 可在新 schema 上继续运行以支持应用 rollback；
 - [ ] `openapi.json` 与新增 FastAPI routes/schema 同步。
 
-### AC8 Client 与 E2E
+### AC9 Client 与 E2E
 
 - [ ] E2E 覆盖创建、发送、切换、刷新恢复和删除；
 - [ ] E2E 覆盖 Cookie 建立、复用、非法值轮换和 logout；
@@ -573,18 +651,25 @@ signed OAuth state 决定，callback user cookie 不是授权依据。
 | 首次两个 Tab 同时生成不同 Cookie ID | Low | 接受临时重复 instance；后续以最后写入 Cookie 为准，平台自动回收孤儿 |
 | Cookie 在 account switch 后复用 | High | auth lifecycle 必须调用 BFF logout/rotate route；测试 account switch |
 | SSE 已发送 partial token但 DB commit 失败 | Medium | partial UI 标记 interrupted；只有 commit 后才发送 `done=true` |
+| lock connection 长时间占用导致 query pool 饥饿 | High | 独立 lock pool、进程并发上限、`pg_try_advisory_lock` 和 pool reset unlock |
+| BFF 先强制覆盖旧 Session header，导致 legacy Checkpoint 丢失 | High | dual-mode rollout；旧 header telemetry 清零后才移除兼容路径 |
+| Delete 与 active Invocation 竞争 | High | 两者使用同一个 Conversation lock；忙时返回 409 |
+| Checkpoint 删除成功但 Conversation row 删除失败 | Medium | 返回失败并允许重复 Delete；不向 UI 报假成功 |
+| lock connection 丢失但 Agent 继续执行 | High | heartbeat 失败取消 Agent；final commit 前再次检查 lock connection |
+| SQLite 掩盖 PostgreSQL schema/lock 差异 | High | Store/migration/concurrency 使用真实 PostgreSQL；in-memory 只测纯业务规则 |
 | Alembic 与既有 startup DDL 冲突 | Medium | baseline 兼容现有表；分阶段删除 startup DDL；空库/旧库双路径测试 |
 
 ## Four-Question Gate
 
 | 问题 | 结论 | 说明 |
 |------|------|------|
-| Is it best practice? | **Yes** | 使用 opaque HttpOnly Cookie 做非身份路由、Gateway 统一认证、Service ownership、durable business state 与 ephemeral Runtime 分离。 |
-| Is it industry standard? | **Yes** | Thin BFF session cookie、API Gateway auth、REST resource API、PostgreSQL read model 和 Alembic migration 都是常见模式。 |
-| Is it conventional? | **Yes** | 新成员只需理解 Browser → BFF → Gateway → FastAPI → DB；没有虚构 Control Plane、双写 BFF 或自定义 lease 状态机。 |
-| Is it modern? | **Yes** | HttpOnly/SameSite cookie、zero-trust caller headers、stream commit boundary、versioned migration 与 measured optimization 符合当前实践。 |
+| Is it best practice? | **Conditional Yes** | opaque HttpOnly routing Cookie、Gateway auth、硬删除 cascade、无自动 POST retry 和 bounded Advisory Lock 都符合最佳实践；仍须通过 G0/G1 平台 probe。 |
+| Is it industry standard? | **Conditional Yes** | Thin BFF、API Gateway、PostgreSQL read model、Alembic 和 PostgreSQL Advisory Lock 都是主流模式；custom method pass-through 尚待验证。 |
+| Is it conventional? | **Yes** | Browser → BFF → Gateway → FastAPI → PostgreSQL；没有额外 Control Plane、Redis、lease 或 Run ledger。 |
+| Is it modern? | **Yes** | Web Crypto Cookie、caller-header distrust、真实 PostgreSQL integration test 和 commit-before-done 符合当前实践。 |
 
-四问均为 Yes。需要明确的 trade-off 是：同一用户跨设备不会共享 Runtime ID，首次并发 Tab
+当前 gate 状态为 **Pending G0/G1**；两项通过后四问才全部为 Yes。需要明确的 trade-off
+是：同一用户跨设备不会共享 Runtime ID，首次并发 Tab
 可能短暂创建两个 Runtime。由于 Runtime 是可回收的优化资源，而 Conversation state 是
 durable 且 user-scoped，这两个 trade-off 不影响正确性，成本低于引入 distributed lease。
 
