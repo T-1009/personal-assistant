@@ -821,9 +821,10 @@ flowchart LR
 > payload 提取 claim 后补了该 header；这不等于 Gateway 校验了 header 与 JWT 的绑定。
 > Feature 14 实现前，当前 App 缺少该 header 会返回 App 层 401；Feature 14 目标是让
 > Gateway 后的 FastAPI 从已验证 Authorization token 派生 canonical `user_id`，不再把
-> browser-provided user header 用作 Conversation ownership 依据。该目标以前提
-> “Gateway 转发原始 Authorization 且 production Runtime 无绕过 Gateway 的 public
-> ingress”为 blocking gate。
+> browser-provided user header 用作 Conversation ownership 依据。2026-07-14 G0 deployed
+> probe 已确认 Gateway 转发原始 Authorization，且 production Runtime 没有绕过 Gateway
+> 的 public ingress。Gateway/platform 配置变化后必须重跑该 probe；回归时 Service 必须
+> fail closed，不能重新信任 caller user header。
 
 ### 11.3 `agentarts invoke` CLI 与 CUSTOM_JWT 的兼容性
 

@@ -1,333 +1,274 @@
----
-status: backlog
-related:
-  - feature-13-reset-session
-  - feature-session-checkpoint
----
-
 # Feature 14: Web Chat 多 Conversation 与 Runtime 提前唤醒
+
+> 状态：Meta Draft
+> 日期：2026-07-14
+> 关联计划：[`plan.md`](./plan.md)
+> Spike：[`spike.md`](./spike.md)
 
 ## 动机
 
-当前 Web Chat 把浏览器 `localStorage` 中的 `agentarts-session-id` 同时用于：
+当前 Web Chat 的一个 browser-generated Session ID 同时承担三件事：
 
-- AgentArts Runtime 路由；
-- LangGraph `thread_id`；
-- 用户点击 Reset 后的新对话标识。
+1. AgentArts Runtime routing key；
+2. LangGraph Checkpoint 的 `thread_id`；
+3. 浏览器当前对话标识。
 
-这三个概念的生命周期并不相同。Conversation 是用户可长期查看的产品数据；
-LangGraph `thread_id` 是 durable Agent state 的 key；Runtime Session ID 只是 AgentArts
-用来路由临时 execution instance 的键。继续共用一个 ID，会让“新建对话”“恢复历史”
-和“Runtime 被平台回收”互相影响。
+这会导致用户无法自然地创建、切换和恢复多个 Conversation，也让 Runtime 的临时生命周期
+与业务数据生命周期混在一起。
 
-用户目前也无法：
+Feature 14 的目标是：
 
-- 查看、切换、重命名、归档或删除多个 Conversation；
-- 刷新页面后恢复当前 Conversation 的可见消息；
-- 在发送第一条消息前，通过本来就需要的页面初始化请求提前触发 Runtime 创建。
-
-Feature 14 将这些身份拆开，并把进入 Chat 时的 Conversation 列表请求作为
-**application-level warm-up**。它不假定 AgentArts 提供了一个有 readiness、TTL 或
-延迟保证的官方“预热 API”。
+- 支持创建、切换、重命名、归档和永久删除 Conversation；
+- 页面刷新后恢复 Conversation 列表和消息；
+- 使用随机 HttpOnly Cookie 复用 Runtime Session；
+- 进入 Chat 时通过必要的 Conversation list 请求提前触发 Runtime；
+- 保持 BFF 薄，不让它访问数据库或承担业务授权；
+- 以展示项目的规模实现，不引入生产级发布平台和后台运维系统。
 
 ## 已知平台事实
 
-以下事实来自 AgentArts API PDF 和项目现网验证，设计可以依赖：
-
-1. `POST /runtimes/{runtime_name}/invocations` 要求
-   `X-Hw-Agentarts-Session-Id`，该值最长 64 字符。
-2. 应用可以把合法的自生成 ID 直接放入该 header。首次 Invocation 会隐式创建
-   Runtime execution instance。
-3. 底层 instance 被平台自动回收后，再次使用同一个 ID 调用 Invocation，平台会重新
-   创建 instance；应用不需要生成 replacement ID。
-4. `POST /runtimes/{runtime_name}/sessions-start` 不接收 Session ID，也没有 request
-   body；它由 AgentArts 生成并返回 `data.session_id`。
-5. 官方 API 文档没有把 `sessions-start` 称为 pre-warm/warm-up API，也没有承诺它
-   返回后 Runtime 已 ready、首条消息更快，或说明 Session TTL。
-
-因此，`sessions-start` 是显式 lifecycle API，不是本 Feature 的正确性依赖。若未来
-实测证明它有额外收益，可以在独立变更中重新评估。
+1. AgentArts Invocation 要求 `X-Hw-Agentarts-Session-Id`。
+2. 合法的 application-generated Runtime Session ID 可以直接用于 Invocation。
+3. 平台回收底层 Runtime instance 后，继续使用相同 Runtime Session ID 即可；下一次请求
+   会重新创建执行实例，应用无需生成 replacement ID。
+4. `POST /runtimes/{runtime_name}/sessions-start` 不接收调用方指定的 Session ID，而是
+   返回另一个由平台生成的 ID。
+5. AgentArts API 文档没有为 `sessions-start` 定义 ready 状态、TTL 或首条消息延迟保证。
+6. 已部署的 CUSTOM_JWT Gateway 会验证 JWT，并把原始 `Authorization` 转发给 FastAPI。
+   该事实已于 2026-07-14 验证。
+7. Gateway custom path 的 GET 已使用；Feature 14 开始实现时仍需用一个窄 probe 确认
+   POST、PATCH、DELETE 和 Session header 的透传行为。
 
 ## 核心决策
 
-本 Feature 固定以下 invariant：
-
-1. **Conversation 与 LangGraph `thread_id` 永久 1:1。**
-2. **`thread_id = f"{user_id}:{conversation_id}"`，不得从 Runtime Session ID
-   派生。**
-3. **Runtime Session ID 是 browser-session-scoped opaque routing key，不是用户身份、
-   Conversation ID、授权凭据或物理 instance ID。**
-4. **Cloudflare Pages Function BFF 生成随机 Runtime Session ID，并放入 HttpOnly
-   Cookie；浏览器 JavaScript 不读取、不生成、不提交该 ID。**
-5. **BFF 不校验 JWT、不访问数据库、不执行业务 ownership；AgentArts Gateway 校验
-   JWT，Gateway 后的 FastAPI Service 执行业务授权。**
-6. **Runtime Session ID 不写 PostgreSQL，不建立 `runtime_session_leases`。**
-7. **进入 Chat 时的 `GET /api/conversations` 同时完成有用的数据读取和 Runtime
-   implicit start；不增加单独的 readiness/no-op API。**
-8. **Sandbox 不在 Feature 14 实现，因此不提前创建 `sandbox_session_leases`。**
-9. **Feature 14 不做自动 Invocation retry，也不建立 `invocation_runs`；网络失败后由
-   用户刷新 history 或主动重新发送。**
-10. **Conversation Store 以 PostgreSQL 为唯一真实实现；in-memory fake 只用于 Unit
-    Test，SQLite 不用于 Feature 14 的数据层验证。**
-11. **同一 Conversation 的发送与永久删除使用 PostgreSQL session-level Advisory
-    Lock 互斥；拿不到锁立即返回冲突，不等待、不自动重试。**
-
-这意味着 Runtime cardinality 从旧方案的“每 User 一个数据库 lease”改为：
-
-```text
-一个已建立的浏览器 Cookie jar -> 一个 runtime_session_id
-```
-
-同一浏览器 profile 的多个 Tab 通常共享 Cookie，因此复用同一个 ID；同一用户在不同
-浏览器、不同 profile 或不同设备上可以有多个 ID。这不影响 Conversation 正确性，因为
-durable state 由 `user_id + conversation_id` 决定。
-
-## 目标架构
-
-图类型：**Container / Deployment Diagram（容器 / 部署图）**。用于说明 Browser、
-Cloudflare BFF、AgentArts Gateway、FastAPI Runtime 和 PostgreSQL 的部署与依赖关系。
-
-```mermaid
-flowchart LR
-    Browser["Web Chat<br/>Authorization + product JSON"]
-    BFF["Cloudflare Pages Functions<br/>thin same-origin BFF"]
-    Cookie["HttpOnly Cookie<br/>random runtime_session_id"]
-    Gateway["AgentArts Gateway<br/>JWT validation"]
-    Service["FastAPI Agent Service<br/>Conversation API + Agent"]
-    DB["PostgreSQL<br/>Conversation read model + Checkpoint"]
-
-    Browser --> BFF
-    BFF <--> Cookie
-    BFF -->|"Authorization + injected Session header"| Gateway
-    Gateway --> Service
-    Service --> DB
-```
-
-系统中不新增名为 Control Plane 的部署单元。Conversation API 就是 FastAPI Service 的
-业务 API，经 AgentArts Gateway custom path 访问。BFF 只处理 HTTP 边界能力。
+1. `conversation_id`、LangGraph `thread_id` 和 `runtime_session_id` 分离。
+2. Cloudflare Pages Function 生成随机 Runtime Session ID，存入 HttpOnly session Cookie。
+3. BFF 覆盖调用方提供的 Runtime Session header，但不校验 JWT、不访问数据库。
+4. FastAPI 从 Gateway 已验证并转发的 JWT `sub` 派生 `user_id`。
+5. Conversation API 位于现有 FastAPI Service，不增加新的部署单元。
+6. 进入 Chat 时的 `GET /api/conversations` 同时承担业务加载和 application-level
+   warm-up；不接入 `sessions-start`。
+7. 只持久化 Conversation 和 Message，不持久化 Runtime/Sandbox lease，也不创建
+   `invocation_runs`。
+8. 不自动重试 Agent Invocation。网络失败后由用户明确重发，并使用新的
+   `client_message_id`。
+9. 同一 Conversation 的 Invocation 与 Delete 使用 PostgreSQL Advisory Lock 互斥。
+10. 数据层使用 PostgreSQL；in-memory fake 只用于纯 Unit Test，不维护 SQLite 版本。
 
 ## 概念基础
 
 ### Conversation
 
-Conversation 是用户界面中的一条长期聊天记录，包含标题、状态、时间和可见消息。
-`conversation_id` 是 server-generated UUID，与 Runtime 的创建、回收和轮换无关。
+Conversation 是用户可见、可持久化的对话。它包含标题、状态和消息历史，不依赖某个
+Runtime instance 是否仍存活。
 
 ### LangGraph `thread_id`
 
-`thread_id` 是 LangGraph Checkpointer 的 durable state key。Service 在验证
-Conversation ownership 后构造：
+每个 Conversation 对应一个 LangGraph thread：
 
-```python
-thread_id = f"{user_id}:{conversation_id}"
+```text
+thread_id = user_id + ":" + conversation_id
 ```
 
-同一 Conversation 永远使用同一个 `thread_id`。这使它可以跨 Tab、跨设备、跨 Runtime
-instance 恢复。
+把 `user_id` 放进 `thread_id` 可以隔离不同用户，即使 UUID 极小概率发生重复，也不会
+共享 Checkpoint。
 
-### Runtime Session ID 与 Runtime instance
+### Runtime Session ID
 
-两者不是同一个东西：
+Runtime Session ID 是 AgentArts 的逻辑路由键，不是：
 
-| 概念 | 含义 | 生命周期 |
-|------|------|----------|
-| `runtime_session_id` | AgentArts 的逻辑路由键 | Cookie 存在期间复用；底层回收后仍可继续使用 |
-| Runtime execution instance | AgentArts 实际启动的容器执行实例 | 可由平台启动、扩缩、回收和重建 |
+- 用户身份；
+- Conversation ID；
+- 物理容器或进程 ID；
+- 平台实例永久存活的证明。
 
-同一个 `runtime_session_id` 在不同时间可能路由到不同 instance。因此它不能保存产品
-身份，也不能表示“这个物理 Runtime 一直活着”。
+同一个 Runtime Session 可以承载多个 Conversation；同一个 Conversation 也可以从不同
+浏览器的不同 Runtime Session 访问。业务连续性来自 PostgreSQL 和 Checkpoint，而不是
+Runtime instance。
 
 ### Runtime 与 Sandbox
 
-| 维度 | Runtime Session | Code Interpreter Sandbox Session |
-|------|-----------------|----------------------------------|
-| 用途 | 让 AgentArts 路由并执行 FastAPI Agent | 隔离运行代码、命令和临时文件 |
-| 普通聊天是否需要 | 需要 | 不需要 |
-| 推荐作用域 | browser session routing | Conversation |
-| 是否保存聊天历史 | 否 | 否 |
-| 是否决定 `thread_id` | 否 | 否 |
-| Feature 14 是否持久化 | 否 | 否，后续 Tool Feature 再设计 |
+| 概念 | 作用 |
+|------|------|
+| Runtime | 运行 Personal Assistant FastAPI、Agent graph 和工具编排 |
+| Sandbox | 将来供 Code Interpreter 等工具执行用户代码的隔离环境 |
 
-## Runtime Cookie Contract
+Sandbox 可能由 Runtime 内的工具发起，但不是 Runtime 本身。Feature 14 不实现 Sandbox，
+也不设计 `sandbox_session_leases`。
 
-BFF 使用 Web Crypto 生成 UUID v4 或等价的至少 122-bit 随机、base64url-safe ID。推荐
-Cookie contract：
+## 为什么不持久化 Lease
 
-| 属性 | 值 | 原因 |
-|------|----|------|
-| Name | `pa_runtime_session` | 项目私有、语义明确 |
-| Value | 随机 UUID v4 | 满足 AgentArts 字符集和 64 字符限制 |
-| `HttpOnly` | 是 | JavaScript 无法读取或覆盖 |
-| `Secure` | production 是 | 只经 HTTPS 发送 |
-| `SameSite` | `Lax` | same-origin API 可用，并支持 OAuth 顶层回跳 |
-| `Path` | `/` | Conversation、Invocation 和 callback 路径复用 |
-| `Domain` | 不设置 | 保持 host-only |
-| `Expires` / `Max-Age` | 不设置 | 作为 browser session cookie，不伪造平台 TTL |
+Lease 是“某个资源在一段时间内由谁使用或占有”的记录。完整 lease 通常会存：
 
-BFF 对每个需要进入 AgentArts Gateway 的请求执行同一个 resolver：
+- lease 自己的主键；
+- owner/user；
+- 平台 Session ID；
+- `warming/ready/expired/stopped` 等状态；
+- 开始、最后使用、结束时间；
+- failure reason。
 
-1. 读取 `pa_runtime_session`；
-2. 若格式合法则复用；
-3. 若缺失或非法则使用 Web Crypto 生成新 ID，并在 response 写 `Set-Cookie`；
-4. 删除调用方提供的 `x-hw-agentarts-session-id`；
-5. 用 resolver 的 ID 覆盖 upstream header。
+这些字段只有在应用需要续租、抢占、超时回收、后台 stop 或审计资源生命周期时才有价值。
+Feature 14 仅需要复用一个逻辑 routing key，而 AgentArts 又会在实例被回收后按相同 ID
+隐式重建。Cookie 已经提供了这个 routing key。
 
-一旦本次请求生成了新 ID，BFF 必须在所有返回路径附加 `Set-Cookie`，包括 upstream
-4xx/5xx、timeout 和 BFF 生成的 502。否则 warm-up 失败后紧接着发送的 Invocation 会再
-生成一个 ID。原始 browser `Cookie` header 不转发给 Gateway；BFF 只转译出受控的
-Runtime Session header。
+如果建立 lease 表，应用就必须持续判断平台状态并修复漂移，但平台文档没有提供可查询的
+ready/TTL contract。数据库中的“ready”反而可能是假状态。因此本 Feature 不创建：
 
-Cookie 不是认证凭据。知道或控制该值都不能替代每次请求的 JWT。账号登出或切换时，
-Client 调用显式 same-origin logout route，由 BFF 用相同 Path 和属性写
-`Max-Age=0` expire Cookie；下次请求生成新 ID。
+- `runtime_session_leases`；
+- `sandbox_session_leases`；
+- idle cleanup scheduler；
+- stop retry worker。
 
-同一 Cookie 首次建立前，如果两个 Tab 完全并发发出请求，可能短暂生成两个 ID，最后一个
-`Set-Cookie` 成为后续稳定值。多出的 Runtime 由平台自动回收。这是可接受的资源优化 race，
-不影响数据隔离；为消除这一小段 race 引入数据库 lease 或 distributed lock 不符合成本收益。
+## 目标架构
 
-## 为什么不持久化 Runtime lease
-
-### Lease 是什么
-
-Lease（租约）表示“某个主体在一段时间内占用或负责某个资源”。旧方案中的
-`runtime_session_leases` 原本计划保存：
-
-| 字段 | 原计划含义 |
-|------|------------|
-| `id` | lease 记录主键 |
-| `user_id` | 资源属于哪个用户 |
-| `runtime_session_id` | AgentArts Runtime Session ID |
-| `status` | warming / ready / degraded / expired / stopping / stopped / stop_failed |
-| `started_at` / `ready_at` | 启动与就绪时间 |
-| `last_used_at` / `ended_at` | 最近使用与结束时间 |
-| `failure_reason` | lifecycle 失败原因 |
-
-把 lease 写入数据库通常是为了让多个应用实例协调独占、续约、接管、清理和审计。仅仅查询
-AgentArts 并不能恢复应用自己定义的 ownership 和并发决策，所以在需要严格
-user-scoped resource coordination 时，数据库 lease 确实可能合理。
-
-### 为什么本 Feature 不需要
-
-本方案没有上述协调需求：
-
-- ID 已由共享 Cookie 自然复用；
-- Runtime 被平台回收后，相同 ID 可隐式重建；
-- 平台未提供可供我们可靠同步的 ready/TTL contract；
-- Feature 14 不需要后台 service credential 调用 `sessions-stop`；
-- Runtime ID 不参与 Conversation ownership；
-- 首次多 Tab race 只浪费一个临时 instance，不破坏正确性。
-
-若仍建立 lease 表，我们就必须维护一个无法与平台真实状态严格同步的状态机、stale owner
-接管、retry worker、idle scheduler 和 stop credential。这些成本没有对应的正确性收益。
-
-**结论：持久化 lease 的根本目的不是“才能复用 Runtime”；它只在应用必须协调 Runtime
-lifecycle 时有价值。当前复用由 Cookie 完成，所以不持久化。**
-
-## 身份与信任边界
-
-图类型：**Data Flow / Trust Boundary Diagram（数据流 / 信任边界图）**。用于说明 JWT、
-Runtime Cookie 和业务 `user_id` 分别在哪一层被信任。
+图类型：**Component Diagram（组件图）**。用于说明 Feature 14 使用的组件和职责边界。
 
 ```mermaid
 flowchart LR
-    Browser["Untrusted Browser"]
-    BFF["Cloudflare BFF<br/>does not validate JWT"]
-    Gateway["AgentArts Gateway<br/>validates signature/issuer/audience/expiry"]
-    Service["FastAPI Service<br/>derives user_id from validated token claim"]
-    DB["PostgreSQL<br/>ownership by user_id"]
+    subgraph Browser["Browser"]
+        UI["React Web Chat"]
+    end
 
-    Browser -->|"Authorization: Bearer JWT"| BFF
-    Browser -.->|"caller Session/User headers are untrusted"| BFF
-    BFF -->|"Authorization + BFF Session header"| Gateway
-    Gateway -->|"validated request"| Service
-    Service -->|"user_id + conversation_id"| DB
+    subgraph Edge["Cloudflare Pages"]
+        BFF["Explicit Pages Functions"]
+        Cookie["Runtime Cookie Resolver"]
+    end
+
+    Gateway["AgentArts Gateway<br/>CUSTOM_JWT"]
+
+    subgraph Runtime["AgentArts Runtime"]
+        API["FastAPI Conversation API"]
+        Agent["LangGraph Agent"]
+    end
+
+    DB["PostgreSQL<br/>Conversation + Message + Checkpoint"]
+
+    UI --> BFF
+    BFF --> Cookie
+    Cookie -->|"Authorization + controlled Session header"| Gateway
+    Gateway --> API
+    API --> DB
+    API --> Agent
+    Agent --> DB
 ```
 
-生产规则：
+| 组件 | 负责 | 不负责 |
+|------|------|--------|
+| React Client | UI、选中 Conversation、获取 JWT、消费 SSE | Runtime ID、业务授权、持久化真相 |
+| Cloudflare BFF | same-origin proxy、Cookie、header overwrite、SSE 透传 | JWT 验证、数据库、Conversation 业务逻辑 |
+| AgentArts Gateway | JWT 验证、Runtime routing | Conversation ownership、Message 持久化 |
+| FastAPI Service | 用户身份派生、CRUD、Agent 调用、消息写入 | 生成或保存浏览器 Runtime ID |
+| PostgreSQL | Conversation、Message、Checkpoint、Advisory Lock | Runtime ready/TTL 镜像 |
 
-- BFF 只转发 `Authorization`，不根据 JWT claim 做业务决策；
-- Gateway 是 JWT signature、issuer、audience 和 expiry 的唯一验证者；
-- FastAPI 只在请求确定来自 Gateway 后解析 Gateway 已验证的 token，使用 `sub` 作为
-  canonical `user_id`；它不得信任 request body 或浏览器提供的 user header；
-- FastAPI baseline 不重复做 signature verification，但必须先验证 Gateway 会转发原始
-  Authorization，且 Runtime 没有绕过 Gateway 的 production public ingress；
-- 如果上述任一前提不成立，Feature 14 必须停在 readiness gate，不能退回“信任浏览器
-  `X-HW-AgentGateway-User-Id`”；
-- local direct mode 使用显式 development auth fixture，不得在 production 启用。
+## Runtime Cookie Contract
 
-## Application-level warm-up
-
-### 为什么不用 `sessions-start`
-
-`sessions-start` 的调用模型是“调用者不传 ID，平台返回一个 ID”。本方案的调用模型是
-“BFF 先生成 Cookie ID，再用它调用业务 API”。二者可以二选一，但不能把 BFF 生成的 ID
-传给 `sessions-start`。
-
-理论上可以调用 `sessions-start` 后把平台返回值写入 Cookie，但当前文档没有证明它比
-直接 Invocation 更早 ready 或更快，而且会新增 lifecycle auth、错误处理和两套 ID
-生成路径。因此 baseline 不使用它。
-
-### Warm-up 请求
-
-进入 Chat 后，UI 本来就必须请求 Conversation 列表：
+Cookie：
 
 ```http
-GET /api/conversations
-Authorization: Bearer <id_token>
-Cookie: pa_runtime_session=<opaque>
+Set-Cookie: pa_runtime_session=<uuid-v4>; Path=/; HttpOnly; Secure; SameSite=Lax
 ```
 
-BFF 将 Cookie 值注入 AgentArts Session header，该请求经 Gateway 进入 FastAPI。若底层
-Runtime 已被回收，AgentArts 在该请求上隐式创建 instance。Conversation 数据返回后，
-随后使用同一 Cookie 的 `/invocations` 通常可以复用已启动的 instance。
+规则：
 
-这是一种 useful-work warm-up，不需要 `POST /api/chat/readiness`、warming/ready 状态机或
-Runtime status UI。是否真正改善首条消息 latency 必须由 spike 测量，不能从 API 名称推断。
+1. BFF 用 `crypto.randomUUID()` 生成 ID。
+2. Cookie 是 session Cookie，不设置 `Expires`、`Max-Age` 或 `Domain`。
+3. 部署环境必须使用 `Secure`；显式 local 配置可以在 HTTP preview 中省略 `Secure`。
+4. BFF 不把原始 Cookie header 转发给 Gateway。
+5. BFF 删除浏览器提供的 Runtime Session header，再注入 Cookie 对应的唯一值。
+6. Runtime ID 不进入 JSON、DOM state、analytics、OAuth state 或业务数据库。
+7. logout/account switch 删除 Runtime Cookie。
+8. 多 Tab 首次并发可能短暂生成两个 ID；最后写入的 Cookie 胜出。该竞争不影响业务数据，
+   不为此引入数据库协调。
+
+图类型：**Sequence Diagram（时序图）**。用于说明 Cookie 建立和 application-level
+warm-up。
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant UI as React Client
+    participant BFF as Pages Function
+    participant GW as AgentArts Gateway
+    participant API as FastAPI
+    participant DB as PostgreSQL
+
+    User->>UI: 进入 Chat
+    UI->>BFF: GET /api/conversations + Authorization
+    BFF->>BFF: Cookie 缺失，生成 UUID
+    BFF->>GW: Authorization + Session header
+    GW->>GW: 验证 JWT，按需启动 Runtime
+    GW->>API: GET /api/conversations
+    API->>DB: 按可信 user_id 查询
+    DB-->>API: Conversation page
+    API-->>BFF: 200
+    BFF-->>UI: page + Set-Cookie
+
+    User->>UI: 发送第一条消息
+    UI->>BFF: POST /invocations
+    BFF->>GW: 复用同一 Cookie ID
+    GW->>API: 调用已存在或重建的 Runtime
+```
+
+`GET /api/conversations` 首先是产品所需的数据请求。它可能提前承担 cold start，但 UI
+不展示 `warming/ready/degraded`，文档也不承诺平台 ready 状态。
+
+## 身份与授权
+
+可信链路：
+
+1. Client 发送 Entra `Authorization: Bearer <token>`。
+2. BFF 原样转发 Authorization，不解析 JWT 来做授权。
+3. Gateway 验证 signature、issuer、audience 和 expiry。
+4. FastAPI 只在 Gateway 后接收请求，从已验证 token 的 `sub` 派生 `user_id`。
+5. 所有 Conversation 查询都同时使用 `user_id` 和 `conversation_id`。
+
+浏览器提供的 `X-HW-AgentGateway-User-Id` 不能作为 ownership 依据。Feature 14 删除
+Client 对该 header 的发送，并删除 BFF 对它的信任。
 
 ## API Contract
 
-所有 Personal Assistant 自定义的跨边界 JSON 字段使用 `snake_case`。BFF 为每个
-production public route 提供显式 Pages Function，不暴露 catch-all contract。
+所有 Personal Assistant 自定义 wire JSON 使用 `snake_case`。Pydantic model 使用
+PascalCase，并按用途加 `Request`、`Response`、`Event`、`Error` 后缀。Frontend
+内部变量可以使用 `camelCase`，转换只发生在 Client API adapter。
 
-| Method + Frontend path | FastAPI path | 作用 |
-|------------------------|--------------|------|
-| `POST /invocations` | `POST /invocations` | 发送消息，body 包含 `conversation_id` |
-| `GET /api/conversations` | `GET /api/conversations` | 列表；也是 warm-up 请求 |
-| `POST /api/conversations` | `POST /api/conversations` | 新建 Conversation |
-| `GET /api/conversations/{conversation_id}` | 同路径 | 读取 Conversation |
-| `PATCH /api/conversations/{conversation_id}` | 同路径 | 重命名或归档 |
-| `DELETE /api/conversations/{conversation_id}` | 同路径 | 删除 Conversation |
-| `GET /api/conversations/{conversation_id}/messages` | 同路径 | 分页读取可见历史 |
-| `POST /api/conversation-imports` | 同路径 | 一次性迁移 legacy local session |
-| `POST /auth/logout` | BFF-only | expire Runtime Cookie；不调用 `sessions-stop` |
+| Method | Path | 用途 |
+|--------|------|------|
+| `GET` | `/api/conversations` | 分页列出当前用户的 Conversation |
+| `POST` | `/api/conversations` | 创建 Conversation |
+| `GET` | `/api/conversations/{conversation_id}` | 读取单个 Conversation |
+| `PATCH` | `/api/conversations/{conversation_id}` | 重命名或归档/恢复 |
+| `DELETE` | `/api/conversations/{conversation_id}` | 永久删除 |
+| `GET` | `/api/conversations/{conversation_id}/messages` | 分页读取消息 |
+| `POST` | `/invocations` | 现有 Agent Invocation，新增 Conversation 字段 |
 
-不存在 BFF 专用 `/internal/chat/invocation-contexts` API，也不存在独立 Control Plane API。
-所有 Conversation ownership 由 Gateway 后的 FastAPI 执行。
-
-Invocation request：
+Invocation request 新增：
 
 ```json
 {
-  "conversation_id": "6f5d2d9a-1478-4c4a-8a65-4ebd7c2e7610",
-  "client_message_id": "client-generated-message-id",
-  "message": "你好",
+  "conversation_id": "6ee32f02-4c87-4c16-bcc8-cc69277ee42f",
+  "client_message_id": "d18b81bc-b6ba-4c9f-91fd-b773a7815eb9",
+  "message": "帮我看看明天的日程",
   "stream": true
 }
 ```
 
-Runtime Session ID 不出现在 request/response JSON 或浏览器可读状态中。
+SSE payload 继续使用 JSON，并保持 `snake_case`。API 不返回
+`runtime_session_id`、`runtime_status` 或 lease 状态。
+
+Pages Function 只代理这套业务 API，不增加第二套 API。
 
 ## 数据模型
 
-图类型：**ER Diagram（实体关系图）**。用于说明 Feature 14 新增业务表的关系；
-LangGraph Checkpoint 表由其 library 自己管理，不在图中展开。
+图类型：**ER Diagram（实体关系图）**。用于说明两张业务表与用户、消息的关系。
 
 ```mermaid
 erDiagram
-    CONVERSATIONS ||--o{ CONVERSATION_MESSAGES : contains
+    USER ||--o{ CONVERSATION : owns
+    CONVERSATION ||--o{ CONVERSATION_MESSAGE : contains
 
-    CONVERSATIONS {
-        uuid id PK
+    CONVERSATION {
+        bigint pk PK
+        uuid id
         text user_id
         text title
         text status
@@ -335,361 +276,237 @@ erDiagram
         timestamptz updated_at
         timestamptz archived_at
     }
-    CONVERSATION_MESSAGES {
+
+    CONVERSATION_MESSAGE {
         bigint sequence PK
-        uuid id UK
-        uuid conversation_id FK
-        uuid reply_to_message_id FK
+        uuid id
+        bigint conversation_pk FK
         text role
         jsonb content
-        text client_message_id
-        text status
+        uuid client_message_id
+        uuid reply_to_message_id
         timestamptz created_at
-        timestamptz updated_at
     }
 ```
 
-Feature 14 只新增：
+### `conversations`
 
-- `conversations`；
-- `conversation_messages`；
-- application schema migration metadata（由 migration tool 管理）。
+- `pk`：内部 bigint 主键，也作为 Advisory Lock key；不暴露给客户端。
+- `id`：公开 UUID，与 `user_id` 组成唯一约束。
+- `user_id`：来自可信 JWT `sub`。
+- `status`：仅 `active` 或 `archived`。
+- `archived_at`：归档时间；永久删除不使用 soft-delete 字段。
 
-不新增：
+### `conversation_messages`
 
-- `runtime_session_leases`；
-- `sandbox_session_leases`；
+- `sequence`：稳定分页 cursor 和显示顺序。
+- `conversation_pk`：外键，`ON DELETE CASCADE`。
+- `role`：Feature 14 read model 只保存 `user` 和 `assistant`。
+- `content`：版本化 JSONB message parts。
+- `client_message_id`：用户消息幂等键；同一 Conversation 内唯一。
+- `reply_to_message_id`：assistant 对应的 user message；唯一，防止重复写答案。
+
+不创建：
+
+- Runtime/Sandbox lease 表；
 - `invocation_runs`；
-- 为 BFF 服务的 ownership/session mapping 表。
+- retry/outbox 表；
+- soft-delete/Trash 表；
+- BFF session-to-user 映射表。
 
-## Message persistence contract
+## Message Persistence Contract
 
-FastAPI Service 是 Message write model 的唯一 owner。BFF 不 tee/解析 SSE，也不写 DB。
+Feature 14 保留流式体验，但不建立重试状态机：
 
-为避免“浏览器已经收到完整答案，但 Service 尚未写入历史”的永久缺口，流式调用遵循：
+1. 取得 Conversation Advisory Lock。
+2. 验证 ownership 和 Conversation 状态。
+3. 在短事务中写入 user message；重复 `client_message_id` 返回
+   `409 duplicate_message`，不会再次调用 Agent。
+4. 使用 `thread_id=user_id:conversation_id` 调用 Agent 并透传 SSE token。
+5. 正常完成后，在短事务中写 assistant message、更新 Conversation 时间。
+6. DB commit 成功后才发送 terminal `done=true`。
+7. 任一退出路径都释放 Advisory Lock。
 
-1. 验证 `(user_id, conversation_id)` ownership；
-2. 获取该 Conversation 的 Advisory Lock；若已被发送或删除占用，返回
-   `409 conversation_busy`；
-3. 在发送任何 assistant token 前写入 `status=in_progress` 的 user message；
-4. 相同 `(conversation_id, client_message_id)` 再次到达时返回
-   `409 duplicate_message`，不重放、不重新调用 Agent；
-5. Service 流式发送 token，同时在内存累积可见 assistant content；
-6. Agent 成功后，在同一 transaction 写 assistant message，并把 user message 改为
-   `completed`；
-7. **DB commit 成功后才发送 terminal SSE `done=true` event**；
-8. 明确失败时把 user message 改为 `failed`；浏览器只把已看到的 partial output 视为
-   interrupted，不把它当 durable history；
-9. 进程崩溃留下的旧 `in_progress` message 在后续 history/read 或下一次取得锁时呈现为
-   `interrupted`；
-10. Client、BFF 和 Service 都不得自动重试 `POST /invocations`。用户主动重新发送时生成
-    新的 `client_message_id`，表示一条新的产品操作。
+Client、BFF 和 Service 都不自动重试 `POST /invocations`。用户明确重发时生成新的
+`client_message_id`，表示一次新操作。
 
-这样，客户端只要看到了 `done=true`，对应 assistant message 就已经 durable。若 commit
-成功但 terminal event 丢失，刷新 history 仍能恢复完整答案。
+展示项目接受一个明确 trade-off：进程可能在部分 token 已发送、但 assistant message
+尚未 commit 时终止。刷新后会保留 user message而不显示未完成答案；用户可以重新发送。
+本 Feature 不增加 `invocation_runs`、reconciliation endpoint 或后台恢复任务来掩盖这
+个极低概率窗口。
 
 ## Conversation Advisory Lock
 
-Advisory Lock 是 PostgreSQL 中由应用定义 key 的互斥锁。本 Feature 以稳定的
-Conversation lock key 保护两条写路径：
+同一用户可能从两个浏览器、两个 Runtime Session 同时操作同一 Conversation，
+`asyncio.Lock` 无法跨进程协调。实现使用 PostgreSQL session-level Advisory Lock：
 
-- `POST /invocations` 对该 Conversation 执行 Agent；
-- `DELETE /api/conversations/{conversation_id}` 永久删除该 Conversation。
+1. 先按 `user_id + conversation_id` 查到内部 `conversation.pk`。
+2. 用 `pg_try_advisory_lock(pk)` 非阻塞取锁。
+3. Invocation 和 Delete 使用相同 key。
+4. 未取到锁返回 `409 conversation_busy`，不等待、不重试。
+5. LLM/SSE 期间持有 lock connection，但不持有数据库 transaction。
+6. 在 `finally` 中 unlock；连接断开时 PostgreSQL 也会自动释放 session lock。
 
-锁 contract：
+锁只负责互斥，不代表 ownership、lease、retry 或 Runtime 生命周期。
 
-1. 使用 session-level `pg_try_advisory_lock`，不用无限等待的
-   `pg_advisory_lock`；
-2. 拿不到锁立即返回 `409 conversation_busy`，不在 Server 内排队或自动重试；
-3. Agent stream 期间只持有 lock connection，不保持长 transaction；
-4. 必须在 `finally` 中调用 `pg_advisory_unlock`；connection 断开时 PostgreSQL 自动
-   释放 session lock；
-5. lock connection pool 与普通 query pool 分开；pool reset 执行
-   `pg_advisory_unlock_all()`；
-6. `MAX_CONCURRENT_INVOCATIONS` 不得超过 lock pool 容量，超过时返回
-   `429 server_busy`；
-7. assistant 最终 commit 前必须在 lock connection 上做 health check；若 connection/lock
-   已丢失则中止 commit 和 terminal `done=true`；
-8. stream 期间由 lock manager 定时在同一 connection 执行轻量 heartbeat；heartbeat
-   失败立即取消 Agent task，避免锁已自动释放而旧 Agent 仍继续写 Checkpoint；
-9. 新 Invocation 取得锁后，先把同一 Conversation 遗留的 `in_progress` message 改为
-   `interrupted`；history read 可以用一次非阻塞短锁完成同样 reconciliation，busy 时只
-   返回当前 `in_progress` 状态；
-10. metadata read、普通 history read 和 rename/archive 不持有长锁，使用普通短
-   transaction。
+## 永久删除
 
-进程内 `asyncio.Lock` 不能覆盖不同 Runtime instance；`SELECT FOR UPDATE` 又会要求在整个
-LLM/SSE 期间保持长 transaction。PostgreSQL session-level Advisory Lock 在不增加 Redis
-或数据库 lease 表的前提下，能够跨 Runtime instance 互斥，并在 connection 消失时自动
-释放。
+用户点击 Delete 后：
 
-## 永久删除 Contract
+1. Service 校验 ownership；
+2. 尝试取得同一 Conversation Advisory Lock；
+3. 删除 `conversations` row，messages 由外键 cascade，使业务数据立即不可访问；
+4. 调用 LangGraph Checkpointer 的 `adelete_thread(thread_id)` 清理内部状态；
+5. 成功返回 `204`。
 
-Feature 14 的 Delete 表示永久删除，不提供 Trash、retention period 或后台 purge：
+操作可重复。若业务 row 已删但 Checkpoint 清理失败，本次返回错误；再次 Delete 会按
+`user_id:conversation_id` 重试 Checkpoint 清理并返回 `204`。Feature 14 不实现 Trash、
+retention、后台 purge 或恢复功能。
 
-1. 用可信 `user_id` 检查 ownership；
-2. 获取与发送消息相同的 Conversation Advisory Lock；忙时返回
-   `409 conversation_busy`；
-3. 调用当前 LangGraph Checkpointer 已提供的
-   `await checkpointer.adelete_thread(thread_id)` 删除该 thread 的 checkpoint 与 writes；
-4. 执行 `DELETE FROM conversations WHERE id = ? AND user_id = ?`；
-5. `conversation_messages.conversation_id` 使用 `ON DELETE CASCADE`，由 PostgreSQL 同步
-   删除所有可见消息；
-6. 全部成功后返回 `204 No Content`，任一步失败则返回错误，不把失败伪装成成功；
-7. Archive 是单独的可恢复状态，不等于 Delete。
+## OAuth Callback Compatibility
 
-## 交互流程
+当前 callback context helper 从浏览器请求的 Runtime Session header 取值。新 Client
+不再发送该 header，因此 BFF 必须把 Cookie resolver 得到的
+`runtime_session_id` 显式传给 callback helper，并写入现有短时 HttpOnly
+`pa_oauth2_callback_session` Cookie。
 
-### 进入 Chat 与 warm-up
+OAuth callback 使用发起授权时的 snapshot 做 Runtime routing；用户身份仍由 Gateway
+验证的 JWT 和 signed state 决定。Runtime ID 不是 ownership 输入。
 
-图类型：**Sequence Diagram（时序图）**。用于说明 Cookie 建立、Gateway JWT 验证、
-Conversation 列表读取和 Runtime implicit start 的顺序。
+新 OAuth state 不再放入 Runtime Session ID。为兼容已有 demo 数据：
 
-```mermaid
-sequenceDiagram
-    actor User as 用户
-    participant UI as Web Chat
-    participant BFF as Cloudflare BFF
-    participant GW as AgentArts Gateway
-    participant API as FastAPI Service
-    participant DB as PostgreSQL
+- parser 可读取旧 state 中的 `session_id`，但忽略它；
+- 新 state 和新 DB row 不再写该值；
+- 现有 `oauth2_callback_states.session_id` 改为 nullable，旧 row 保留。
 
-    User->>UI: 登录并进入 Chat
-    UI->>BFF: GET /api/conversations + Authorization
-    BFF->>BFF: resolve or create HttpOnly Runtime Cookie
-    BFF->>GW: GET custom path + Authorization + Session header
-    GW->>GW: validate JWT; implicitly start Runtime if needed
-    GW->>API: validated request
-    API->>API: derive user_id from validated token
-    API->>DB: list Conversations by user_id
-    DB-->>API: page
-    API-->>BFF: ConversationResponse[]
-    BFF-->>UI: page + optional Set-Cookie
-```
+## Schema Setup
 
-Conversation list 失败不能禁用消息输入。用户重试列表或直接发送消息时，BFF 继续使用
-同一个 Cookie；Invocation 自身仍可触发 implicit start。
+这里存在最小的 schema migration，因为要新增两张表，并把现有 OAuth callback 字段改为
+nullable。它不是生产级 migration 工程。
 
-### 发送消息
+固定方案：
 
-图类型：**Sequence Diagram（时序图）**。用于说明 ownership、Checkpoint、Message
-commit 与 terminal SSE event 的先后关系。
+- 使用 Alembic 管理 application-owned schema；
+- 一次 additive upgrade 创建 `conversations`、`conversation_messages` 并完成 OAuth
+  兼容调整；
+- 部署演示环境前执行一次 `uv run alembic upgrade head`；
+- local/integration test 使用 disposable PostgreSQL；
+- demo 数据不需要保留时，可以直接重建数据库后再运行 upgrade；
+- 不设计生产级权限分层、零停机双写、自动 downgrade 或多阶段 rollback。
 
-```mermaid
-sequenceDiagram
-    actor User as 用户
-    participant UI as Web Chat
-    participant BFF as Cloudflare BFF
-    participant GW as AgentArts Gateway
-    participant API as FastAPI Service
-    participant DB as PostgreSQL
-    participant LG as LangGraph
-
-    User->>UI: 发送消息
-    UI->>BFF: POST /invocations {conversation_id, client_message_id, message}
-    BFF->>GW: forward + Cookie-derived Session header
-    GW->>API: validated request
-    API->>DB: validate ownership; pg_try_advisory_lock
-    alt Conversation busy
-        DB-->>API: lock not acquired
-        API-->>UI: 409 conversation_busy
-    else Lock acquired
-        API->>DB: insert user message(status=in_progress)
-        API->>LG: invoke thread_id = user_id:conversation_id
-        loop token stream
-            LG-->>API: token
-            API-->>UI: SSE token
-        end
-        API->>DB: insert assistant + complete user message
-        DB-->>API: commit
-        API-->>UI: SSE done=true
-        API->>DB: pg_advisory_unlock
-    end
-```
-
-### OAuth callback compatibility
-
-发起 OAuth 时，callback helper 必须使用 BFF resolver 得到的 Runtime ID，而不是读取
-浏览器 request 中已被移除的 Session header。现有短时
-`pa_oauth2_callback_session` 可以保存该 ID 的 snapshot；即使主 Runtime Cookie 在授权
-期间轮换，callback 仍使用发起授权时的 context。业务用户仍由 Gateway 验证的 JWT 和
-signed OAuth state 决定，callback user cookie 不是授权依据。
+LangGraph Checkpointer 自有表仍由现有 library setup 管理，不纳入本 Feature 的 Alembic
+revision。
 
 ## 范围
 
 ### 包含
 
-- 多 Conversation sidebar、创建、切换、重命名、归档和删除；
-- Conversation message read model 与页面刷新 hydration；
-- `conversation_id`、`thread_id`、Runtime Session ID 的职责拆分；
-- BFF 随机 HttpOnly Runtime Cookie 与 header overwrite；
-- Conversation APIs 经 Gateway custom path 进入 FastAPI；
-- PostgreSQL Advisory Lock、无自动 Invocation retry 和 Message commit-before-done contract；
-- 同步永久删除 Conversation、messages 与 LangGraph thread；
-- versioned PostgreSQL schema migration；
-- legacy `localStorage` session 的一次性 Conversation import；
-- warm-up latency baseline/measurement；
-- OAuth callback Runtime context 回归测试。
+- Conversation sidebar 与 CRUD；
+- Message read model 和刷新恢复；
+- 三类 ID 的职责拆分；
+- BFF 随机 HttpOnly Runtime Cookie；
+- Gateway 后的 FastAPI Conversation API；
+- PostgreSQL Advisory Lock；
+- 最小 Alembic schema update；
+- OAuth callback context 回归修复；
+- warm-up latency 测量。
 
 ### 不包含
 
-- `sessions-start` / `sessions-stop` production integration；
-- Runtime lease state machine、idle scheduler、stop retry worker；
-- 独立 Control Plane 服务或 BFF-to-Control-Plane internal API；
-- Cloudflare Hyperdrive / BFF 直连 PostgreSQL；
-- Sandbox Tool 和 `sandbox_session_leases`；
-- 跨 Conversation semantic Memory；
-- 把 partial SSE token 持久化为可恢复草稿；
-- 自动 Invocation retry、Run ledger、Trash、retention period 和后台 purge worker。
-
-## 数据库 migration 原则
-
-- 使用成熟的 versioned migration tool；Implementation Plan 固定采用 Alembic，但业务
-  store 继续直接使用 async psycopg，不引入 ORM；
-- LangGraph Checkpointer 自有表继续由 `AsyncPostgresSaver.setup()` 管理；
-- Feature 14 Conversation Store、migration、Advisory Lock 和 integration test 统一使用
-  PostgreSQL；SQLite 不实现第二套业务 schema；
-- Unit Test 可以使用实现同一 repository protocol 的 in-memory fake；
-- 已存在的 `oauth2_callback_states` 先纳入兼容 baseline，不破坏线上数据；
-- Conversation schema 采用 additive migration，先部署 DB，再部署兼容 Service，最后
-  部署 Client；
-- rollback 回旧应用版本时不执行 destructive downgrade，新表由旧版本忽略；
-- production migration 由现有 Service deploy GitHub Actions workflow 在
-  `agentarts launch` 前执行；当前 Demo RDS 有 EIP，runner 使用 GitHub Secret
-  `POSTGRES_DSN` 和 `pa_app` owner 账号连接；
-- workflow 使用不取消进行中任务的 production concurrency group，保证同一时刻只有一个
-  migration/deploy；迁移前确认 RDS 自动备份或 snapshot 可用；
-- 若后续移除 RDS 公网 EIP，migration runner 必须迁入 VPC-connected runner/job，不得退化
-  为每个 Runtime instance startup 自动抢跑 schema migration。
+- AgentArts Session lifecycle API 集成；
+- Runtime/Sandbox lease；
+- 新部署服务；
+- BFF 数据库连接；
+- 迁移旧 localStorage Session/Checkpoint；展示环境从新 Conversation 开始；
+- Invocation 自动 retry、run ledger、reconciliation worker；
+- soft delete、retention、purge worker；
+- 生产级 Runtime 发布编排；
+- Sandbox Tool；
+- 跨 Conversation semantic Memory。
 
 ## 验收标准
 
-### AC1 多 Conversation
+### AC1 Conversation
 
-- [ ] 用户可以创建、列出、切换、重命名、归档和删除自己的 Conversation；
-- [ ] 页面刷新后从 Service 恢复列表、当前 Conversation 和可见消息；
-- [ ] 用户不能读取或修改其他用户的 Conversation。
+- [ ] 用户可以创建、列出、切换、重命名、归档、恢复和永久删除自己的 Conversation。
+- [ ] 页面刷新后恢复列表和消息。
+- [ ] 用户不能读取或修改其他用户的数据。
 
-### AC2 ID invariant
+### AC2 Session 与身份
 
-- [ ] Conversation 与 `thread_id` 1:1；
-- [ ] `thread_id = user_id:conversation_id`；
-- [ ] Runtime Cookie ID 不进入 `thread_id`、Conversation row 或 message row；
-- [ ] Runtime 被平台回收后，相同 Cookie ID 可继续调用并恢复同一 Conversation。
+- [ ] BFF 建立并复用随机 HttpOnly Runtime Cookie。
+- [ ] Browser-provided Runtime Session/User header 不能决定 routing 或 ownership。
+- [ ] FastAPI 从 Gateway 已验证的 JWT `sub` 派生 `user_id`。
+- [ ] 相同 Runtime ID 在平台回收 instance 后仍可继续调用。
+- [ ] Runtime ID 不进入 Conversation、Message 或 OAuth state。
 
-### AC3 Cookie 与 BFF
+### AC3 Warm-up
 
-- [ ] 首个 Gateway-bound request 生成随机、合法的 HttpOnly Cookie；
-- [ ] Cookie 使用 `Secure`、`SameSite=Lax`、`Path=/`、host-only production 属性；
-- [ ] BFF 忽略并覆盖浏览器提供的 Runtime Session header；
-- [ ] rollout 兼容窗口先允许旧 Client 的合法 Session header 继续路由；新 Client 完成
-  legacy import 并停止发送 header 后，才启用强制覆盖；
-- [ ] 同一 Cookie jar 后续请求复用同一 ID；不同 Cookie jar 使用不同 ID；
-- [ ] logout/account switch expire Cookie；
-- [ ] BFF 不访问 PostgreSQL、不解析 SSE、不执行 Conversation ownership。
+- [ ] 进入 Chat 请求 Conversation list，并与随后 Invocation 复用同一 Cookie ID。
+- [ ] 不新增 readiness/no-op route，不展示虚构的 ready 状态。
+- [ ] 记录直接首条 Invocation 与先加载列表两组的 p50/p95。
 
-### AC4 身份安全
+### AC4 Message 与并发
 
-- [ ] Gateway 对 root Invocation 和 Conversation custom paths 执行相同 JWT 验证；
-- [ ] FastAPI 从 Gateway 已验证的 token 派生 `user_id`；
-- [ ] 伪造 `X-HW-AgentGateway-User-Id` 不能跨用户读取数据；
-- [ ] production Runtime 不存在绕过 Gateway 的 public ingress；
-- [ ] local development auth bypass 无法在 production 配置中启用。
+- [ ] user message 在 Agent 调用前持久化。
+- [ ] assistant message commit 后才发送 terminal `done=true`。
+- [ ] 相同 `client_message_id` 不会再次执行 Agent。
+- [ ] 同一 Conversation 最多一个 Invocation；Delete 与 Invocation 互斥。
+- [ ] 系统不自动重试 Invocation。
 
-### AC5 Warm-up
+### AC5 Schema 与测试
 
-- [ ] 进入 Chat 自动请求 Conversation list，不新增 readiness/no-op route；
-- [ ] 列表请求与首条 Invocation 使用同一 Cookie ID；
-- [ ] 记录 fresh-cookie 首次列表请求和首条消息 latency；
-- [ ] 对比“直接发首条消息”与“先加载列表”的 p50/p95；
-- [ ] 文档和 UI 不把 `sessions-start` 宣称为官方预热保证；
-- [ ] warm-up 失败不阻断直接 Invocation fallback。
+- [ ] Alembic 可初始化空 PostgreSQL，并可升级包含现有 OAuth callback 表的 demo DB。
+- [ ] migration 只增加本 Feature 必需的 schema，不创建 lease/run/retry 表。
+- [ ] PostgreSQL integration test 覆盖 CRUD、ownership、cascade 和 Advisory Lock。
+- [ ] 纯业务 Unit Test 可使用 in-memory fake；不维护 SQLite Store。
+- [ ] OpenAPI 与新增 route/schema 同步。
 
-### AC6 Message consistency
+### AC6 Client 与 OAuth
 
-- [ ] `status=in_progress` 的 user message 在首个 assistant token 前 durable；
-- [ ] assistant message commit 在 terminal `done=true` 前完成；
-- [ ] 相同 `client_message_id` 返回 `409 duplicate_message`，不会再次执行 Agent；
-- [ ] Client、BFF、Service 都不自动重试 Invocation；
-- [ ] crash 遗留的旧 `in_progress` message 显示为 `interrupted`；
-- [ ] BFF 不写 message read model。
+- [ ] E2E 覆盖创建、发送、切换、刷新和删除。
+- [ ] E2E 覆盖 Cookie 建立、复用、非法值轮换和 logout。
+- [ ] E2E 覆盖跨用户访问拒绝。
+- [ ] OAuth 发起后主 Runtime Cookie 变化，callback 仍使用发起时的 snapshot。
 
-### AC7 Advisory Lock 与永久删除
+## 风险与取舍
 
-- [ ] 同一 Conversation 最多一个 active Invocation；不同 Conversation 可以并发；
-- [ ] Invocation 或 Delete 拿不到锁时返回 `409 conversation_busy`；
-- [ ] Agent stream 期间没有长 transaction；任何退出路径都释放 lock connection；
-- [ ] Delete 调用 `adelete_thread()` 并通过 `ON DELETE CASCADE` 删除 messages；
-- [ ] Delete 成功返回 `204` 后，Conversation、messages 和 Checkpoint 均不可恢复；
-- [ ] 不创建 soft-delete、Trash、retention 或后台 purge 状态机。
-
-### AC8 Migration 与测试数据库
-
-- [ ] Alembic 从空库和包含现有 `oauth2_callback_states` 的库均可升级到 head；
-- [ ] migration 不创建 Runtime/Sandbox lease 表；
-- [ ] migration 不创建 `invocation_runs`；
-- [ ] Store/migration/lock integration tests 使用真实 PostgreSQL；
-- [ ] Unit tests 可用 in-memory fake；SQLite 不作为 Feature 14 数据层测试替身；
-- [ ] 旧 Service 可在新 schema 上继续运行以支持应用 rollback；
-- [ ] `openapi.json` 与新增 FastAPI routes/schema 同步。
-
-### AC9 Client 与 E2E
-
-- [ ] E2E 覆盖创建、发送、切换、刷新恢复和删除；
-- [ ] E2E 覆盖 Cookie 建立、复用、非法值轮换和 logout；
-- [ ] E2E 覆盖 forged user header、跨用户 ownership 和不同设备 Cookie；
-- [ ] E2E 覆盖 OAuth 发起后 Runtime Cookie 轮换的 callback context；
-- [ ] history hydration 完成前不闪现错误的空白 welcome state。
-
-## 风险与缓解
-
-| 风险 | 等级 | 缓解 |
-|------|------|------|
-| Gateway 不转发原始 Authorization，Service 无法派生用户 | High | 作为 blocking spike；不得信任浏览器 user header 兜底 |
-| Gateway custom path 的 auth/method 行为与 root 不一致 | High | 部署前用 GET/POST/PATCH/DELETE 和伪造 JWT 做 contract test |
-| Conversation list 并未降低首条消息 latency | Medium | 把它视为必要数据请求；如实记录测量，不展示“ready”承诺 |
-| 首次两个 Tab 同时生成不同 Cookie ID | Low | 接受临时重复 instance；后续以最后写入 Cookie 为准，平台自动回收孤儿 |
-| Cookie 在 account switch 后复用 | High | auth lifecycle 必须调用 BFF logout/rotate route；测试 account switch |
-| SSE 已发送 partial token但 DB commit 失败 | Medium | partial UI 标记 interrupted；只有 commit 后才发送 `done=true` |
-| lock connection 长时间占用导致 query pool 饥饿 | High | 独立 lock pool、进程并发上限、`pg_try_advisory_lock` 和 pool reset unlock |
-| BFF 先强制覆盖旧 Session header，导致 legacy Checkpoint 丢失 | High | dual-mode rollout；旧 header telemetry 清零后才移除兼容路径 |
-| Delete 与 active Invocation 竞争 | High | 两者使用同一个 Conversation lock；忙时返回 409 |
-| Checkpoint 删除成功但 Conversation row 删除失败 | Medium | 返回失败并允许重复 Delete；不向 UI 报假成功 |
-| lock connection 丢失但 Agent 继续执行 | High | heartbeat 失败取消 Agent；final commit 前再次检查 lock connection |
-| SQLite 掩盖 PostgreSQL schema/lock 差异 | High | Store/migration/concurrency 使用真实 PostgreSQL；in-memory 只测纯业务规则 |
-| Alembic 与既有 startup DDL 冲突 | Medium | baseline 兼容现有表；分阶段删除 startup DDL；空库/旧库双路径测试 |
+| 风险 | 处理 |
+|------|------|
+| Gateway 不支持 custom PATCH/DELETE | 实现前完成 G1 窄 probe；失败时调整 API method mapping |
+| Conversation list 没有降低首条消息延迟 | 保留必要的列表请求，删除“预热收益”宣传 |
+| 首次多 Tab 生成两个 Runtime ID | 接受临时资源重复，业务状态不依赖该 ID |
+| 部分 SSE 已显示但 assistant 尚未写库时进程终止 | 刷新后只保留 user message；用户明确重发，不增加恢复系统 |
+| Delete 两个存储步骤之一失败 | 返回错误并允许幂等重试；不向用户报告假成功 |
+| Advisory Lock connection 被长期占用 | 使用有限并发和专用 lock connection；busy 立即返回 409 |
+| lock connection 在 Agent 执行中断开 | 最终写入前验证连接，失败则不 commit/done；展示项目不保证该异常瞬间的全局互斥 |
 
 ## Four-Question Gate
 
 | 问题 | 结论 | 说明 |
 |------|------|------|
-| Is it best practice? | **Conditional Yes** | opaque HttpOnly routing Cookie、Gateway auth、硬删除 cascade、无自动 POST retry 和 bounded Advisory Lock 都符合最佳实践；仍须通过 G0/G1 平台 probe。 |
-| Is it industry standard? | **Conditional Yes** | Thin BFF、API Gateway、PostgreSQL read model、Alembic 和 PostgreSQL Advisory Lock 都是主流模式；custom method pass-through 尚待验证。 |
-| Is it conventional? | **Yes** | Browser → BFF → Gateway → FastAPI → PostgreSQL；没有额外 Control Plane、Redis、lease 或 Run ledger。 |
-| Is it modern? | **Yes** | Web Crypto Cookie、caller-header distrust、真实 PostgreSQL integration test 和 commit-before-done 符合当前实践。 |
+| Is it best practice? | **Yes** | 业务 ID 与基础设施 routing key 分离；Cookie 为 HttpOnly；ownership 只使用 Gateway 验证的身份。 |
+| Is it industry standard? | **Yes** | Browser -> thin BFF -> Gateway -> FastAPI -> PostgreSQL 是主流分层；Alembic 和 PostgreSQL Advisory Lock 都是成熟方案。 |
+| Is it conventional? | **Yes** | 只使用现有组件和两张业务表，新成员可按普通 CRUD、SSE 和数据库锁理解。 |
+| Is it modern? | **Yes** | Web Crypto、FastAPI/Pydantic、React adapter、PostgreSQL JSONB 和真实 integration test 符合当前生态。 |
 
-当前 gate 状态为 **Pending G0/G1**；两项通过后四问才全部为 Yes。需要明确的 trade-off
-是：同一用户跨设备不会共享 Runtime ID，首次并发 Tab
-可能短暂创建两个 Runtime。由于 Runtime 是可回收的优化资源，而 Conversation state 是
-durable 且 user-scoped，这两个 trade-off 不影响正确性，成本低于引入 distributed lease。
+四问的范围是“展示项目的正确性和可维护性”，不是生产级高可用。方案明确接受极少数
+stream-before-commit 故障窗口，换取不引入 Run ledger、reconciliation worker 和复杂发布
+系统。
 
 ## 依赖与受影响文档
 
-- AgentArts Gateway CUSTOM_JWT 与 PREFIX_MATCH custom path；
-- PostgreSQL RDS；
-- LangGraph PostgreSQL Checkpointer；
-- assistant-ui remote thread integration；
-- `personal-assistant-meta/architecture/api.md`；
-- `personal-assistant-meta/architecture/session-state-management.md`；
-- `personal-assistant-meta/architecture/auth/feature-15-calendar-oauth2-architecture.md`；
-- `personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md`；
-- `personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts.md`。
+- `personal-assistant-meta/architecture/api.md`
+- `personal-assistant-meta/architecture/session-state-management.md`
+- `personal-assistant-meta/architecture/auth/feature-15-calendar-oauth2-architecture.md`
+- `personal-assistant-meta/architecture/cloud-service/cloudflare/pages.md`
+- `personal-assistant-meta/architecture/cloud-service/huaweicloud/agentarts.md`
 
 ## 参考
 
 - AgentArts API PDF：§4.7.1.1 `StartRuntimeSession`、§4.7.1.2
   `ExecuteRuntimeWithPrefix`、§4.7.1.3 `ExecuteRuntime`、§4.7.1.7
-  `StopRuntimeSession`；
-- [`spike.md`](./spike.md)；
-- [`plan.md`](./plan.md)；
-- [`architecture/api.md`](../../../architecture/api.md)。
+  `StopRuntimeSession`
+- [`spike.md`](./spike.md)
+- [`plan.md`](./plan.md)
+- [`architecture/api.md`](../../../architecture/api.md)
