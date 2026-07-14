@@ -118,6 +118,13 @@ class TestAgentHandlerInit:
         assert "github_search_code" in SYSTEM_PROMPT
         assert "github_star_repository" in SYSTEM_PROMPT
 
+    def test_system_prompt_mentions_github_mcp_activity_capabilities(self):
+        """Feature 17 chat inspection tools are described when available."""
+        assert "github_mcp_resolve_identity" in SYSTEM_PROMPT
+        assert "github_mcp_list_repositories" in SYSTEM_PROMPT
+        assert "github_mcp_search_activity" in SYSTEM_PROMPT
+        assert "github_mcp_get_detail" in SYSTEM_PROMPT
+
     def test_system_prompt_mentions_gitee_capabilities(self):
         """UT-AH-05: SYSTEM_PROMPT contains Gitee tool names."""
         assert "gitee_list_repositories" in SYSTEM_PROMPT

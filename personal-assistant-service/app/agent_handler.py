@@ -65,6 +65,21 @@ SYSTEM_PROMPT = """\
 github_star_repository(confirm=True, owner=..., repo=...)
 才会实际点赞。
 
+### GitHub MCP 活动数据源✅
+如果工具列表中存在以下 GitHub MCP 工具，你可以帮用户查看平台 GitHub
+account 经 AgentArts MCP Gateway 读取到的工程活动：
+- **github_mcp_resolve_identity**: 查看 MCP Target 使用的平台 GitHub 身份
+- **github_mcp_list_repositories**: 列出平台 GitHub 身份可见的仓库
+- **github_mcp_search_activity**: 按时间范围查询 commits、PR、issues、
+  reviews/comments 等活动
+- **github_mcp_get_detail**: 查看单个 commit、PR、issue、review 或 comment 活动详情；
+  review/comment 需要传入搜索结果中的 parent_external_id
+
+这些工具只读，不代表当前 Web Chat 用户的 GitHub OAuth 授权；不要声称它们读取的是
+用户个人 GitHub 账号。不要要求用户提供 PAT、WAT、STS、AK/SK、签名 header 或 token。
+当用户询问 feature-17、GitHub MCP、Report activity、仓库活动、最近提交、PR 或 issue
+动态时，优先使用 github_mcp_search_activity。
+
 ### Gitee（码云）工具 ✅
 你可以帮用户处理 Gitee 代码仓库，包括：
 - **gitee_list_repositories**: 列出当前用户可访问的 Gitee 代码仓库

@@ -1,6 +1,6 @@
 # Personal Assistant Service
 
-Personal Assistant 的 Agent Identity 后端服务，运行在 AgentArts Runtime 上。服务通过 FastAPI + deepagents 处理对话逻辑，并通过 AgentArts Identity SDK 获取 LLM API Key、OAuth2 用户委托 token 和 STS 临时凭证，支持非流式与 SSE 流式两种对话模式。
+Personal Assistant 的 Agent Identity 后端服务，运行在 AgentArts Runtime 上。服务通过 FastAPI + deepagents 处理对话逻辑，并通过 AgentArts Identity SDK 获取 LLM API Key、OAuth2 用户委托 token 和 STS 临时凭证；GitHub MCP data source 使用专用 STS 凭据调用 AgentArts MCP Gateway。服务支持非流式与 SSE 流式两种对话模式。
 
 当前后端重点验证 Agent Identity 的生产落地方式：Inbound 可信用户身份、Outbound Credential Provider、用户委托访问外部 API、Workload Access Token 复用、会话隔离以及敏感写操作二次确认。
 
@@ -19,10 +19,13 @@ personal-assistant-service/
 │   ├── identity.py          # Outbound Identity provider 配置与辅助函数
 │   ├── logging_config.py    # Structured logging formatter/filter/middleware
 │   ├── playground.py        # Chainlit Playground 挂载
+│   ├── mcp/
+│   │   └── gateway_client.py # MCP session、STS 交换与 IAM request signing
 │   └── tools/               # Identity SDK 装饰的外部工具
 │       ├── __init__.py      # 工具注册工厂
 │       ├── email_tools.py   # Microsoft 365 邮件工具
-│       ├── github_tools.py  # GitHub 工具
+│       ├── github_tools.py  # GitHub 用户 OAuth 工具
+│       ├── github_mcp_tools.py # GitHub MCP activity source 与 Chat wrappers
 │       ├── gitee_tools.py   # Gitee 工具
 │       └── iam_tools.py     # 华为云 IAM STS 工具
 ├── tests/
@@ -33,7 +36,9 @@ personal-assistant-service/
 │   ├── test_auth.py         # 认证中间件测试
 │   ├── test_checkpointer.py # Checkpoint 持久化测试
 │   ├── test_email_tools.py  # Microsoft 365 邮件工具测试
-│   ├── test_github_tools.py # GitHub 工具测试
+│   ├── test_github_tools.py # GitHub OAuth 工具测试
+│   ├── test_github_mcp_tools.py # GitHub MCP activity 测试
+│   ├── test_mcp_gateway_auth.py # MCP Gateway IAM signing 测试
 │   ├── test_gitee_tools.py  # Gitee 工具测试
 │   ├── test_iam_tools.py    # IAM STS 工具测试
 │   ├── test_identity.py     # Identity 配置辅助函数测试
@@ -251,6 +256,8 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
   │
   │  DeepSeek LLM (API key from AgentArts Identity)
   │
+  │  GitHub MCP wrappers → WAT/STS → IAM signed MCP Gateway → read-only Target
+  │
   └── POST /invocations {"stream":false} ──→ AgentHandler.handle() → agent.ainvoke()
 ```
 
@@ -268,6 +275,9 @@ Browser ──POST /invocations {"stream":true}──→ StreamingResponse
 | | `app/tools/gitee_tools.py` — list repositories | |
 | Feature 8 | 华为云 IAM STS 只读工具 | 已实现 |
 | | `app/tools/iam_tools.py` — list IAM users via `iam-users-readonly` STS provider | |
+| Feature 17 | GitHub MCP Activity Data Source | 已实现 |
+| | `app/tools/github_mcp_tools.py` — commit、PR、Issue、review、comment 搜索与详情；review/comment 详情需要 `parent_external_id` | |
+| | `app/mcp/gateway_client.py` — WAT → `github-mcp-gateway` STS → IAM signed MCP request | |
 | **Feature 10a** | **Outbound Email — Microsoft 365 邮件处理** | **已实现** |
 | | `app/tools/email_tools.py` — list_emails, get_email, search_emails, send_email, reply_to_email | |
 | | AgentArts Identity SDK `@require_access_token` + Microsoft Graph API | |

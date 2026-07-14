@@ -452,6 +452,68 @@ async def _github_request(
 > **Workload Access Token 优化**：生产环境中，AgentArts Gateway 在转发请求时自动注入 `X-HW-AgentGateway-Workload-Access-Token` header（见 §2.3）。后端提取该 token 并存入 `AgentArtsRuntimeContext` 后，`@require_access_token` 等装饰器内部优先从 context 读取，直接使用 Gateway 注入的 token 向 Identity Service 换取 OAuth2 access token，跳过本地 `.agent_identity.json` 的 fallback 流程。本地开发时 header 不存在，行为不变。
 <!-- updated by issue: chore-5-workload-access-token-from-header -->
 
+### 5.2.0 GitHub MCP Activity Data Source
+
+Feature 17 新增 Service 内部 GitHub MCP activity data source，用于后续 Report
+能力和只读 Chat inspection 读取工程活动。它不替代现有 GitHub OAuth local tools，
+也不向 Agent 暴露 remote MCP 原子工具。当前 settings 默认启用 data source，并由
+`build_tools()` 注册四个经过裁剪的只读 Chat wrappers；设置
+`GITHUB_MCP_CHAT_TOOL_ENABLED=false` 可只保留内部调用。
+
+图类型：**Sequence Diagram（时序图）**。用于说明 GitHub MCP activity source 的
+生产凭据链路。
+
+```mermaid
+sequenceDiagram
+    participant Runtime as AgentArts Runtime
+    participant Source as github_mcp_tools.py
+    participant Identity as AgentArts Identity
+    participant Signer as HuaweiCloud IAM Signer
+    participant Gateway as gateway-github-mcp
+    participant Target as target-github-mcp
+    participant GitHub as GitHub remote MCP
+
+    Runtime->>Source: request context contains WAT
+    Source->>Identity: exchange WAT (provider=github-mcp-gateway)
+    Identity-->>Source: temporary STS credentials
+    Source->>Signer: sign MCP HTTP request per request
+    Signer-->>Source: IAM signed headers
+    Source->>Gateway: Streamable HTTP MCP request
+    Gateway->>Target: route to read-only GitHub MCP target
+    Target->>GitHub: Authorization: Bearer PAT
+    GitHub-->>Source: MCP tool result
+```
+
+实现边界：
+
+- `app/mcp/gateway_client.py` 使用 `langchain-mcp-adapters` 建立
+  Streamable HTTP MCP session，并通过 `httpx.Auth` 对每个 HTTP request 重新
+  做 IAM signing。
+- `app/tools/github_mcp_tools.py` 只暴露内部 callable source functions：
+  `github_mcp_resolve_identity`、`github_mcp_list_repositories`、
+  `github_mcp_search_activity`、`github_mcp_get_detail`。
+- `github_mcp_search_activity` 支持 `commit`、`pull_request`、`issue`、`review`、
+  `comment`。review 从 Pull Request 聚合，comment 从 Issue/PR 的 issue comments
+  聚合。
+- `github_mcp_get_detail` 支持同样五类事件。review/comment 必须同时传入
+  `parent_external_id`，分别表示所属 Pull Request number 和 Issue/Pull Request
+  number；返回事件会保留父级编号和 raw detail payload。
+- 聚合工具调用会补齐必填 `method`：`pull_request_read` 的 PR 详情使用 `get`、
+  review 使用 `get_reviews`；`issue_read` 的 comment 使用 `get_comments`，Issue
+  详情则按 Target schema 聚合 `get`、`get_comments`、`get_sub_issues`、
+  `get_parent`、`get_labels` 到 `GitHubActivityEvent.details`。
+- `GITHUB_MCP_CHAT_TOOL_ENABLED` 当前默认值为 `true`。启用时，`build_tools()`
+  注册四个只读 Chat inspection tools；该入口不提供 raw MCP passthrough，也不改变
+  platform GitHub account 边界。
+- Service settings 只保存 Gateway URL、STS provider/session、timeout 和 tool
+  prefix；STS provider/session 默认是 `github-mcp-gateway` /
+  `personal-assistant-github-mcp`。GitHub PAT 只在 AgentArts Target 的 API Key
+  出站认证中托管。
+- Source 只允许调用 `get_me`、repository search、commits、pull requests、
+  issues、reviews/comments 相关只读 MCP tools，不提供 raw MCP passthrough。
+- 401 / 403 / 429 / timeout / Gateway unavailable 映射为 typed warning；PAT、
+  WAT、STS、AK/SK 和 IAM signed headers 不进入 LLM-visible result、SSE 或业务数据库。
+
 ### 5.2.1 OAuth2 鉴权 URL 呈现（Out-of-Band 消息投递）
 
 当 `@require_access_token` 的 `on_auth_url` callback 被触发时（即用户尚未授权

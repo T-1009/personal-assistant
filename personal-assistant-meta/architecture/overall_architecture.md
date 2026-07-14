@@ -191,6 +191,15 @@ runtime:
 
 **OAuth2 鉴权 URL 呈现**：当 `@require_access_token` 的 `on_auth_url` callback 触发时，tool 通过 LangGraph `get_stream_writer()` 将 `auth_required` custom event 写入 SSE stream，Web Chat 使用 provider-scoped Auth Card 直接呈现，不依赖 LLM 转述。授权凭据可用后发送 `auth_complete`，仅更新匹配的 pending Card。详见 [backend_architecture.md §5.2.1](backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递) 和 [frontend_architecture.md §2.1.4](frontend_architecture.md#214-sse-事件协议)。
 
+**GitHub MCP activity source**：Feature 17 新增的 GitHub MCP data source
+使用 AgentArts MCP Gateway 和 GitHub remote MCP 读取平台账号可见的工程活动。
+它通过 `github-mcp-gateway` STS Provider 获取临时 IAM 凭据，Target 出站使用
+平台侧托管的 GitHub PAT。该 source 支持 commit、Pull Request、Issue、review、
+comment，供 Report 和只读 Chat inspection 使用；review/comment 详情需要所属
+PR/Issue number。当前默认注册经过裁剪的 Chat wrappers，但不暴露 remote MCP
+原子工具，也不代表当前用户。详见
+[backend_architecture.md §5.2.0](backend_architecture.md#520-github-mcp-activity-data-source)。
+
 ### 4.2 Outbound — Agent 代表用户调用外部服务
 
 AgentArts Identity SDK 提供三种 Outbound 认证模式：
@@ -200,6 +209,7 @@ AgentArts Identity SDK 提供三种 Outbound 认证模式：
 | **User Federation** | `USER_FEDERATION` | Agent 以用户身份调用外部 API | 查 GitHub Issues、读 Outlook Calendar、查 Microsoft 365 邮件 |
 | **M2M** | `M2M` | Agent 以自身服务身份调用 API | 调用企业内部 CRM、OA 系统 |
 | **STS Token** | — | Agent 获取云资源访问凭证 | 操作 OBS 对象存储、访问 RDS |
+| **MCP Gateway + STS** | — | Agent 以平台身份调用外部 MCP data source | GitHub activity source |
 
 #### 4.2.1 Credential Provider 创建
 
