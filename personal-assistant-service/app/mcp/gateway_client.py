@@ -381,7 +381,11 @@ def _exception_text(exc: BaseException, seen: set[int] | None = None) -> str:
 
 def _map_generic_mcp_error(exc: Exception) -> MCPGatewayError:
     text = _exception_text(exc)
-    logger.error("MCP Gateway error | type=%s | detail=%s", type(exc).__name__, text[:512])
+    logger.error(
+        "MCP Gateway error | type=%s | detail=%s",
+        type(exc).__name__,
+        text[:512],
+    )
     if "401" in text or "unauthorized" in text:
         return MCPGatewayError(
             "authentication_error",
