@@ -150,6 +150,31 @@ Browser sends Authorization
 后即使主 Cookie 轮换，callback 仍使用发起时 snapshot。用户身份继续由 Gateway JWT 和
 signed state 决定。
 
+### Invocation transport ownership
+
+当前 `AgentHandler.handle_stream()` 会直接编码 SSE、发送 terminal `done=true`、把异常
+转换成 error event，并在尚未输出 token 时对部分 Checkpointer error 重跑 graph；sync
+`handle()` 也可能重跑。Feature 14 的 commit-before-done 与 no-retry contract 要求把
+这些职责移到 Invocation Service：
+
+- `AgentHandler` 只产生结构化非 terminal event；
+- 异常向上传播；
+- Agent execution 开始后不自动重跑；
+- Invocation Service 在 assistant Message commit 后才生成 success terminal；
+- sync 与 stream 使用同一个持久化 core。
+
+### assistant-ui thread runtime
+
+当前 `RuntimeProvider` 只有一个 `useLocalRuntime(chatAdapter)`，不能表达 Service-owned
+Conversation list 和 per-thread history。已安装的 `@assistant-ui/react 0.14.x` 提供
+`useRemoteThreadListRuntime`、`RemoteThreadListAdapter` 和 `ThreadHistoryAdapter`。
+Feature 14 使用这些稳定边界：
+
+- `remoteId=conversation_id`；
+- remote list adapter 对接 Conversation CRUD；
+- per-thread history adapter 只负责 load，`append` 不写库；
+- Invocation Service 保持唯一 Message writer。
+
 ## Alternatives
 
 | 方案 | 结论 | 原因 |

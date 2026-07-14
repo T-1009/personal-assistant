@@ -280,8 +280,8 @@ Migration 必须证明没有创建：
 | `app/conversations/service.py` | add | ownership、归档和 delete 规则 |
 | `app/conversations/locks.py` | add | Advisory Lock context manager |
 | `app/conversations/routes.py` | add | Conversation routes |
-| `app/invocations/service.py` | add/refactor | Message persistence 与 no-retry flow |
-| `app/agent_handler.py` | modify | 接收 Conversation，构造 `thread_id` |
+| `app/invocations/service.py` | add/refactor | sync/stream 共用 execution core；Message persistence、SSE terminal 与 no-retry ownership |
+| `app/agent_handler.py` | modify | 接收 Conversation，构造 `thread_id`；只产出结构化非 terminal event 并抛出异常 |
 | `app/main.py` | modify | 注册 router |
 
 实现前按仓库规则对每个要修改的 symbol 运行 GitNexus impact analysis。
@@ -334,42 +334,59 @@ Migration 必须证明没有创建：
 
 ### 5.4 Invocation flow
 
-图类型：**Sequence Diagram（时序图）**。用于说明无自动 retry 的流式消息写入。
+图类型：**Sequence Diagram（时序图）**。用于说明无自动 retry 的流式消息写入，以及
+terminal event 的唯一 owner。
 
 ```mermaid
 sequenceDiagram
     participant UI as React Client
-    participant API as FastAPI
+    participant API as FastAPI Route
+    participant Invocation as Invocation Service
     participant DB as PostgreSQL
-    participant Graph as LangGraph
+    participant Agent as AgentHandler
 
     UI->>API: POST /invocations
-    API->>DB: resolve owner + pg_try_advisory_lock(pk)
+    API->>Invocation: validated InvocationRequest
+    Invocation->>DB: resolve owner + pg_try_advisory_lock(pk)
     alt busy
-        DB-->>API: lock=false
+        DB-->>Invocation: lock=false
         API-->>UI: 409 conversation_busy
     else acquired
-        API->>DB: insert user message by client_message_id
+        Invocation->>DB: insert user message by client_message_id
         alt duplicate
-            DB-->>API: unique conflict
+            DB-->>Invocation: unique conflict
             API-->>UI: 409 duplicate_message
         else new message
-            API->>Graph: invoke(thread_id=user_id:conversation_id)
+            Invocation->>Agent: execute(thread_id=user_id:conversation_id)
             loop stream
-                Graph-->>API: token
+                Agent-->>Invocation: structured token/custom event
+                Invocation-->>API: encoded non-terminal SSE
                 API-->>UI: SSE token
             end
-            API->>DB: insert assistant + update conversation
-            DB-->>API: commit
+            Invocation->>DB: insert assistant + update conversation
+            DB-->>Invocation: commit
+            Invocation-->>API: success terminal
             API-->>UI: SSE done=true
         end
-        API->>DB: advisory_unlock
+        Invocation->>DB: advisory_unlock
     end
 ```
 
 Rules：
 
-- Service、BFF、Client 都不自动 retry Invocation。
+- `AgentHandler` 不返回预编码 SSE string，不发送 success/error terminal，不捕获异常后
+  伪装成正常完成；
+- `AgentHandler` 不在 Checkpointer error 后重新调用已经开始的 graph。允许在写入
+  durable user message 之前重新建立失效的数据库资源，但开始 Agent execution 后不重跑；
+- Invocation Service 是 lock、user/assistant Message、assistant content aggregation、
+  success/error transport terminal 的唯一 owner；
+- sync JSON 与 SSE 调用同一个 execution core。sync 在 assistant commit 后返回 JSON；
+  SSE 在同一 commit 后发送 success `done=true`；
+- Agent/business failure 可以发送明确的 error terminal，但不得写 assistant completed
+  row，也不得被上层当成 success；
+- Client 只允许在发送 POST **之前**刷新 token；收到 POST 的 401/403 后不得重放同一个
+  Invocation；
+- Service、BFF、Client 都不自动 retry 已开始的 Invocation；
 - Agent 执行期间不保持数据库 transaction。
 - archived Conversation 不允许 Invocation。
 - assistant commit 失败时不发送 `done=true`。
@@ -418,7 +435,44 @@ delete、retention 或 purge scheduler。
 - 每次用户发送使用 `crypto.randomUUID()` 创建 `client_message_id`；
 - Invocation 请求不自动 retry。
 
-### 6.2 UI
+### 6.2 assistant-ui runtime integration
+
+使用当前已安装的 `@assistant-ui/react 0.14.x`
+`useRemoteThreadListRuntime`，不在单一 `useLocalRuntime` 外手写第二套 thread 状态机：
+
+```text
+useRemoteThreadListRuntime
+  RemoteThreadListAdapter
+    list/fetch       -> GET /api/conversations
+    initialize       -> POST /api/conversations
+    rename           -> PATCH title
+    archive          -> PATCH status=archived
+    unarchive        -> PATCH status=active
+    delete           -> DELETE /api/conversations/{conversation_id}
+  runtimeHook
+    useLocalRuntime(chatAdapter, { adapters: { history } })
+  ThreadHistoryAdapter
+    load             -> GET /api/conversations/{conversation_id}/messages
+    append           -> no-op; Invocation Service is the only Message writer
+```
+
+Contract：
+
+- `RemoteThreadListAdapter.remoteId = conversation_id`，`externalId` 同值；
+- New Chat 先建立 assistant-ui local thread；首次发送时 `initialize()` 创建
+  Conversation，并把返回的 `conversation_id` 绑定为 remote ID；
+- per-thread Provider/closure 向 ChatModelAdapter 提供当前 remote ID；Invocation body
+  必须携带该 `conversation_id` 和新生成的 `client_message_id`；
+- `ThreadHistoryAdapter.load()` 按 API cursor 读取完整可见历史，映射稳定 message ID、
+  parent ID 和 content parts；
+- history `append()` 不调用 Message write API，避免 assistant-ui 与 Invocation Service
+  双写；
+- Feature 14 只支持线性对话；隐藏/禁用 edit、regenerate 和 branch UI，后续另行设计这些
+  操作的 Checkpoint 与 Message semantics；
+- selected Conversation change 由 `threadId` 驱动 runtime switch；hydration 完成前保持
+  loading state，不能短暂显示空 welcome state。
+
+### 6.3 UI
 
 - desktop sidebar 与 mobile drawer 共用同一 Conversation state；
 - 支持 new、select、rename、archive/restore、delete；
@@ -427,12 +481,22 @@ delete、retention 或 purge scheduler。
 - `409 conversation_busy` 显示可重试提示；
 - `409 duplicate_message` 触发 history refresh，不重新执行 Agent。
 
-### 6.3 Warm-up
+### 6.4 Warm-up
 
 Chat route mount 后立即请求 Conversation list。列表失败显示普通加载错误；它不是 Runtime
 readiness API。若本地已有选中 Conversation，用户仍可重试列表后继续。
 
-### 6.4 Local development
+### 6.5 Design preview
+
+[`preview.html`](./preview.html) 是 Feature 14 的静态交互稿，用于确认 desktop sidebar、
+mobile drawer、Conversation selection、loading/empty、rename、archive/restore 和 delete
+confirmation。它使用 mock data，不调用 API，也不是 React 实现来源。
+
+Preview 与产品 contract 一致：不显示 Runtime warming/ready/degraded，不声称
+application-level warm-up 已完成。实际实现仍复用 assistant-ui、shadcn/ui、Lucide 和
+`DESIGN.md` tokens。
+
+### 6.6 Local development
 
 现有 Vite dev proxy 直连 FastAPI，绕过 Pages Function。它必须在 dev server 边界注入
 固定的 local-only Session header；FastAPI 的 local auth fixture 继续由显式 local config
@@ -467,7 +531,8 @@ flowchart LR
 - migration：empty DB、existing OAuth table、upgrade twice；
 - Store：CRUD、ownership、pagination、archive、cascade；
 - lock：same Conversation conflict、different Conversation parallel、exception releases lock；
-- Invocation：duplicate ID、assistant commit-before-done、no automatic retry；
+- Invocation：duplicate ID、assistant commit-before-done、sync/stream common core、
+  AgentHandler no terminal/no retry、error propagation；
 - Delete：busy、success、idempotent missing、Checkpoint failure；
 - auth：trusted `sub`、forged user header、missing Authorization；
 - OpenAPI schema uses `snake_case`。
@@ -486,6 +551,9 @@ flowchart LR
 ### 8.3 Client
 
 - sidebar CRUD and selection；
+- `useRemoteThreadListRuntime` adapter mapping and lazy `initialize`；
+- per-thread history load with no-op append，防止双写；
+- selected remote ID enters every Invocation；
 - wire/domain naming adapter；
 - no Runtime/User header；
 - unique `client_message_id`；
@@ -523,7 +591,7 @@ total duration、failure count、p50 和 p95。若没有稳定收益，只保留
 4. 实现 Conversation models/store/routes。
 5. 实现 Advisory Lock、Invocation Message flow 和 Delete。
 6. 实现 BFF Cookie resolver、显式 routes、logout 和 OAuth callback snapshot。
-7. 实现 Client adapter、sidebar 和 history hydration。
+7. 实现 RemoteThreadListAdapter、per-thread history adapter、sidebar 和 hydration。
 8. 生成 OpenAPI，运行 unit/integration/E2E。
 9. 执行一次 demo schema upgrade、部署并采集 warm-up sample。
 
@@ -538,6 +606,9 @@ total duration、failure count、p50 和 p95。若没有稳定收益，只保留
 - [ ] Add Conversation Advisory Lock.
 - [ ] Add CRUD routes.
 - [ ] Update Invocation for `conversation_id`, `client_message_id` and commit-before-done.
+- [ ] Refactor `AgentHandler` to emit structured non-terminal events, propagate errors and never
+  replay an Agent run.
+- [ ] Make sync JSON and SSE share one Invocation Service execution core.
 - [ ] Add permanent Delete with `adelete_thread()`.
 - [ ] Derive `user_id` from Gateway-validated Authorization.
 - [ ] Remove Runtime ID from new OAuth state/rows.
@@ -552,6 +623,8 @@ total duration、failure count、p50 和 p95。若没有稳定收益，只保留
 - [ ] Pass resolver ID to OAuth callback context helper.
 - [ ] Add logout Cookie cleanup.
 - [ ] Add Client Conversation API adapter.
+- [ ] Replace the single-thread provider with `useRemoteThreadListRuntime`.
+- [ ] Add RemoteThreadListAdapter and per-thread load-only history adapter.
 - [ ] Add sidebar/drawer and CRUD interactions.
 - [ ] Add history hydration and clear obsolete localStorage Session.
 - [ ] Stop sending Runtime/User headers.
@@ -606,6 +679,8 @@ uv run pytest
 | duplicate request 重复执行 Agent | Conversation-scoped `client_message_id` unique constraint，返回 409 |
 | 同一 Conversation 并发 | internal bigint key + PostgreSQL Advisory Lock |
 | partial SSE 后进程退出 | 不发送 done，不自动重试；刷新只显示已 commit 的历史 |
+| AgentHandler 继续发送 terminal 或内部 retry | Invocation Service 独占 terminal；contract test 证明 graph 只调用一次 |
+| assistant-ui history adapter 与 Service 双写 Message | history append 为 no-op；只有 Invocation Service 写 Message |
 | Delete 与 Invocation 竞争 | 共用 Advisory Lock |
 | lock connection 在 Agent 执行中断开 | 最终写入前验证连接，失败则不 commit/done；展示项目不保证该异常瞬间的全局互斥 |
 | SQLite 测试与 PostgreSQL 行为不同 | integration/local 使用 disposable PostgreSQL |

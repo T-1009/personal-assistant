@@ -4,6 +4,7 @@
 > 日期：2026-07-14
 > 关联计划：[`plan.md`](./plan.md)
 > Spike：[`spike.md`](./spike.md)
+> UI Preview：[`preview.html`](./preview.html)
 
 ## 动机
 
@@ -322,13 +323,19 @@ Feature 14 保留流式体验，但不建立重试状态机：
 2. 验证 ownership 和 Conversation 状态。
 3. 在短事务中写入 user message；重复 `client_message_id` 返回
    `409 duplicate_message`，不会再次调用 Agent。
-4. 使用 `thread_id=user_id:conversation_id` 调用 Agent 并透传 SSE token。
+4. Invocation Service 使用 `thread_id=user_id:conversation_id` 调用 Agent，并把
+   Agent 的结构化非 terminal event 转换为 SSE。
 5. 正常完成后，在短事务中写 assistant message、更新 Conversation 时间。
-6. DB commit 成功后才发送 terminal `done=true`。
+6. DB commit 成功后才发送 success terminal `done=true`；同步 JSON 也只在 commit
+   后返回。
 7. 任一退出路径都释放 Advisory Lock。
 
 Client、BFF 和 Service 都不自动重试 `POST /invocations`。用户明确重发时生成新的
 `client_message_id`，表示一次新操作。
+
+`AgentHandler` 不再拥有 HTTP/SSE terminal event，不把异常转换为成功结束，也不在
+Agent 已开始执行后重新调用 graph。它只产出结构化的 token/custom event 并向上抛出
+异常；sync 和 stream transport 共用同一个 Invocation Service execution core。
 
 展示项目接受一个明确 trade-off：进程可能在部分 token 已发送、但 assistant message
 尚未 commit 时终止。刷新后会保留 user message而不显示未完成答案；用户可以重新发送。
@@ -453,6 +460,8 @@ revision。
 - [ ] 相同 `client_message_id` 不会再次执行 Agent。
 - [ ] 同一 Conversation 最多一个 Invocation；Delete 与 Invocation 互斥。
 - [ ] 系统不自动重试 Invocation。
+- [ ] sync JSON 与 SSE 使用同一个 lock、幂等和 Message persistence core。
+- [ ] `AgentHandler` 不发送 terminal SSE、不吞异常、不重新执行已开始的 Agent run。
 
 ### AC5 Schema 与测试
 
@@ -468,6 +477,9 @@ revision。
 - [ ] E2E 覆盖 Cookie 建立、复用、非法值轮换和 logout。
 - [ ] E2E 覆盖跨用户访问拒绝。
 - [ ] OAuth 发起后主 Runtime Cookie 变化，callback 仍使用发起时的 snapshot。
+- [ ] assistant-ui remote thread 的 `remoteId` 等于 `conversation_id`，切换后从
+  Message API hydration。
+- [ ] UI 不显示 Runtime warming/ready/degraded 状态。
 
 ## 风险与取舍
 
