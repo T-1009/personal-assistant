@@ -1,6 +1,6 @@
 # Feature 14 Implementation Plan: 多 Conversation 与 Runtime 提前唤醒
 
-> 版本：v0.6 | 状态：Meta Draft | 日期：2026-07-14
+> 版本：v1.0 | 状态：Implementation Complete / Deployment Validation Pending | 日期：2026-07-15
 > Issue: [`issue.md`](./issue.md) | Spike: [`spike.md`](./spike.md)
 
 ## Executive Summary
@@ -33,7 +33,7 @@ Runtime Session ID，经 Gateway 触发 Runtime，因此兼作 application-level
 |-------|------|----------|
 | G0 Gateway identity | **Passed 2026-07-14** | Gateway 验证 JWT，FastAPI 可读取转发的 Authorization，部署路径没有 auth bypass |
 | G1 Gateway routing | **Pending** | custom suffix 的 GET/POST/PATCH/DELETE 可到达 FastAPI，Session header 保持生效 |
-| G2 PostgreSQL schema | **Pending implementation** | Alembic 可初始化空库，也可升级现有 demo schema；CRUD、cascade、Advisory Lock 可运行 |
+| G2 PostgreSQL schema | **Passed 2026-07-15** | Alembic empty/existing/idempotent migration 与 PostgreSQL CRUD、cascade、Advisory Lock tests 通过 |
 
 G1 失败时只需调整 route/method mapping；不要新增中间服务。G2 失败时修正 migration 或
 schema；不要引入数据库角色平台、网络 runner 或自动恢复系统。
@@ -583,59 +583,59 @@ flowchart LR
 total duration、failure count、p50 和 p95。若没有稳定收益，只保留列表加载，不再使用
 “预热改善延迟”的产品表述。
 
-## 10. Implementation Order
+## 10. Implementation 与 Deployment Order
 
-1. 完成 G1 route/method probe。
-2. 添加 Alembic revisions 和 PostgreSQL integration fixtures，通过 G2。
-3. 修改 Service identity，移除 caller user header ownership。
-4. 实现 Conversation models/store/routes。
-5. 实现 Advisory Lock、Invocation Message flow 和 Delete。
-6. 实现 BFF Cookie resolver、显式 routes、logout 和 OAuth callback snapshot。
-7. 实现 RemoteThreadListAdapter、per-thread history adapter、sidebar 和 hydration。
-8. 生成 OpenAPI，运行 unit/integration/E2E。
-9. 执行一次 demo schema upgrade、部署并采集 warm-up sample。
+1. 添加 Alembic revisions 和 PostgreSQL integration fixtures，通过 G2。
+2. 修改 Service identity，移除 caller user header ownership。
+3. 实现 Conversation models/store/routes。
+4. 实现 Advisory Lock、Invocation Message flow 和 Delete。
+5. 实现 BFF Cookie resolver、显式 routes、logout 和 OAuth callback snapshot。
+6. 实现 RemoteThreadListAdapter、per-thread history adapter、sidebar 和 hydration。
+7. 生成 OpenAPI，运行 unit/integration/E2E。
+8. 部署后执行 G1 route/method/header probe 和 Runtime instance 回收 probe。
+9. 执行 demo schema upgrade、部署并采集 warm-up sample。
 
 ## 11. Task Breakdown
 
 ### Service / DB
 
-- [ ] Add Alembic config and two additive revisions.
-- [ ] Add disposable PostgreSQL test fixture.
-- [ ] Add Conversation Pydantic models using snake_case wire fields.
-- [ ] Add store, ownership and pagination.
-- [ ] Add Conversation Advisory Lock.
-- [ ] Add CRUD routes.
-- [ ] Update Invocation for `conversation_id`, `client_message_id` and commit-before-done.
-- [ ] Refactor `AgentHandler` to emit structured non-terminal events, propagate errors and never
+- [x] Add Alembic config and two additive revisions.
+- [x] Add disposable PostgreSQL test fixture.
+- [x] Add Conversation Pydantic models using snake_case wire fields.
+- [x] Add store, ownership and pagination.
+- [x] Add Conversation Advisory Lock.
+- [x] Add CRUD routes.
+- [x] Update Invocation for `conversation_id`, `client_message_id` and commit-before-done.
+- [x] Refactor `AgentHandler` to emit structured non-terminal events, propagate errors and never
   replay an Agent run.
-- [ ] Make sync JSON and SSE share one Invocation Service execution core.
-- [ ] Add permanent Delete with `adelete_thread()`.
-- [ ] Derive `user_id` from Gateway-validated Authorization.
-- [ ] Remove Runtime ID from new OAuth state/rows.
-- [ ] Regenerate `openapi.json`.
+- [x] Make sync JSON and SSE share one Invocation Service execution core.
+- [x] Add permanent Delete with `adelete_thread()`.
+- [x] Derive `user_id` from Gateway-validated Authorization.
+- [x] Remove Runtime ID from new OAuth state/rows.
+- [x] Regenerate `openapi.json`.
 
 ### BFF / Client
 
-- [ ] Add shared Runtime Cookie resolver.
-- [ ] Overwrite caller Runtime/User headers.
-- [ ] Add explicit Conversation proxy routes.
-- [ ] Keep SSE as pass-through.
-- [ ] Pass resolver ID to OAuth callback context helper.
-- [ ] Add logout Cookie cleanup.
-- [ ] Add Client Conversation API adapter.
-- [ ] Replace the single-thread provider with `useRemoteThreadListRuntime`.
-- [ ] Add RemoteThreadListAdapter and per-thread load-only history adapter.
-- [ ] Add sidebar/drawer and CRUD interactions.
-- [ ] Add history hydration and clear obsolete localStorage Session.
-- [ ] Stop sending Runtime/User headers.
-- [ ] Disable automatic Invocation retry.
+- [x] Add shared Runtime Cookie resolver.
+- [x] Overwrite caller Runtime/User headers.
+- [x] Add explicit Conversation proxy routes.
+- [x] Keep SSE as pass-through.
+- [x] Pass resolver ID to OAuth callback context helper.
+- [x] Add logout Cookie cleanup.
+- [x] Add Client Conversation API adapter.
+- [x] Replace the single-thread provider with `useRemoteThreadListRuntime`.
+- [x] Add RemoteThreadListAdapter and per-thread load-only history adapter.
+- [x] Add sidebar/drawer and CRUD interactions.
+- [x] Add history hydration and clear obsolete localStorage Session.
+- [x] Stop sending Runtime/User headers.
+- [x] Disable automatic Invocation retry.
 
 ### E2E / Docs
 
 - [ ] Run G1 probe.
-- [ ] Add multi-user, multi-browser, concurrency, delete and OAuth callback E2E.
+- [x] Add multi-user, multi-browser, concurrency, delete and OAuth callback E2E.
 - [ ] Measure warm-up cohorts.
-- [ ] Update architecture docs after implementation behavior is verified.
+- [x] Update architecture docs after implementation behavior is verified.
 
 ## 12. Verification Commands
 
@@ -669,6 +669,24 @@ uv run ruff check .
 uv run pytest
 ```
 
+### Verification Results (2026-07-15)
+
+| Boundary | Result |
+|----------|--------|
+| Service | `269 passed, 9 skipped`; Ruff lint passed |
+| Client | `162 passed`; production build passed |
+| E2E | `75 passed, 1 manual deselected`; Ruff lint and format passed |
+| PostgreSQL | empty/existing/idempotent Alembic migration、CRUD、ownership、cascade、Advisory Lock passed |
+| Pages boundary | Runtime Cookie、header overwrite、multi-browser、OAuth snapshot、logout passed through Wrangler + Service |
+
+Service `ruff format --check .` 仍报告两个本次未修改的既有文件：
+`scripts/generate_openapi.py` 与 `tests/test_email_integration.py`。Feature 14 影响文件已格式化；
+本轮不混入无关格式化 diff。
+
+Deployment pending：G1 custom method/path probe、Runtime instance 回收后复用同一 ID、
+demo deployment，以及 fresh-cookie warm-up 两组的 p50/p95。上述项目不得用本地 E2E
+替代真实 AgentArts 证据。
+
 ## 13. Risk Register
 
 | 风险 | 缓解 |
@@ -695,5 +713,6 @@ uv run pytest
 | Is it conventional? | **Yes** | 普通 CRUD + SSE + DB lock；没有新控制服务、lease 或 job framework。 |
 | Is it modern? | **Yes** | Web Crypto、Pydantic、React adapter、JSONB、async psycopg。 |
 
-实现只剩两个需要验证的事实：G1 的 Gateway method routing 和 G2 的实际 schema/test
-结果。它们是窄技术检查，不再扩展为发布平台设计。
+G2 schema/test 已通过。剩余 deployment validation 是 G1 Gateway method routing、Runtime
+instance 回收后复用，以及 warm-up latency cohorts；它们是窄平台验证，不扩展为发布平台
+设计，也不能由本地 deterministic E2E 代替。

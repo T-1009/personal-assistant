@@ -22,10 +22,12 @@ AgentArts 是华为云推出的**企业级一站式智能体构建与运营平�
 | **Sandbox** | 安全隔离代码执行环境 |
 | **MCP Gateway** | 统一 API→MCP 协议转换中枢，集成企业工具 |
 | **观测 & 评估** | 全链路 Trace、会话分析、40+ 预置评估器 |
-| **Agent Runtime** | 容器化部署、10ms 冷启动弹性伸缩、进程级隔离、IAM 鉴权 |
+| **Agent Runtime** | 容器化部署、平台宣传的 10ms 级冷启动弹性伸缩、进程级隔离、IAM 鉴权；不作为应用 SLA |
 | **OfficeClaw** | PC 客户端（PPT/Excel/Word Skill），支持飞书/微信/钉钉/小艺多渠道接入 |
 
 ### 产品架构
+
+图类型：**Component Diagram（组件图）**。用于说明 AgentArts 平台产品能力。
 
 ```mermaid
 flowchart TB
@@ -91,6 +93,8 @@ flowchart TB
 ## 3. 高代码开发路径（Personal Assistant 首选）
 
 ### 3.1 两种开发模式
+
+图类型：**Comparison Diagram（对比图）**。用于说明低代码与高代码开发路径。
 
 ```mermaid
 flowchart LR
@@ -378,7 +382,8 @@ LLM API Key 不通过 Runtime environment variable 注入；Service 使用
 ### 6.2 Runtime 特性
 
 - **进程级隔离**：每个 Agent 独立容器运行
-- **弹性伸缩**：支持基于 QPS/并发的自动扩缩容，10ms 冷启动
+- **弹性伸缩**：支持基于 QPS/并发的自动扩缩容；10ms 冷启动是平台宣传指标，不是
+  Personal Assistant 的 readiness 或首 token latency SLA
 - **安全围栏**：Guard 安全围栏 + 敏感词过滤 + 内容合规检测
 - **IAM 集成**：支持 IAM 鉴权、自定义 JWT、API Key 认证
 - **网络模式**：支持 PUBLIC / VPC 网络配置
@@ -399,6 +404,8 @@ https://agentarts.cn-southwest-2.myhuaweicloud.com
 > **注意**：工作流/智能体的调用接口（InvokeRuntime / ExecuteRuntime）使用独立的运行时访问域名，需从控制台「智能体运行时」详情页获取。
 
 ### 7.1 API 分类总览
+
+图类型：**Hierarchy Diagram（层级图）**。用于说明 AgentArts API 分类。
 
 ```mermaid
 mindmap
@@ -544,21 +551,23 @@ X-Hw-Agentarts-Session-Id: session-001
 
 ##### Runtime Session ID 复用与底层实例回收
 
-Personal Assistant 已确认以下 AgentArts Runtime 行为：
+Personal Assistant 当前采用以下 Runtime Session 设计假设：
 
 - `runtime_session_id` 是稳定的逻辑 Session 路由键，不是某个物理 execution
   instance 的永久 identity；
-- 底层 Runtime execution instance 被平台自动回收后，再次使用相同
-  `X-Hw-Agentarts-Session-Id` 调用 `/invocations`，平台会重新创建 instance；
-- 应用无需仅因平台自动回收主动生成 replacement ID；
+- 底层 Runtime execution instance 被平台自动回收后，预期可再次使用相同
+  `X-Hw-Agentarts-Session-Id` 调用 `/invocations`，并由平台重新创建 instance；
+- 在部署回收 probe 证明该语义前，应用不把它作为可用性或延迟 SLA；
+- 当前应用不会仅因推测平台自动回收而主动生成 replacement ID；
 - 相同 ID 在不同时间可能对应不同的底层 execution instance，因此 Conversation
   identity、LangGraph `thread_id` 和 durable history 不得依赖物理 Runtime instance；
 - 只有平台明确拒绝继续使用该 ID、用户隔离边界变化或应用执行显式安全轮换时，
   才需要生成 replacement ID。
 
-这是项目确认的运行时行为，不是 `sessions-start` 响应中的 TTL contract。官方 API
-当前未返回 Runtime Session 的 `expires_at`、`ttl` 或 `session_timeout`；应用自己的
-idle cleanup policy 不应被解释为平台实际有效期。
+这是由逻辑 Session 语义推导出的项目策略，仍需 deployment probe 验证，不是
+`sessions-start` 响应中的 TTL contract。官方 API 当前未返回 Runtime Session 的
+`expires_at`、`ttl` 或 `session_timeout`；应用自己的 idle cleanup policy 不应被解释为
+平台实际有效期。
 
 ##### StartRuntimeSession 与“预热”语义
 
@@ -581,7 +590,7 @@ Authorization: Bearer <credential>
 - 应用也可以不调用 `sessions-start`，直接用合法的自生成 ID 调用 Invocation，让平台
   隐式创建或重建底层 instance。
 
-Personal Assistant Feature 14 的目标方案由 Cloudflare BFF 生成随机 HttpOnly Cookie，
+Personal Assistant Feature 14 的已实现方案由 Cloudflare BFF 生成随机 HttpOnly Cookie，
 并把该值注入 Invocation header。因此 baseline 不调用 `sessions-start`；进入 Chat 时的
 Conversation list 请求属于 application-level warm-up。只有 benchmark 证明显式 lifecycle
 start 有额外且稳定的收益后，才应另行设计它的认证、失败处理和生命周期 ownership。
@@ -640,6 +649,8 @@ start 有额外且稳定的收益后，才应另行设计它的认证、失败�
 ## 8. Personal Assistant 技术方案
 
 ### 8.1 架构总览
+
+图类型：**Deployment Diagram（部署图）**。用于说明 Personal Assistant 的 AgentArts topology。
 
 ```mermaid
 flowchart TB
@@ -762,25 +773,27 @@ flowchart TB
 
 本节记录 CUSTOM_JWT（Microsoft Entra ID）认证模式的常见问题和调试经验（2026-06-13 实战总结）。
 
-### 11.1 认证层次：两层 401
+### 11.1 认证层次：Gateway 验证 + App canonical subject
 
-AgentArts CUSTOM_JWT 模式有两层认证，产生格式不同的 401 错误：
+图类型：**Data Flow / Trust Boundary Diagram（数据流 / 信任边界图）**。用于说明
+CUSTOM_JWT 的可信身份来源。
 
 ```mermaid
 flowchart LR
-    CLIENT["客户端<br/>Authorization: Bearer &lt;JWT&gt;"] --> GW["Layer 1: AgentArts Gateway"]
-    GW -->|"JWT 验证失败"| ERR1["401<br/>{'code':401,'message':'Authentication failed!'}"]
-    GW -->|"验证成功"| CONTAINER["Layer 2: FastAPI 容器"]
-    CONTAINER -->|"X-HW-AgentGateway-User-Id<br/>header 缺失"| ERR2["401<br/>{'detail':'Missing X-HW-...'}"]
-    CONTAINER -->|"header 存在"| OK["200 OK"]
+    CLIENT["Client<br/>Authorization: Bearer &lt;JWT&gt;"] --> GW["AgentArts Gateway"]
+    GW -->|"signature / issuer / audience / expiry invalid"| ERR1["401 Authentication failed"]
+    GW -->|"validated JWT + original Authorization"| APP["FastAPI"]
+    APP -->|"Bearer malformed or sub missing"| ERR2["401 Gateway-validated Bearer token required"]
+    APP -->|"sub valid"| USER["canonical user_id = sub"]
 ```
 
-| 层次 | 错误格式 | 含义 | 排查方向 |
-|------|---------|------|---------|
-| Gateway | `{"code":401,"data":null,"message":"Authentication failed!"}` | JWT 被 Gateway 拒绝 | 检查 JWT claims（iss/aud/exp）、Gateway 出网能力 |
-| App | `{"detail":"Missing X-HW-AgentGateway-User-Id header"}` | Gateway 通过了但未注入用户 header | 检查调用方是否传了该 header |
+| 层次 | 错误含义 | 排查方向 |
+|------|----------|----------|
+| Gateway 401 | JWT 未通过平台校验，请求未到 container | `iss/aud/exp`、JWKS、Gateway 出网、CUSTOM_JWT 配置 |
+| App 401 | 转发的 Bearer token 无法提供有效 `sub` | Authorization 是否被转发、JWT payload 是否含非空 `sub` |
 
-⚠️ **关键区分**：Gateway 层 401 说明请求根本没到达容器（容器日志无记录）；App 层 401 说明 Gateway 认证通过了。
+App 不再要求 `X-HW-AgentGateway-User-Id`。前端补该 header 不能修复认证，也不得成为
+Conversation ownership 方案。
 
 ### 11.2 Header 来源与职责
 
@@ -789,10 +802,14 @@ CUSTOM_JWT、Session header 与 caller-provided user header 的来源和可信�
 
 ```mermaid
 flowchart LR
-    subgraph CLIENT["调用方 (agentarts invoke / curl / 浏览器)"]
-        GEN_SESSION["生成 session-id<br/>(UUID)"]
+    subgraph CLIENT["Browser / caller"]
         GEN_JWT["提供 JWT<br/>Authorization: Bearer &lt;jwt&gt;"]
-        GEN_UID["Legacy caller hint<br/>X-HW-AgentGateway-User-Id"]
+        SPOOF["Caller Session/User headers<br/>untrusted"]
+    end
+
+    subgraph BFF["Cloudflare Pages BFF"]
+        COOKIE["HttpOnly Runtime Cookie resolver"]
+        FILTER["Header allowlist + overwrite"]
     end
 
     subgraph GATEWAY["AgentArts Gateway"]
@@ -800,31 +817,26 @@ flowchart LR
     end
 
     subgraph CONTAINER["FastAPI 容器"]
-        APP["POST /invocations<br/>读取 header 使用"]
+        APP["FastAPI<br/>user_id = validated JWT sub"]
     end
 
-    GEN_SESSION -->|"x-hw-agentarts-session-id<br/>调用方传入（必填）"| VALIDATE
-    GEN_UID -->|"caller-provided user header<br/>未与 JWT claim 绑定"| VALIDATE
-    GEN_JWT -->|"header: Authorization"| VALIDATE
-    VALIDATE -->|"JWT 验证通过<br/>转发 headers 到容器"| APP
+    GEN_JWT --> FILTER
+    SPOOF -.->|"dropped"| FILTER
+    COOKIE --> FILTER
+    FILTER -->|"Authorization + controlled Session"| VALIDATE
+    VALIDATE -->|"validated JWT + original Authorization"| APP
     VALIDATE -->|"JWT 验证失败"| ERR401["401 Authentication failed!"]
 ```
 
 | Header | 谁提供 | 必填？ | 说明 |
 |--------|--------|--------|------|
-| `Authorization` | **调用方**传入 | ✅ | `Bearer <JWT>` 或 `Bearer <api-key>` |
-| `x-hw-agentarts-session-id` | **调用方**传入 | ✅ | `agentarts invoke` 自动生成 UUID；Feature 14 目标方案由 Cloudflare BFF 从随机 HttpOnly Cookie 注入，浏览器 JavaScript 不再生成或提交 |
-| `X-HW-AgentGateway-User-Id` | **调用方**传入 | 否 | Gateway **不会自动注入**。调用方可以填写，但它不是经过 Gateway 与 JWT claim 绑定的可信业务身份 |
+| `Authorization` | Browser/caller，BFF allowlist 转发 | ✅ | Gateway 校验；FastAPI 读取已验证 token 的 `sub` |
+| `x-hw-agentarts-session-id` | Cloudflare BFF Runtime Cookie resolver | ✅ | routing only；Browser caller 值被覆盖 |
+| `X-HW-AgentGateway-User-Id` | caller 可伪造 | 否 | BFF 丢弃；FastAPI ownership 忽略 |
 
-> **重要发现**：AgentArts Gateway 在 CUSTOM_JWT 模式下验证 JWT 后，**不会自动注入**
-> `X-HW-AgentGateway-User-Id` header。`agentarts invoke` CLI 能工作，是因为 CLI 从 JWT
-> payload 提取 claim 后补了该 header；这不等于 Gateway 校验了 header 与 JWT 的绑定。
-> Feature 14 实现前，当前 App 缺少该 header 会返回 App 层 401；Feature 14 目标是让
-> Gateway 后的 FastAPI 从已验证 Authorization token 派生 canonical `user_id`，不再把
-> browser-provided user header 用作 Conversation ownership 依据。2026-07-14 G0 deployed
-> probe 已确认 Gateway 转发原始 Authorization，且 production Runtime 没有绕过 Gateway
-> 的 public ingress。Gateway/platform 配置变化后必须重跑该 probe；回归时 Service 必须
-> fail closed，不能重新信任 caller user header。
+> 2026-07-14 G0 probe 已确认 Gateway 转发原始 Authorization，且 production Runtime 没有
+> 绕过 Gateway 的 public ingress。Feature 14 已据此改为 canonical `user_id = JWT sub`。
+> Gateway/platform 配置变化后必须重跑 G0；回归时绝不能重新信任 caller User header。
 
 ### 11.3 `agentarts invoke` CLI 与 CUSTOM_JWT 的兼容性
 
@@ -941,6 +953,9 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 |-------------------|---------------------|
 | `/runtimes/{runtime_name}/invocations` | `/invocations` |
 | `/runtimes/{runtime_name}/invocations/<suffix>` | `/<suffix>` |
+| `/runtimes/personal-assistant/invocations/api/conversations` | `/api/conversations` |
+| `/runtimes/personal-assistant/invocations/api/conversations/{conversation_id}` | `/api/conversations/{conversation_id}` |
+| `/runtimes/personal-assistant/invocations/api/conversations/{conversation_id}/messages` | `/api/conversations/{conversation_id}/messages` |
 | `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `/auth/oauth2/callback/m365-calendar` |
 
 `/auth/oauth2/callback/m365-calendar` 只是 suffix 映射的一个业务例子，不是特殊规则。
@@ -951,6 +966,10 @@ upstream。无论走哪条 upstream，Service 都用 signed state 做 callback �
 control，并以 callback context 恢复的 `Authorization` user token 调用
 `complete_resource_token_auth`；不要用 service token 覆盖该 user token。
 
+Feature 14 已在本地 Wrangler + Service E2E 验证 GET/POST/PATCH/DELETE 业务路径；部署环境的
+Gateway custom suffix method 与 Session header 透传仍属于 G1 gate，未完成 probe 前不能把
+本地结果写成平台已验证事实。
+
 #### 11.7.2 404 判别
 
 - `{"code":404,"data":null,"message":"No matching policy found"}`：没有命中 AgentArts Gateway policy。
@@ -960,27 +979,22 @@ control，并以 callback context 恢复的 `Authorization` user token 调用
 
 ### 11.8 完整排障流程图
 
+图类型：**Flowchart（认证排障流程图）**。用于区分 Gateway JWT 拒绝与 App subject
+提取失败。
+
 ```mermaid
 flowchart TD
-    START["401 错误"] --> PING{"/ping 是否 200?"}
-    PING -->|"否"| DEPLOY["Runtime 未就绪<br/>检查部署状态"]
-    PING -->|"是"| FMT{"错误格式?"}
-    FMT -->|"detail: Missing X-HW-..."| APP_LAYER["App 层 401<br/>Gateway 认证已通过"]
-    FMT -->|"code: 401, message: Authentication failed"| GW_LAYER["Gateway 层 401<br/>JWT 验证失败"]
-    
-    APP_LAYER --> CHECK_HDR{"请求是否带<br/>X-HW-AgentGateway-User-Id?"}
-    CHECK_HDR -->|"否"| FIX_HDR["前端从 JWT 提取 sub/oid<br/>设置为该 header"]
-    CHECK_HDR -->|"是"| CHECK_GW["Gateway 可能未注入<br/>检查 header 值与 JWT sub 是否一致"]
-    
-    GW_LAYER --> CHECK_JWT{"JWT 是否有效?"}
-    CHECK_JWT --> DECODE["① jwt.io 解码<br/>检查 iss/aud/exp"]
-    DECODE -->|"claims 错误"| FIX_CLAIMS["修复 MSAL authority<br/>或 Azure AD app 配置"]
-    DECODE -->|"claims 正确"| CHECK_EXP{"token 是否过期?"}
-    CHECK_EXP -->|"是"| REFRESH["重新登录或静默刷新"]
-    CHECK_EXP -->|"否"| CHECK_NET["② Gateway 能否出网<br/>访问 login.microsoftonline.com?"]
-    CHECK_NET -->|"否"| FIX_NET["配置 NAT Gateway / EIP"]
-    CHECK_NET -->|"是"| CHECK_CFG["③ 云端配置是否生效?<br/>agentarts runtime describe"]
-    CHECK_CFG -->|"不一致"| REDEPLOY["delete → launch<br/>（Bug 11 规避）"]
-    CHECK_CFG -->|"一致"| CHECK_SCOPE["④ 检查 allowed_scopes<br/>allowed_clients 配置"]
-    CHECK_SCOPE --> TRY_SIMPLE["尝试注释掉限制项<br/>逐个追加定位问题字段"]
+    START["401 错误"] --> LOG{"Container 是否有请求日志?"}
+    LOG -->|"无"| GW["Gateway 层拒绝"]
+    LOG -->|"有"| APP["App 层拒绝"]
+
+    GW --> CLAIMS["检查 iss / aud / exp / signature"]
+    CLAIMS --> NET["检查 Gateway 访问 OIDC Discovery / JWKS"]
+    NET --> CFG["检查 CUSTOM_JWT deployed config"]
+
+    APP --> AUTH["检查 Authorization 是否被转发"]
+    AUTH --> SUB["检查 JWT payload 是否含非空 sub"]
+    SUB --> ROUTE["确认请求只能经 Gateway public ingress"]
+
+    ROUTE --> NEVER["不要通过补 caller User header 绕过"]
 ```

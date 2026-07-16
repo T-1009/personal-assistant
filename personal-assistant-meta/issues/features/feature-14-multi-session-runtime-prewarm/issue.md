@@ -1,7 +1,7 @@
 # Feature 14: Web Chat 多 Conversation 与 Runtime 提前唤醒
 
-> 状态：Meta Draft
-> 日期：2026-07-14
+> 状态：Implementation Complete / Deployment Validation Pending
+> 日期：2026-07-14 | 实现验证：2026-07-15
 > 关联计划：[`plan.md`](./plan.md)
 > Spike：[`spike.md`](./spike.md)
 > UI Preview：[`preview.html`](./preview.html)
@@ -26,19 +26,20 @@ Feature 14 的目标是：
 - 保持 BFF 薄，不让它访问数据库或承担业务授权；
 - 以展示项目的规模实现，不引入生产级发布平台和后台运维系统。
 
-## 已知平台事实
+## 平台事实与待验证假设
 
 1. AgentArts Invocation 要求 `X-Hw-Agentarts-Session-Id`。
 2. 合法的 application-generated Runtime Session ID 可以直接用于 Invocation。
-3. 平台回收底层 Runtime instance 后，继续使用相同 Runtime Session ID 即可；下一次请求
-   会重新创建执行实例，应用无需生成 replacement ID。
+3. 项目按“Runtime Session ID 是逻辑路由键”设计：平台回收底层 instance 后预期可继续
+   使用相同 ID，并由下一次请求重建执行实例。该行为尚未完成部署回收 probe，不作为已验证
+   的 Runtime SLA。
 4. `POST /runtimes/{runtime_name}/sessions-start` 不接收调用方指定的 Session ID，而是
    返回另一个由平台生成的 ID。
 5. AgentArts API 文档没有为 `sessions-start` 定义 ready 状态、TTL 或首条消息延迟保证。
 6. 已部署的 CUSTOM_JWT Gateway 会验证 JWT，并把原始 `Authorization` 转发给 FastAPI。
    该事实已于 2026-07-14 验证。
-7. Gateway custom path 的 GET 已使用；Feature 14 开始实现时仍需用一个窄 probe 确认
-   POST、PATCH、DELETE 和 Session header 的透传行为。
+7. 旧路径已观察到 Gateway suffix rewrite；Feature 14 的 GET、POST、PATCH、DELETE 和
+   resolver Session header 仍需在部署环境执行 G1 窄 probe。
 
 ## 核心决策
 
@@ -109,8 +110,8 @@ Lease 是“某个资源在一段时间内由谁使用或占有”的记录。�
 - failure reason。
 
 这些字段只有在应用需要续租、抢占、超时回收、后台 stop 或审计资源生命周期时才有价值。
-Feature 14 仅需要复用一个逻辑 routing key，而 AgentArts 又会在实例被回收后按相同 ID
-隐式重建。Cookie 已经提供了这个 routing key。
+Feature 14 仅需要复用一个逻辑 routing key。应用用 Cookie 保存该 key，并把实例回收后
+同 ID 重建作为待部署验证的设计假设；业务连续性始终来自 PostgreSQL，而不依赖该假设。
 
 如果建立 lease 表，应用就必须持续判断平台状态并修复漂移，但平台文档没有提供可查询的
 ready/TTL contract。数据库中的“ready”反而可能是假状态。因此本 Feature 不创建：
@@ -435,57 +436,57 @@ revision。
 
 ### AC1 Conversation
 
-- [ ] 用户可以创建、列出、切换、重命名、归档、恢复和永久删除自己的 Conversation。
-- [ ] 页面刷新后恢复列表和消息。
-- [ ] 用户不能读取或修改其他用户的数据。
+- [x] 用户可以创建、列出、切换、重命名、归档、恢复和永久删除自己的 Conversation。
+- [x] 页面刷新后恢复列表和消息。
+- [x] 用户不能读取或修改其他用户的数据。
 
 ### AC2 Session 与身份
 
-- [ ] BFF 建立并复用随机 HttpOnly Runtime Cookie。
-- [ ] Browser-provided Runtime Session/User header 不能决定 routing 或 ownership。
-- [ ] FastAPI 从 Gateway 已验证的 JWT `sub` 派生 `user_id`。
+- [x] BFF 建立并复用随机 HttpOnly Runtime Cookie。
+- [x] Browser-provided Runtime Session/User header 不能决定 routing 或 ownership。
+- [x] FastAPI 从 Gateway 已验证的 JWT `sub` 派生 `user_id`。
 - [ ] 相同 Runtime ID 在平台回收 instance 后仍可继续调用。
-- [ ] Runtime ID 不进入 Conversation、Message 或 OAuth state。
+- [x] Runtime ID 不进入 Conversation、Message 或 OAuth state。
 
 ### AC3 Warm-up
 
-- [ ] 进入 Chat 请求 Conversation list，并与随后 Invocation 复用同一 Cookie ID。
-- [ ] 不新增 readiness/no-op route，不展示虚构的 ready 状态。
+- [x] 进入 Chat 请求 Conversation list，并与随后 Invocation 复用同一 Cookie ID。
+- [x] 不新增 readiness/no-op route，不展示虚构的 ready 状态。
 - [ ] 记录直接首条 Invocation 与先加载列表两组的 p50/p95。
 
 ### AC4 Message 与并发
 
-- [ ] user message 在 Agent 调用前持久化。
-- [ ] assistant message commit 后才发送 terminal `done=true`。
-- [ ] 相同 `client_message_id` 不会再次执行 Agent。
-- [ ] 同一 Conversation 最多一个 Invocation；Delete 与 Invocation 互斥。
-- [ ] 系统不自动重试 Invocation。
-- [ ] sync JSON 与 SSE 使用同一个 lock、幂等和 Message persistence core。
-- [ ] `AgentHandler` 不发送 terminal SSE、不吞异常、不重新执行已开始的 Agent run。
+- [x] user message 在 Agent 调用前持久化。
+- [x] assistant message commit 后才发送 terminal `done=true`。
+- [x] 相同 `client_message_id` 不会再次执行 Agent。
+- [x] 同一 Conversation 最多一个 Invocation；Delete 与 Invocation 互斥。
+- [x] 系统不自动重试 Invocation。
+- [x] sync JSON 与 SSE 使用同一个 lock、幂等和 Message persistence core。
+- [x] `AgentHandler` 不发送 terminal SSE、不吞异常、不重新执行已开始的 Agent run。
 
 ### AC5 Schema 与测试
 
-- [ ] Alembic 可初始化空 PostgreSQL，并可升级包含现有 OAuth callback 表的 demo DB。
-- [ ] migration 只增加本 Feature 必需的 schema，不创建 lease/run/retry 表。
-- [ ] PostgreSQL integration test 覆盖 CRUD、ownership、cascade 和 Advisory Lock。
-- [ ] 纯业务 Unit Test 可使用 in-memory fake；不维护 SQLite Store。
-- [ ] OpenAPI 与新增 route/schema 同步。
+- [x] Alembic 可初始化空 PostgreSQL，并可升级包含现有 OAuth callback 表的 demo DB。
+- [x] migration 只增加本 Feature 必需的 schema，不创建 lease/run/retry 表。
+- [x] PostgreSQL integration test 覆盖 CRUD、ownership、cascade 和 Advisory Lock。
+- [x] 纯业务 Unit Test 可使用 in-memory fake；不维护 SQLite Store。
+- [x] OpenAPI 与新增 route/schema 同步。
 
 ### AC6 Client 与 OAuth
 
-- [ ] E2E 覆盖创建、发送、切换、刷新和删除。
-- [ ] E2E 覆盖 Cookie 建立、复用、非法值轮换和 logout。
-- [ ] E2E 覆盖跨用户访问拒绝。
-- [ ] OAuth 发起后主 Runtime Cookie 变化，callback 仍使用发起时的 snapshot。
-- [ ] assistant-ui remote thread 的 `remoteId` 等于 `conversation_id`，切换后从
+- [x] E2E 覆盖创建、发送、切换、刷新和删除。
+- [x] E2E 覆盖 Cookie 建立、复用、非法值轮换和 logout。
+- [x] E2E 覆盖跨用户访问拒绝。
+- [x] OAuth 发起后主 Runtime Cookie 变化，callback 仍使用发起时的 snapshot。
+- [x] assistant-ui remote thread 的 `remoteId` 等于 `conversation_id`，切换后从
   Message API hydration。
-- [ ] UI 不显示 Runtime warming/ready/degraded 状态。
+- [x] UI 不显示 Runtime warming/ready/degraded 状态。
 
 ## 风险与取舍
 
 | 风险 | 处理 |
 |------|------|
-| Gateway 不支持 custom PATCH/DELETE | 实现前完成 G1 窄 probe；失败时调整 API method mapping |
+| Gateway 不支持 Feature 14 custom methods/header | 部署前完成 G1 窄 probe；失败时调整 API method mapping |
 | Conversation list 没有降低首条消息延迟 | 保留必要的列表请求，删除“预热收益”宣传 |
 | 首次多 Tab 生成两个 Runtime ID | 接受临时资源重复，业务状态不依赖该 ID |
 | 部分 SSE 已显示但 assistant 尚未写库时进程终止 | 刷新后只保留 user message；用户明确重发，不增加恢复系统 |
