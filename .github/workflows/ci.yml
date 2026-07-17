@@ -106,7 +106,7 @@ jobs:
         working-directory: personal-assistant-client
         run: npm run build
 
-  e2e-smoke:
+  e2e:
     name: E2E tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -178,4 +178,4 @@ jobs:
 
       - name: Full-stack integration tests
         working-directory: personal-assistant-e2e
-        run: uv run pytest tests/full_stack/test_feature_14_conversation_boundary.py -q
+        run: uv run pytest -m full_stack -q
