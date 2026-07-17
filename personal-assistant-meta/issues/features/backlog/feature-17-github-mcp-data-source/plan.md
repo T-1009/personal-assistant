@@ -1,7 +1,7 @@
 # Feature 17：GitHub MCP Activity Data Source and Tools Implementation Plan
 
 > 状态：Draft  
-> 日期：2026-07-10  
+> 日期：2026-07-17  
 > 范围：通过 AgentArts MCP Gateway 接入 GitHub 官方 remote MCP，新增 Service 内部 GitHub activity data source 和 curated Agent-visible tools；不新增 Report root capability。
 
 ## 1. 概要
