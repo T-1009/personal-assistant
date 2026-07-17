@@ -1,7 +1,7 @@
 # Feature 18：Report Root Capability Implementation Plan
 
 > 状态：Draft  
-> 日期：2026-07-10  
+> 日期：2026-07-17  
 > 范围：新增 `generate_report` root tool，复用现有 Email / Calendar tools，并接入 Feature 17 的 GitHub MCP activity data source。
 
 ## 1. 概要
@@ -28,7 +28,6 @@ generate_report 内部复用:
   - email_tools.py: list_emails / search_emails / get_email
   - calendar_tools.py: list_calendar_events / search_calendar_events / get_calendar_event
   - app/mcp/github_activity_source.py: github_mcp_search_activity / github_mcp_get_detail
-  - app/mcp/github_activity.py: github_mcp_search_activity / github_mcp_get_detail
 ```
 
 设计原则：
@@ -72,7 +71,7 @@ flowchart TB
     ReportTool["tools/report_tools.py<br/>generate_report"]
     EmailTools["tools/email_tools.py"]
     CalendarTools["tools/calendar_tools.py"]
-    GitHubSource["mcp/github_activity.py<br/>Feature 17 internal source"]
+    GitHubSource["mcp/github_activity_source.py<br/>Feature 17 internal source"]
     ReportResult["ReportResult"]
 
     Client --> Service
@@ -95,7 +94,7 @@ sequenceDiagram
     participant Report as generate_report
     participant Email as email_tools.py
     participant Calendar as calendar_tools.py
-    participant GitHub as mcp/github_activity.py
+    participant GitHub as mcp/github_activity_source.py
 
     User->>Client: 生成本周周报
     Client->>Agent: /invocations

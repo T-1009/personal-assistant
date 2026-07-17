@@ -1,7 +1,7 @@
 # Feature 17：GitHub MCP Activity Data Source and Tools Implementation Plan
 
 > 状态：Draft  
-> 日期：2026-07-10  
+> 日期：2026-07-17  
 > 范围：通过 AgentArts MCP Gateway 接入 GitHub 官方 remote MCP，新增 Service 内部 GitHub activity data source 和 curated Agent-visible tools；不新增 Report root capability。
 
 ## 1. 概要
@@ -17,7 +17,6 @@
 - Service 通过 WAT → STS provider → 临时 IAM 凭据调用 Gateway，不在 Runtime 配置长期 AK/SK。
 - 在 `app/mcp/github_activity_source.py` 封装内部 source contract，输出
   `GitHubActivityResult` / `GitHubActivityEvent`。
-- 在 `app/mcp/github_activity.py` 封装内部 source contract，输出 `GitHubActivityResult` / `GitHubActivityEvent`。
 - 在 `app/tools/github_activity_tools.py` 提供 curated、read-only 的 Agent-facing tools。
 - 为 Feature 18 保持稳定、可 mock 的 data source boundary，并为未来 AgentArts MCP Gateway Cedar feature 建立明确的 Agent-visible tool boundary。
 - 对 401 / 403 / 429 / Gateway unavailable 等错误做 typed warning 映射。
@@ -31,7 +30,6 @@ flowchart TB
     Agent["Agent"]
     ToolFacade["tools/github_activity_tools.py<br/>curated Agent tools"]
     Source["mcp/github_activity_source.py<br/>internal activity source"]
-    Source["mcp/github_activity.py<br/>internal activity source"]
     MCPConfig["app/mcp<br/>Gateway config + IAM signing"]
     Adapter["LangChain / LangGraph MCP adapter"]
     Gateway["AgentArts MCP Gateway<br/>入站 IAM"]
@@ -183,7 +181,6 @@ Production Runtime：
 Service 连接 AgentArts MCP Gateway 时优先评估 `langchain-mcp-adapters`。项目内不自实现 MCP 协议。
 
 ### 5.3 新增 `app/mcp/github_activity_source.py`
-### 5.3 新增 `app/mcp/github_activity.py`
 
 内部 source functions：
 
@@ -209,7 +206,6 @@ Agent-facing facade：
 `GITHUB_ACTIVITY_TOOLS_ENABLED=true` 时，`build_tools()` 才注册该集合。facade
 只负责 LLM-friendly 参数校验、调用 internal source 和安全序列化，不包含 MCP
 transport、IAM signing 或数据聚合实现。
-本模块导出 `GITHUB_ACTIVITY_TOOLS`，并在 `GITHUB_MCP_ENABLED=true` 时加入 `build_tools()`。facade 只负责 LLM-friendly 参数校验、调用 internal source 和安全序列化，不包含 MCP transport、IAM signing 或数据聚合实现。
 
 以下边界必须由代码和测试共同保证：
 
@@ -220,7 +216,6 @@ transport、IAM signing 或数据聚合实现。
   `GITHUB_ACTIVITY_TOOLS_ENABLED=true`。
 - `GITHUB_ACTIVITY_TOOLS_ENABLED=false` 时只保留 internal source，不注册
   `GITHUB_ACTIVITY_TOOLS`。
-- `GITHUB_MCP_ENABLED=false` 时不注册 `GITHUB_ACTIVITY_TOOLS`。
 
 ## 6. 数据模型
 
@@ -303,8 +298,6 @@ transport、IAM signing 或数据聚合实现。
   即使 exposure switch 为 `true`。
 - `GITHUB_ACTIVITY_TOOLS_ENABLED=false` 时，`build_tools()` 不包含 GitHub
   activity tools，但 internal source 仍由 `GITHUB_MCP_ENABLED` 控制。
-- `GITHUB_MCP_ENABLED=true` 时，`build_tools()` 包含 `github_search_activity` 和 `github_get_activity_detail`。
-- `GITHUB_MCP_ENABLED=false` 时，`build_tools()` 不包含 GitHub activity tools。
 - `build_tools()` 不包含任何 `github_mcp_*` function 或 GitHub remote MCP 原子工具。
 - GitHub MCP source 启动检查确认 Gateway Target 使用 read-only endpoint 或 `X-MCP-Readonly: true`。
 - 不提供通用 raw MCP tool passthrough。
@@ -340,12 +333,9 @@ personal-assistant/
     │   │   ├── __init__.py
     │   │   ├── gateway_client.py
     │   │   └── github_activity_source.py # 4 个 internal source functions
-    │   │   └── github_activity.py      # internal source contract
     │   ├── tools/
     │   │   ├── __init__.py             # 修改：条件注册 GITHUB_ACTIVITY_TOOLS
     │   │   └── github_activity_tools.py # curated Agent-facing facade
-    │   ├── models/
-    │   │   └── github_activity.py
     │   └── settings.py                  # 修改：新增 GitHub MCP typed settings
     └── tests/
         ├── test_github_activity_source.py
@@ -376,6 +366,5 @@ Agent-facing `github_search_activity` / `github_get_activity_detail` 是 interna
 - tool result 明确 `identity_scope = platform`；
 - `GITHUB_MCP_ENABLED` 控制 internal source，`GITHUB_ACTIVITY_TOOLS_ENABLED`
   控制 Agent exposure；只有两者同时为 `true` 才注册 tools。
-- `GITHUB_MCP_ENABLED` 控制 tool 是否注册。
 
 本 Feature 只准备稳定的 tool exposure boundary，不实现或推测 Cedar 的具体行为。
