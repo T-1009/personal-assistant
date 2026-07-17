@@ -336,8 +336,6 @@ personal-assistant/
     │   ├── tools/
     │   │   ├── __init__.py             # 修改：条件注册 GITHUB_ACTIVITY_TOOLS
     │   │   └── github_activity_tools.py # curated Agent-facing facade
-    │   ├── models/
-    │   │   └── github_activity.py
     │   └── settings.py                  # 修改：新增 GitHub MCP typed settings
     └── tests/
         ├── test_github_activity_source.py

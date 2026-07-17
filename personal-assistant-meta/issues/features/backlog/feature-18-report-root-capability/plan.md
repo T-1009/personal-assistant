@@ -71,7 +71,7 @@ flowchart TB
     ReportTool["tools/report_tools.py<br/>generate_report"]
     EmailTools["tools/email_tools.py"]
     CalendarTools["tools/calendar_tools.py"]
-    GitHubSource["mcp/github_activity.py<br/>Feature 17 internal source"]
+    GitHubSource["mcp/github_activity_source.py<br/>Feature 17 internal source"]
     ReportResult["ReportResult"]
 
     Client --> Service
@@ -94,7 +94,7 @@ sequenceDiagram
     participant Report as generate_report
     participant Email as email_tools.py
     participant Calendar as calendar_tools.py
-    participant GitHub as mcp/github_activity.py
+    participant GitHub as mcp/github_activity_source.py
 
     User->>Client: 生成本周周报
     Client->>Agent: /invocations

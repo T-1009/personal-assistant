@@ -80,7 +80,8 @@ flowchart TB
 - `app/tools/github_activity_tools.py` Agent-facing facade：
   - `github_search_activity`；
   - `github_get_activity_detail`；
-  - `GITHUB_ACTIVITY_TOOLS`，仅在 internal source 与 Agent Tool exposure 开关同时启用时注册到 `build_tools()`。
+  - `GITHUB_ACTIVITY_TOOLS`，仅在 `GITHUB_MCP_ENABLED=true` 且
+    `GITHUB_ACTIVITY_TOOLS_ENABLED=true` 时注册到 `build_tools()`。
 - `GitHubActivityQuery`、`GitHubActivityResult`、`GitHubActivityEvent` 和 typed warning 数据结构。
 - typed settings：
   - `GITHUB_MCP_ENABLED`；
