@@ -33,6 +33,7 @@ flowchart TB
     Agent["Agent"]
     Tool["github_activity_tools.py<br/>curated Agent tools"]
     Source["app/mcp/github_activity_source.py<br/>internal activity source"]
+    Source["app/mcp/github_activity.py<br/>internal activity source"]
     Adapter["app/mcp<br/>MCP adapter + IAM signing"]
     Gateway["AgentArts MCP Gateway<br/>入站 IAM"]
     Target["GitHub MCP Target<br/>read-only + Authorization: Bearer PAT"]
@@ -73,6 +74,7 @@ flowchart TB
   - capability check；
   - 错误映射。
 - `app/mcp/github_activity_source.py` 内部 source functions：
+- `app/mcp/github_activity.py` 内部 source functions：
   - `github_mcp_resolve_identity`；
   - `github_mcp_list_repositories`；
   - `github_mcp_search_activity`；
@@ -82,6 +84,7 @@ flowchart TB
   - `github_get_activity_detail`；
   - `GITHUB_ACTIVITY_TOOLS`，仅在 internal source 与 Agent Tool exposure
     开关同时启用时注册到 `build_tools()`。
+  - `GITHUB_ACTIVITY_TOOLS`，在启用 GitHub MCP 时注册到 `build_tools()`。
 - `GitHubActivityQuery`、`GitHubActivityResult`、`GitHubActivityEvent` 和 typed warning 数据结构。
 - typed settings：
   - `GITHUB_MCP_ENABLED`；
@@ -144,7 +147,6 @@ X-HW-AgentGateway-Workload-Access-Token
 - [ ] `github_mcp_get_detail` 能展开 commit / PR / issue 详情。
 
 ### AC3：Agent 能调用 curated GitHub activity tools
-
 - [ ] `build_tools()` 仅在 `GITHUB_MCP_ENABLED=true` 且
   `GITHUB_ACTIVITY_TOOLS_ENABLED=true` 时注册 `github_search_activity` 和
   `github_get_activity_detail`。
@@ -152,6 +154,8 @@ X-HW-AgentGateway-Workload-Access-Token
   `GITHUB_ACTIVITY_TOOLS_ENABLED=true`。
 - [ ] `GITHUB_ACTIVITY_TOOLS_ENABLED=false` 时只保留 internal source，不注册
   GitHub activity tools。
+- [ ] `build_tools()` 在 `GITHUB_MCP_ENABLED=true` 时注册 `github_search_activity` 和 `github_get_activity_detail`。
+- [ ] `GITHUB_MCP_ENABLED=false` 时不注册 GitHub activity tools。
 - [ ] 用户可以直接查询指定 repository 和时间窗口内的 commits、PR、issues、reviews / comments。
 - [ ] Agent-facing schema 不暴露 `github_mcp_*` functions、raw MCP tool name 或 transport 参数。
 - [ ] tool result 明确 `identity_scope = platform`。

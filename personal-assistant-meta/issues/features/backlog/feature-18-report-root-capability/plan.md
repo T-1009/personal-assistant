@@ -28,6 +28,7 @@ generate_report 内部复用:
   - email_tools.py: list_emails / search_emails / get_email
   - calendar_tools.py: list_calendar_events / search_calendar_events / get_calendar_event
   - app/mcp/github_activity_source.py: github_mcp_search_activity / github_mcp_get_detail
+  - app/mcp/github_activity.py: github_mcp_search_activity / github_mcp_get_detail
 ```
 
 设计原则：
