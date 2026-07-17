@@ -118,6 +118,26 @@ class TestAgentHandlerInit:
         assert "github_search_code" in SYSTEM_PROMPT
         assert "github_star_repository" in SYSTEM_PROMPT
 
+    def test_system_prompt_mentions_github_mcp_activity_capabilities(self):
+        """Feature 17 describes only the curated Agent-facing tools."""
+        assert "github_search_activity" in SYSTEM_PROMPT
+        assert "github_get_activity_detail" in SYSTEM_PROMPT
+        assert 'identity_scope="platform"' in SYSTEM_PROMPT
+        assert "禁止调用上述用户 OAuth GitHub 工具" in SYSTEM_PROMPT
+        assert "不要自动回退到 OAuth 工具" in SYSTEM_PROMPT
+        assert "必须串行调用，不要并行" in SYSTEM_PROMPT
+        assert "Agent-facing MCP 能力只包含两个" in SYSTEM_PROMPT
+        assert "conversation comment 使用 comment" in SYSTEM_PROMPT
+        assert "先调用一次 github_search_activity" in SYSTEM_PROMPT
+        assert "调用一次\ngithub_get_activity_detail" in SYSTEM_PROMPT
+        for internal_name in {
+            "github_mcp_resolve_identity",
+            "github_mcp_list_repositories",
+            "github_mcp_search_activity",
+            "github_mcp_get_detail",
+        }:
+            assert internal_name not in SYSTEM_PROMPT
+
     def test_system_prompt_mentions_gitee_capabilities(self):
         """UT-AH-05: SYSTEM_PROMPT contains Gitee tool names."""
         assert "gitee_list_repositories" in SYSTEM_PROMPT
