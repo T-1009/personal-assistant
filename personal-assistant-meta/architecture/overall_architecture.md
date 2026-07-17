@@ -195,9 +195,13 @@ runtime:
 使用 AgentArts MCP Gateway 和 GitHub remote MCP 读取平台账号可见的工程活动。
 它通过 `github-mcp-gateway` STS Provider 获取临时 IAM 凭据，Target 出站使用
 平台侧托管的 GitHub PAT。该 source 支持 commit、Pull Request、Issue、review、
-comment，供 Report 和只读 Chat inspection 使用；review/comment 详情需要所属
-PR/Issue number。当前默认注册经过裁剪的 Chat wrappers，但不暴露 remote MCP
-原子工具，也不代表当前用户。详见
+comment，供 Report internal orchestration 和 Agent-facing activity tools 使用；
+review/comment 详情需要所属 PR/Issue number。Service 保留四个 `github_mcp_*`
+internal source functions 且不将其注册为 Agent Tool；Agent 只看到
+`github_search_activity` 和 `github_get_activity_detail`，所有返回结果固定包含
+`identity_scope="platform"`。只有 `GITHUB_MCP_ENABLED` 与
+`GITHUB_ACTIVITY_TOOLS_ENABLED` 同时为 `true` 时才注册这两个 Tool。该能力不暴露
+remote MCP 原子工具，也不代表当前用户。详见
 [backend_architecture.md §5.2.0](backend_architecture.md#520-github-mcp-activity-data-source)。
 
 ### 4.2 Outbound — Agent 代表用户调用外部服务

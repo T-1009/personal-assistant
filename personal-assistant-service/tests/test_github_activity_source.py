@@ -8,7 +8,8 @@ from typing import Any
 
 import pytest
 
-import app.tools.github_mcp_tools as gmt
+import app.mcp.github_activity_source as gmt
+import app.tools.github_activity_tools as gat
 from app.mcp.gateway_client import MCPGatewayError, MCPToolInfo
 
 
@@ -79,6 +80,19 @@ class FakeMCPClient:
                 },
             ),
             MCPToolInfo(
+                "target-github-mcp_get_pull_request_comments",
+                "Get pull request comments",
+                {
+                    "properties": {
+                        "owner": {},
+                        "repo": {},
+                        "pullNumber": {},
+                        "perPage": {},
+                        "page": {},
+                    }
+                },
+            ),
+            MCPToolInfo(
                 "target-github-mcp_create_issue",
                 "Create issue",
                 {"properties": {"owner": {}, "repo": {}, "title": {}}},
@@ -139,7 +153,12 @@ class FakeMCPClient:
                 },
                 {
                     "number": 17,
-                    "pull_request": {},
+                    "pull_request": {
+                        "url": (
+                            "https://api.github.com/repos/T-1009/"
+                            "personal-assistant/pulls/17"
+                        )
+                    },
                     "title": "PR issue shadow",
                 },
             ]
@@ -152,6 +171,17 @@ class FakeMCPClient:
                         "html_url": "https://github.com/T-1009/personal-assistant/issues/99#issuecomment-1",
                         "user": {"login": "T-1009"},
                         "created_at": "2026-07-09T14:00:00Z",
+                    }
+                ]
+            }
+        if name.endswith("get_pull_request_comments"):
+            return {
+                "comments": [
+                    {
+                        "id": 2,
+                        "body": "Pull request comment",
+                        "user": {"login": "T-1009"},
+                        "created_at": "2026-07-12T14:00:00Z",
                     }
                 ]
             }
@@ -206,6 +236,15 @@ class PaginatedMCPClient:
                 "body": f"Comment {index}",
                 "user": {"login": "T-1009"},
                 "created_at": f"2026-07-0{5 + index}T12:00:00Z",
+            }
+            for index in range(1, 4)
+        ]
+        self.pull_request_comments = [
+            {
+                "id": 300 + index,
+                "body": f"Pull request comment {index}",
+                "user": {"login": "T-1009"},
+                "created_at": f"2026-07-0{5 + index}T14:00:00Z",
             }
             for index in range(1, 4)
         ]
@@ -268,6 +307,16 @@ class PaginatedMCPClient:
                     }
                 },
             ),
+            MCPToolInfo(
+                "target-github-mcp_get_pull_request_comments",
+                "Get pull request comments",
+                {
+                    "properties": common
+                    | {
+                        "pullNumber": {},
+                    }
+                },
+            ),
         ]
 
     @staticmethod
@@ -309,6 +358,8 @@ class PaginatedMCPClient:
             return self._issue_page(arguments)
         if name.endswith("get_issue_comments"):
             return {"comments": self._page(self.comments, arguments)}
+        if name.endswith("get_pull_request_comments"):
+            return {"comments": self._page(self.pull_request_comments, arguments)}
         if name.endswith("get_pull_request_reviews"):
             return self._page(self.reviews, arguments)
         raise AssertionError(f"Unexpected tool: {name}")
@@ -484,7 +535,7 @@ class ReviewCommentDetailMCPClient:
                 "Read pull request data",
                 {
                     "properties": {
-                        "method": {"enum": ["get_reviews"]},
+                        "method": {"enum": ["get_comments", "get_reviews"]},
                         "owner": {},
                         "repo": {},
                         "pullNumber": {},
@@ -514,6 +565,130 @@ class ReviewCommentDetailMCPClient:
         raise AssertionError(f"Unexpected tool: {name}")
 
 
+class ConsolidatedPRActivityMCPClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def list_tools(self) -> list[MCPToolInfo]:
+        return [
+            MCPToolInfo("target-github-mcp_get_me", "Get me", {}),
+            MCPToolInfo(
+                "target-github-mcp_list_issues",
+                "List issues and pull requests",
+                {
+                    "properties": {
+                        "owner": {},
+                        "repo": {},
+                        "state": {},
+                        "since": {},
+                        "perPage": {},
+                        "page": {},
+                    }
+                },
+            ),
+            MCPToolInfo(
+                "target-github-mcp_list_pull_requests",
+                "List pull requests",
+                {
+                    "properties": {
+                        "owner": {},
+                        "repo": {},
+                        "state": {},
+                        "perPage": {},
+                        "page": {},
+                    }
+                },
+            ),
+            MCPToolInfo(
+                "target-github-mcp_issue_read",
+                "Read issue data",
+                {
+                    "properties": {
+                        "method": {"enum": ["get_comments"]},
+                        "owner": {},
+                        "repo": {},
+                        "issue_number": {},
+                        "perPage": {},
+                        "page": {},
+                    }
+                },
+            ),
+            MCPToolInfo(
+                "target-github-mcp_pull_request_read",
+                "Read pull request data",
+                {
+                    "properties": {
+                        "method": {"enum": ["get_comments", "get_reviews"]},
+                        "owner": {},
+                        "repo": {},
+                        "pullNumber": {},
+                        "perPage": {},
+                        "page": {},
+                    }
+                },
+            ),
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        self.calls.append((name, arguments))
+        if name.endswith("get_me"):
+            return {"login": "git-malu"}
+        if name.endswith("list_issues"):
+            return [
+                {
+                    "number": 99,
+                    "title": "Regular issue",
+                    "user": {"login": "git-malu"},
+                    "updated_at": "2026-07-15T08:00:00Z",
+                }
+            ]
+        if name.endswith("list_pull_requests"):
+            return [
+                {
+                    "number": 15,
+                    "title": "Feature 17 pull request",
+                    "user": {"login": "git-malu"},
+                    "updated_at": "2026-07-16T08:00:00Z",
+                }
+            ]
+        if name.endswith("issue_read"):
+            parent = arguments["issue_number"]
+            return {
+                "comments": [
+                    {
+                        "id": 1501 if parent == 15 else 9901,
+                        "body": "Pull request comment"
+                        if parent == 15
+                        else "Issue comment",
+                        "user": {"login": "git-malu"},
+                        "created_at": "2026-07-16T09:00:00Z",
+                    }
+                ]
+            }
+        if name.endswith("pull_request_read"):
+            if arguments["method"] == "get_comments":
+                return {
+                    "comments": [
+                        {
+                            "id": 1501,
+                            "body": "Pull request comment",
+                            "user": {"login": "git-malu"},
+                            "created_at": "2026-07-16T09:00:00Z",
+                        }
+                    ]
+                }
+            return [
+                {
+                    "id": 1502,
+                    "state": "COMMENTED",
+                    "body": "Pull request review",
+                    "user": {"login": "git-malu"},
+                    "submitted_at": "2026-07-16T10:00:00Z",
+                }
+            ]
+        raise AssertionError(f"Unexpected tool: {name}")
+
+
 @pytest.fixture
 def fake_client(monkeypatch):
     client = FakeMCPClient()
@@ -527,25 +702,6 @@ def fake_client(monkeypatch):
 
 def test_github_mcp_public_schema_is_secret_free():
     assert gmt.github_mcp_public_schema_is_secret_free() is True
-
-
-def test_github_mcp_chat_tools_are_registered_without_credential_args():
-    names = {tool.name for tool in gmt.GITHUB_MCP_CHAT_TOOLS}
-    assert names == {
-        "github_mcp_resolve_identity",
-        "github_mcp_list_repositories",
-        "github_mcp_search_activity",
-        "github_mcp_get_detail",
-    }
-
-    for chat_tool in gmt.GITHUB_MCP_CHAT_TOOLS:
-        fields = getattr(chat_tool.args_schema, "model_fields", {})
-        assert {
-            "access_token",
-            "api_key",
-            "authorization",
-            "sts",
-        }.isdisjoint(fields)
 
 
 def test_read_only_activity_tool_allowlist_blocks_writes():
@@ -597,8 +753,8 @@ async def test_search_activity_normalizes_events(fake_client):
 
 
 @pytest.mark.asyncio
-async def test_chat_search_activity_returns_json_safe_result(fake_client):
-    result = await gmt.chat_github_mcp_search_activity(
+async def test_agent_search_activity_returns_json_safe_result(fake_client):
+    result = await gat.github_search_activity(
         start_at="2026-07-01T00:00:00+08:00",
         end_at="2026-07-13T23:59:59+08:00",
         repositories=["T-1009/personal-assistant"],
@@ -682,7 +838,7 @@ async def test_search_activity_continues_all_event_types_without_duplicates(
         )
         for event in events
     ]
-    assert len(event_keys) == len(set(event_keys)) == 11
+    assert len(event_keys) == len(set(event_keys)) == 14
     assert {event.event_type for event in events} == {
         "commit",
         "pull_request",
@@ -697,6 +853,12 @@ async def test_search_activity_continues_all_event_types_without_duplicates(
         if name.endswith("get_issue_comments")
     ]
     assert comment_pages == [1, 1, 2]
+    pull_request_comment_pages = [
+        arguments["page"]
+        for name, arguments in client.calls
+        if name.endswith("get_pull_request_comments")
+    ]
+    assert pull_request_comment_pages == [1, 2]
     assert any(
         name.endswith("list_commits") and arguments["page"] == 2
         for name, arguments in client.calls
@@ -1012,21 +1174,21 @@ async def test_search_activity_warns_when_page_budget_requires_continuation(
 
 
 @pytest.mark.asyncio
-async def test_chat_search_activity_passes_continuation_cursor(monkeypatch):
+async def test_agent_search_activity_passes_continuation_cursor(monkeypatch):
     client = PaginatedMCPClient()
 
     async def fake_run(operation):
         return await operation(client)
 
     monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
-    first = await gmt.chat_github_mcp_search_activity(
+    first = await gat.github_search_activity(
         start_at="2026-07-01T00:00:00Z",
         end_at="2026-07-13T23:59:59Z",
         repositories=["T-1009/personal-assistant"],
         event_types=["commit"],
         limit=2,
     )
-    second = await gmt.chat_github_mcp_search_activity(
+    second = await gat.github_search_activity(
         start_at="2026-07-01T00:00:00Z",
         end_at="2026-07-13T23:59:59Z",
         repositories=["T-1009/personal-assistant"],
@@ -1148,6 +1310,96 @@ async def test_search_comment_event_includes_parent_external_id(fake_client):
     assert comment.parent_external_id == "99"
 
 
+@pytest.mark.asyncio
+async def test_search_comment_includes_pull_request_conversation_comments(monkeypatch):
+    client = ConsolidatedPRActivityMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-06-14T00:00:00+08:00",
+        end_at="2026-07-17T23:59:59+08:00",
+        repositories=["git-malu/personal-assistant"],
+        event_types=["comment"],
+        limit=10,
+    )
+
+    pr_comment = next(
+        event for event in result.events if event.parent_external_id == "15"
+    )
+    assert pr_comment.external_id == "1501"
+    assert pr_comment.summary == "Pull request comment"
+    assert any(
+        name.endswith("pull_request_read")
+        and arguments["method"] == "get_comments"
+        and arguments["pullNumber"] == 15
+        for name, arguments in client.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_detail_supports_pull_request_conversation_comment(monkeypatch):
+    client = ConsolidatedPRActivityMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+
+    result = await gmt.github_mcp_get_detail(
+        event_type="comment",
+        repository="git-malu/personal-assistant",
+        external_id="1501",
+        parent_external_id="15",
+    )
+
+    assert isinstance(result, gmt.GitHubActivityEvent)
+    assert result.event_type == "comment"
+    assert result.external_id == "1501"
+    assert result.parent_external_id == "15"
+    assert result.details["comment"]["body"] == "Pull request comment"
+    assert client.calls[-1] == (
+        "target-github-mcp_issue_read",
+        {
+            "method": "get_comments",
+            "owner": "git-malu",
+            "repo": "personal-assistant",
+            "issue_number": 15,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_reviews_uses_consolidated_pull_request_read(monkeypatch):
+    client = ConsolidatedPRActivityMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-06-14T00:00:00+08:00",
+        end_at="2026-07-17T23:59:59+08:00",
+        repositories=["git-malu/personal-assistant"],
+        event_types=["review"],
+        limit=10,
+    )
+
+    review = next(event for event in result.events if event.event_type == "review")
+    assert review.external_id == "1502"
+    assert review.parent_external_id == "15"
+    assert any(
+        name.endswith("pull_request_read")
+        and arguments["method"] == "get_reviews"
+        and arguments["pullNumber"] == 15
+        for name, arguments in client.calls
+    )
+
+
 @pytest.mark.parametrize(
     (
         "event_type",
@@ -1218,11 +1470,11 @@ async def test_get_detail_requires_parent_external_id(event_type):
     assert "parent_external_id" in result.message
 
 
-def test_get_detail_chat_schema_includes_parent_external_id():
+def test_get_detail_agent_schema_includes_parent_external_id():
     detail_tool = next(
         tool
-        for tool in gmt.GITHUB_MCP_CHAT_TOOLS
-        if tool.name == "github_mcp_get_detail"
+        for tool in gat.GITHUB_ACTIVITY_TOOLS
+        if tool.name == "github_get_activity_detail"
     )
     schema = detail_tool.args_schema.model_json_schema()
 

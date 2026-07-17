@@ -10,8 +10,6 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 from zoneinfo import ZoneInfo
 
-from langchain_core.tools import tool as lc_tool
-
 from app.mcp.gateway_client import (
     MCPGatewayClient,
     MCPGatewayError,
@@ -86,7 +84,7 @@ _SENSITIVE_WORDS = frozenset(
     }
 )
 
-_ACTIVITY_CURSOR_VERSION = 1
+_ACTIVITY_CURSOR_VERSION = 2
 _MAX_PAGE_CALLS_PER_SEARCH = 100
 
 _PaginationKind = Literal["initial", "page", "cursor", "none"]
@@ -157,6 +155,7 @@ class _ActivityPageTask:
     pagination: _RemotePagination = field(default_factory=_RemotePagination)
     offset: int = 0
     parent_external_id: str | None = None
+    parent_type: Literal["issue", "pull_request"] | None = None
     discover_parents: bool = False
 
     def to_dict(self) -> dict[str, Any]:
@@ -170,6 +169,7 @@ class _ActivityPageTask:
             },
             "offset": self.offset,
             "parent_external_id": self.parent_external_id,
+            "parent_type": self.parent_type,
             "discover_parents": self.discover_parents,
         }
 
@@ -526,6 +526,7 @@ def _activity_task_from_dict(value: Any) -> _ActivityPageTask:
     offset = value.get("offset", 0)
     pagination_value = value.get("pagination")
     parent_external_id = value.get("parent_external_id")
+    parent_type = value.get("parent_type")
     discover_parents = value.get("discover_parents", False)
 
     if not isinstance(repository, str) or not repository:
@@ -559,6 +560,8 @@ def _activity_task_from_dict(value: Any) -> _ActivityPageTask:
         raise ValueError("cursor task initial offset is invalid")
     if parent_external_id is not None and not isinstance(parent_external_id, str):
         raise ValueError("cursor task parent id is invalid")
+    if parent_type not in {None, "issue", "pull_request"}:
+        raise ValueError("cursor task parent type is invalid")
     if not isinstance(discover_parents, bool):
         raise ValueError("cursor task discovery flag is invalid")
     if discover_parents and event_type not in {"comment", "review"}:
@@ -569,6 +572,12 @@ def _activity_task_from_dict(value: Any) -> _ActivityPageTask:
         and not parent_external_id
     ):
         raise ValueError("cursor child task parent id is missing")
+    if event_type in {"comment", "review"} and parent_type is None:
+        raise ValueError("cursor nested activity parent type is missing")
+    if event_type == "review" and parent_type != "pull_request":
+        raise ValueError("cursor review parent type is invalid")
+    if event_type not in {"comment", "review"} and parent_type is not None:
+        raise ValueError("cursor parent type is not allowed")
 
     return _ActivityPageTask(
         repository=repository,
@@ -577,6 +586,7 @@ def _activity_task_from_dict(value: Any) -> _ActivityPageTask:
         pagination=_RemotePagination(pagination_kind, remote_value),
         offset=offset,
         parent_external_id=parent_external_id,
+        parent_type=parent_type,
         discover_parents=discover_parents,
     )
 
@@ -610,6 +620,7 @@ def _decode_activity_cursor(
             task.event_type,
             task.discover_parents,
             task.parent_external_id,
+            task.parent_type,
         )
         for task in tasks
     ]
@@ -1163,11 +1174,13 @@ async def _collect_issue_comments(
     pagination: _RemotePagination,
 ) -> _CollectedPage:
     owner, repo = _repo_parts(repository)
-    tool = _find_optional_tool(tools, ("get_issue_comments",))
+    tool = _find_optional_tool(tools, ("get_issue_comments", "issue_read"))
     if tool is None:
         return _missing_activity_page(repository=repository, event_type="comment")
 
     args: dict[str, Any] = {}
+    if _matches_tool_suffix(tool.name, "issue_read"):
+        _set_arg(args, tool, "get_comments", "method", required=True)
     _set_arg(args, tool, owner, "owner", required=True)
     _set_arg(args, tool, repo, "repo", "repository", required=True)
     _set_arg(
@@ -1191,7 +1204,79 @@ async def _collect_issue_comments(
             item,
             repository,
             parent_external_id=issue_number,
-            title_prefix=f"Issue #{issue_number} comment",
+            title_prefix=f"Issue or pull request #{issue_number} comment",
+        )
+        for item in items
+    ]
+    filtered = [
+        event
+        for event in events
+        if _event_matches(
+            event,
+            start_at=start_at,
+            end_at=end_at,
+            timezone=timezone,
+            actor=actor,
+        )
+    ]
+    return _collected_page(
+        filtered,
+        tool=tool,
+        payload=payload,
+        raw_count=len(items),
+        page_size=limit,
+        current=current,
+    )
+
+
+async def _collect_pull_request_comments(
+    client: MCPGatewayClient,
+    tools: dict[str, MCPToolInfo],
+    *,
+    repository: str,
+    pull_number: str,
+    start_at: datetime,
+    end_at: datetime,
+    timezone: str,
+    actor: str | None,
+    limit: int,
+    pagination: _RemotePagination,
+) -> _CollectedPage:
+    owner, repo = _repo_parts(repository)
+    tool = _find_optional_tool(
+        tools,
+        ("get_pull_request_comments", "pull_request_read"),
+    )
+    if tool is None:
+        return _missing_activity_page(repository=repository, event_type="comment")
+
+    args: dict[str, Any] = {}
+    if _matches_tool_suffix(tool.name, "pull_request_read"):
+        _set_arg(args, tool, "get_comments", "method", required=True)
+    _set_arg(args, tool, owner, "owner", required=True)
+    _set_arg(args, tool, repo, "repo", "repository", required=True)
+    _set_arg(
+        args,
+        tool,
+        int(pull_number),
+        "pull_number",
+        "pullNumber",
+        required=True,
+    )
+    current = _prepare_remote_pagination(
+        args,
+        tool,
+        page_size=limit,
+        pagination=pagination,
+    )
+    payload = await client.call_tool(tool.name, args)
+    items = _coerce_items(payload, "comments")
+    events = [
+        _comment_to_event(
+            item,
+            repository,
+            parent_external_id=pull_number,
+            title_prefix=f"Pull request #{pull_number} comment",
         )
         for item in items
     ]
@@ -1230,11 +1315,16 @@ async def _collect_pull_request_reviews(
     pagination: _RemotePagination,
 ) -> _CollectedPage:
     owner, repo = _repo_parts(repository)
-    tool = _find_optional_tool(tools, ("get_pull_request_reviews",))
+    tool = _find_optional_tool(
+        tools,
+        ("get_pull_request_reviews", "pull_request_read"),
+    )
     if tool is None:
         return _missing_activity_page(repository=repository, event_type="review")
 
     args: dict[str, Any] = {}
+    if _matches_tool_suffix(tool.name, "pull_request_read"):
+        _set_arg(args, tool, "get_reviews", "method", required=True)
     _set_arg(args, tool, owner, "owner", required=True)
     _set_arg(args, tool, repo, "repo", "repository", required=True)
     _set_arg(
@@ -1252,7 +1342,7 @@ async def _collect_pull_request_reviews(
         pagination=pagination,
     )
     payload = await client.call_tool(tool.name, args)
-    items = _coerce_items(payload)
+    items = _coerce_items(payload, "reviews")
     events = [
         _review_to_event(
             item,
@@ -1288,16 +1378,39 @@ def _initial_activity_tasks(
     *,
     page_size: int,
 ) -> list[_ActivityPageTask]:
-    return [
-        _ActivityPageTask(
-            repository=repository,
-            event_type=event_type,
-            page_size=page_size,
-            discover_parents=event_type in {"comment", "review"},
-        )
-        for repository in dict.fromkeys(repositories)
-        for event_type in event_types
-    ]
+    tasks: list[_ActivityPageTask] = []
+    for repository in dict.fromkeys(repositories):
+        for event_type in event_types:
+            if event_type == "comment":
+                tasks.extend(
+                    _ActivityPageTask(
+                        repository=repository,
+                        event_type=event_type,
+                        page_size=page_size,
+                        parent_type=parent_type,
+                        discover_parents=True,
+                    )
+                    for parent_type in ("issue", "pull_request")
+                )
+            elif event_type == "review":
+                tasks.append(
+                    _ActivityPageTask(
+                        repository=repository,
+                        event_type=event_type,
+                        page_size=page_size,
+                        parent_type="pull_request",
+                        discover_parents=True,
+                    )
+                )
+            else:
+                tasks.append(
+                    _ActivityPageTask(
+                        repository=repository,
+                        event_type=event_type,
+                        page_size=page_size,
+                    )
+                )
+    return tasks
 
 
 async def _collect_activity_task(
@@ -1321,9 +1434,9 @@ async def _collect_activity_task(
     }
     if task.discover_parents:
         common["actor"] = None
-        if task.event_type == "comment":
-            return await _collect_issues(client, tools, **common)
-        return await _collect_pull_requests(client, tools, **common)
+        if task.parent_type == "pull_request":
+            return await _collect_pull_requests(client, tools, **common)
+        return await _collect_issues(client, tools, **common)
     if task.event_type == "commit":
         return await _collect_commits(client, tools, **common)
     if task.event_type == "pull_request":
@@ -1331,6 +1444,13 @@ async def _collect_activity_task(
     if task.event_type == "issue":
         return await _collect_issues(client, tools, **common)
     if task.event_type == "comment" and task.parent_external_id is not None:
+        if task.parent_type == "pull_request":
+            return await _collect_pull_request_comments(
+                client,
+                tools,
+                pull_number=task.parent_external_id,
+                **common,
+            )
         return await _collect_issue_comments(
             client,
             tools,
@@ -1367,6 +1487,7 @@ def _child_tasks_from_parent_page(
             event_type=task.event_type,
             page_size=task.page_size,
             parent_external_id=parent_id,
+            parent_type=task.parent_type,
         )
         for parent_id in parent_ids
     ]
@@ -1778,139 +1899,3 @@ def github_mcp_public_schema_is_secret_free() -> bool:
         if any(secret in name for name in names for secret in _SENSITIVE_WORDS):
             return False
     return True
-
-
-def _serialize_activity_value(value: Any) -> Any:
-    if isinstance(value, GitHubActivityEvent | GitHubActivityResult | GitHubMCPWarning):
-        return value.to_dict()
-    if isinstance(value, list):
-        return [_serialize_activity_value(item) for item in value]
-    if isinstance(value, tuple):
-        return [_serialize_activity_value(item) for item in value]
-    if isinstance(value, dict):
-        return {key: _serialize_activity_value(item) for key, item in value.items()}
-    return value
-
-
-def _chat_warning_result(value: GitHubMCPWarning) -> dict[str, Any]:
-    return value.to_dict()
-
-
-async def chat_github_mcp_resolve_identity() -> dict[str, Any]:
-    """Resolve the platform GitHub account configured on the MCP Target."""
-    result = await github_mcp_resolve_identity()
-    if isinstance(result, GitHubMCPWarning):
-        return _chat_warning_result(result)
-    return {"ok": True, "identity": _serialize_activity_value(result)}
-
-
-async def chat_github_mcp_list_repositories(
-    query: str | None = None,
-    limit: int = 30,
-    include_archived: bool = False,
-) -> dict[str, Any]:
-    """List repositories visible to the platform GitHub MCP account."""
-    result = await github_mcp_list_repositories(
-        query=query,
-        limit=limit,
-        include_archived=include_archived,
-    )
-    if isinstance(result, GitHubMCPWarning):
-        return _chat_warning_result(result)
-    repositories = _serialize_activity_value(result)
-    return {
-        "ok": True,
-        "repositories": repositories,
-        "count": len(repositories) if isinstance(repositories, list) else 0,
-    }
-
-
-async def chat_github_mcp_search_activity(
-    start_at: str,
-    end_at: str,
-    repositories: list[str] | None = None,
-    event_types: list[GitHubActivityType] | None = None,
-    limit: int = 30,
-    timezone: str = "Asia/Shanghai",
-    cursor: str | None = None,
-) -> dict[str, Any]:
-    """Search read-only GitHub engineering activity through MCP Gateway."""
-    result = await github_mcp_search_activity(
-        start_at=start_at,
-        end_at=end_at,
-        timezone=timezone,
-        repositories=repositories,
-        event_types=event_types,
-        limit=limit,
-        cursor=cursor,
-    )
-    serialized = _serialize_activity_value(result)
-    events = serialized["events"]
-    return {
-        "ok": bool(result.events) or not result.warnings,
-        "events": events,
-        "count": len(events),
-        "warnings": serialized["warnings"],
-        "next_cursor": result.next_cursor,
-        "identity_scope": result.identity_scope,
-        "start_at": start_at,
-        "end_at": end_at,
-        "timezone": timezone,
-    }
-
-
-async def chat_github_mcp_get_detail(
-    event_type: GitHubActivityType,
-    repository: str,
-    external_id: str,
-    parent_external_id: str | None = None,
-) -> dict[str, Any]:
-    """Fetch one GitHub activity detail through the read-only MCP Gateway."""
-    result = await github_mcp_get_detail(
-        event_type=event_type,
-        repository=repository,
-        external_id=external_id,
-        parent_external_id=parent_external_id,
-    )
-    if isinstance(result, GitHubMCPWarning):
-        return _chat_warning_result(result)
-    return {"ok": True, "event": _serialize_activity_value(result)}
-
-
-GITHUB_MCP_CHAT_TOOLS = [
-    lc_tool(
-        "github_mcp_resolve_identity",
-        description=(
-            "Read-only debug tool for Feature 17. Resolve the platform GitHub "
-            "account configured on the AgentArts MCP Gateway Target. It does "
-            "not use or reveal end-user OAuth tokens, PATs, STS credentials, "
-            "or signed headers."
-        ),
-    )(chat_github_mcp_resolve_identity),
-    lc_tool(
-        "github_mcp_list_repositories",
-        description=(
-            "Read-only debug tool for Feature 17. List repositories visible to "
-            "the platform GitHub MCP account. Optional query uses GitHub search "
-            "syntax; limit is capped by the internal source."
-        ),
-    )(chat_github_mcp_list_repositories),
-    lc_tool(
-        "github_mcp_search_activity",
-        description=(
-            "Read-only debug tool for Feature 17. Search commits, pull "
-            "requests, issues, reviews, and comments via AgentArts MCP Gateway. "
-            "Use repository names like 'T-1009/personal-assistant' and ISO "
-            "datetime strings such as '2026-07-01T00:00:00+08:00'."
-        ),
-    )(chat_github_mcp_search_activity),
-    lc_tool(
-        "github_mcp_get_detail",
-        description=(
-            "Read-only debug tool for Feature 17. Fetch detail for one activity "
-            "event. Supported event_type values are commit, pull_request, issue, "
-            "review, and comment. For review or comment, pass the parent PR or "
-            "issue number as parent_external_id."
-        ),
-    )(chat_github_mcp_get_detail),
-]

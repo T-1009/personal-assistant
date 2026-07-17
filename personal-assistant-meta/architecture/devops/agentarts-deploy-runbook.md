@@ -75,8 +75,10 @@ Outbound integrations：
 
 GitHub MCP 还要求 Console 中存在 `gateway-github-mcp` 和 read-only
 `target-github-mcp`。Target 托管 GitHub PAT；Service Runtime env 只配置 Gateway
-URL、STS provider/session、timeout、tool prefix 和功能开关。当前
-`GITHUB_MCP_ENABLED`、`GITHUB_MCP_CHAT_TOOL_ENABLED` 默认均为 `true`。
+URL、STS provider/session、timeout 和功能开关。`GITHUB_MCP_ENABLED` 是 internal
+source master switch，`GITHUB_ACTIVITY_TOOLS_ENABLED` 控制 Agent Tool exposure；
+只有两者同时为 `true` 时，Agent 才能看到 `github_search_activity` 和
+`github_get_activity_detail`。
 
 ## 4. Build
 
@@ -125,8 +127,11 @@ curl https://<runtime-host>/ping
 - streaming `text/event-stream`
 - Gateway user/session headers 正确注入
 - 日志中无 credential value
-- GitHub MCP 启用时，`github_mcp_resolve_identity` 和一次限定仓库的 activity/detail
-  查询成功；review/comment detail 同时传入搜索结果中的 `parent_external_id`
+- GitHub MCP internal source 启用时，smoke helper 直接调用
+  `github_mcp_resolve_identity` 和一次限定仓库的 activity/detail 查询成功；
+  两个开关同时启用时，Agent 只通过 `github_search_activity` 和
+  `github_get_activity_detail` 查询；review/comment detail 同时传入搜索结果中的
+  `parent_external_id`
 
 ### Configuration failure
 

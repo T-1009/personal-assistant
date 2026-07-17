@@ -455,10 +455,10 @@ async def _github_request(
 ### 5.2.0 GitHub MCP Activity Data Source
 
 Feature 17 新增 Service 内部 GitHub MCP activity data source，用于后续 Report
-能力和只读 Chat inspection 读取工程活动。它不替代现有 GitHub OAuth local tools，
-也不向 Agent 暴露 remote MCP 原子工具。当前 settings 默认启用 data source，并由
-`build_tools()` 注册四个经过裁剪的只读 Chat wrappers；设置
-`GITHUB_MCP_CHAT_TOOL_ENABLED=false` 可只保留内部调用。
+能力和 Agent-facing activity tools 读取工程活动。它不替代现有 GitHub OAuth
+local tools，也不向 Agent 暴露 remote MCP 原子工具或 transport-level
+`github_mcp_*` functions。Agent 只看到 `github_search_activity` 和
+`github_get_activity_detail`。
 
 图类型：**Sequence Diagram（时序图）**。用于说明 GitHub MCP activity source 的
 生产凭据链路。
@@ -466,7 +466,7 @@ Feature 17 新增 Service 内部 GitHub MCP activity data source，用于后续 
 ```mermaid
 sequenceDiagram
     participant Runtime as AgentArts Runtime
-    participant Source as github_mcp_tools.py
+    participant Source as github_activity_source.py
     participant Identity as AgentArts Identity
     participant Signer as HuaweiCloud IAM Signer
     participant Gateway as gateway-github-mcp
@@ -489,9 +489,13 @@ sequenceDiagram
 - `app/mcp/gateway_client.py` 使用 `langchain-mcp-adapters` 建立
   Streamable HTTP MCP session，并通过 `httpx.Auth` 对每个 HTTP request 重新
   做 IAM signing。
-- `app/tools/github_mcp_tools.py` 只暴露内部 callable source functions：
+- `app/mcp/github_activity_source.py` 只暴露内部 callable source functions：
   `github_mcp_resolve_identity`、`github_mcp_list_repositories`、
   `github_mcp_search_activity`、`github_mcp_get_detail`。
+- `app/tools/github_activity_tools.py` 提供 Agent-facing facade，只导出
+  `github_search_activity`、`github_get_activity_detail` 和
+  `GITHUB_ACTIVITY_TOOLS`；两个 Tool 的所有返回结果均包含
+  `identity_scope="platform"`。
 - `github_mcp_search_activity` 支持 `commit`、`pull_request`、`issue`、`review`、
   `comment`。review 从 Pull Request 聚合，comment 从 Issue/PR 的 issue comments
   聚合。
@@ -502,11 +506,13 @@ sequenceDiagram
   review 使用 `get_reviews`；`issue_read` 的 comment 使用 `get_comments`，Issue
   详情则按 Target schema 聚合 `get`、`get_comments`、`get_sub_issues`、
   `get_parent`、`get_labels` 到 `GitHubActivityEvent.details`。
-- `GITHUB_MCP_CHAT_TOOL_ENABLED` 当前默认值为 `true`。启用时，`build_tools()`
-  注册四个只读 Chat inspection tools；该入口不提供 raw MCP passthrough，也不改变
-  platform GitHub account 边界。
-- Service settings 只保存 Gateway URL、STS provider/session、timeout 和 tool
-  prefix；STS provider/session 默认是 `github-mcp-gateway` /
+- `GITHUB_MCP_ENABLED` 是 internal source 的 master switch；
+  `GITHUB_ACTIVITY_TOOLS_ENABLED` 控制 Agent exposure。`build_tools()` 仅在两者
+  同时为 `true` 时注册 `GITHUB_ACTIVITY_TOOLS`；该入口不提供 raw MCP
+  passthrough，也不改变 platform GitHub account 边界。
+- Service settings 只保存 Gateway URL、STS provider/session、timeout、master
+  switch 和 Tool exposure switch；STS provider/session 默认是
+  `github-mcp-gateway` /
   `personal-assistant-github-mcp`。GitHub PAT 只在 AgentArts Target 的 API Key
   出站认证中托管。
 - Source 只允许调用 `get_me`、repository search、commits、pull requests、

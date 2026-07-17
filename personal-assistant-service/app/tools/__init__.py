@@ -93,19 +93,20 @@ def build_tools() -> list[Any]:
             exc_info=True,
         )
 
-    if get_settings().github_mcp_chat_tool_enabled:
+    settings = get_settings()
+    if settings.github_mcp_enabled and settings.github_activity_tools_enabled:
         try:
-            from app.tools.github_mcp_tools import GITHUB_MCP_CHAT_TOOLS
+            from app.tools.github_activity_tools import GITHUB_ACTIVITY_TOOLS
 
-            tools.extend(GITHUB_MCP_CHAT_TOOLS)
+            tools.extend(GITHUB_ACTIVITY_TOOLS)
             logger.info(
-                "GitHub MCP chat tools registered (%d tools).",
-                len(GITHUB_MCP_CHAT_TOOLS),
+                "GitHub activity tools registered (%d tools).",
+                len(GITHUB_ACTIVITY_TOOLS),
             )
         except ImportError as e:
             logger.warning(
-                "GitHub MCP chat tools not available (import failed): %s. "
-                "Feature 17 chat inspection will be disabled for this session.",
+                "GitHub activity tools not available (import failed): %s. "
+                "Feature 17 Agent tools will be disabled for this session.",
                 e,
                 exc_info=True,
             )

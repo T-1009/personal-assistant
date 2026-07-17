@@ -48,7 +48,7 @@ class Settings(BaseSettings):
     github_provider_name: str = "github-provider"
     github_scopes: str = "repo,read:user"
     github_mcp_enabled: bool = True
-    github_mcp_chat_tool_enabled: bool = True
+    github_activity_tools_enabled: bool = True
     github_mcp_gateway_url: AnyHttpUrl = "https://gateway-github-mcp-defaultgw-ha3wenzqga.cn-southwest-2.huaweicloud-agentarts.com/mcp"
     github_mcp_auth_mode: Literal["iam"] = "iam"
     github_mcp_sts_provider_name: str = "github-mcp-gateway"

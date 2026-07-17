@@ -28,7 +28,7 @@ Personal Assistant 是一个以 **Agent Identity 最佳实现 Demo** 为目标�
 | LLM Credential | 已实现 | DeepSeek API Key 通过 `DEEPSEEK_API_KEY` Credential Provider 注入 |
 | Microsoft 365 邮件 | 已实现 | `m365-provider` OAuth2 User Federation，支持邮件列表、详情、搜索、发送、回复 |
 | GitHub 工具 | 已实现 | `github-provider` OAuth2 User Federation，支持仓库列表、目录/文件读取、代码搜索、加星 |
-| GitHub MCP Activity | 已实现 | `github-mcp-gateway` STS + read-only MCP Target，支持 commit、PR、Issue、review、comment 搜索与详情 |
+| GitHub MCP Activity | 已实现 | `github-mcp-gateway` STS + read-only MCP Target；4 个 internal source 供内部编排复用，Agent 仅暴露 `github_search_activity` / `github_get_activity_detail` |
 | Gitee 工具 | 已实现 | `gitee-provider` OAuth2 User Federation，支持仓库列表 |
 | 华为云 IAM 工具 | 已实现 | `iam-users-readonly` STS Provider，只读列出 IAM 用户 |
 | 敏感操作 Guard | 已实现 | 邮件发送、邮件回复、GitHub 加星均需要二次确认 |

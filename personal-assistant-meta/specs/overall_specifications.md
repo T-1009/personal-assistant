@@ -152,8 +152,8 @@ HuaweiCloud IAM Tools 使用 AgentArts Identity STS Credential Provider 获取�
 ### 3.8 GitHub MCP Activity Data Source
 
 GitHub MCP Activity Data Source 通过 AgentArts MCP Gateway 访问 GitHub remote MCP，
-为 Report 和只读 Chat inspection 提供 `commit`、`pull_request`、`issue`、
-`review`、`comment` 五类工程活动数据。
+为 Report internal orchestration 和两个 Agent-facing GitHub activity tools 提供
+`commit`、`pull_request`、`issue`、`review`、`comment` 五类工程活动数据。
 
 - **Gateway**：`gateway-github-mcp`，入站 IAM 认证。
 - **Target**：`target-github-mcp`，Streamable HTTP，指向 GitHub MCP read-only
@@ -164,16 +164,22 @@ GitHub MCP Activity Data Source 通过 AgentArts MCP Gateway 访问 GitHub remot
   `github-mcp-gateway` 临时 IAM 凭据 → HuaweiCloud API signing 调用 MCP Gateway。
 - **内部契约**：输出 `GitHubActivityEvent`。`review` 的 `parent_external_id` 是
   Pull Request number；`comment` 的 `parent_external_id` 是 Issue 或 Pull Request
-  number。
+  number。Service 保留 `github_mcp_resolve_identity`、
+  `github_mcp_list_repositories`、`github_mcp_search_activity` 和
+  `github_mcp_get_detail` 四个 internal source functions；它们不注册为 Agent Tool。
+- **Agent-facing 契约**：Agent 只看到 `github_search_activity` 和
+  `github_get_activity_detail`。两个 Tool 的所有返回结果均明确包含
+  `identity_scope="platform"`。
 - **详情查询**：`github_mcp_get_detail` 支持全部五类事件。聚合
   `pull_request_read` 时固定传入 `method="get"`；聚合 `issue_read` 时根据 Target
   schema 依次读取 `get`、`get_comments`、`get_sub_issues`、`get_parent`、
   `get_labels`，并写入事件的 `details`。
 - **安全边界**：不暴露 raw MCP passthrough，不注册 `generate_report`，不把 GitHub
   MCP 原子工具作为 root capability 暴露给 Agent。
-- **默认开关**：当前代码默认设置 `GITHUB_MCP_ENABLED=true` 和
-  `GITHUB_MCP_CHAT_TOOL_ENABLED=true`，注册四个经过裁剪的只读 Chat tools。
-  可将后者设为 `false`，仅保留内部 data source。该入口始终使用 platform GitHub
+- **开关边界**：`GITHUB_MCP_ENABLED` 是 internal data source 的 master switch；
+  `GITHUB_ACTIVITY_TOOLS_ENABLED` 控制两个业务 Tool 是否对 Agent 可见。
+  `build_tools()` 仅在两者同时为 `true` 时注册 `GITHUB_ACTIVITY_TOOLS`；关闭
+  exposure switch 可只保留 internal data source。该入口始终使用 platform GitHub
   account，不代表当前用户授权。
 
 ---
