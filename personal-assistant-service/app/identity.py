@@ -44,7 +44,6 @@ def get_github_mcp_config() -> dict[str, str | float | bool]:
         "sts_provider_name": settings.github_mcp_sts_provider_name,
         "sts_agency_session_name": settings.github_mcp_sts_agency_session_name,
         "timeout_seconds": settings.github_mcp_timeout_seconds,
-        "tool_prefix": settings.github_mcp_tool_prefix,
     }
 
 

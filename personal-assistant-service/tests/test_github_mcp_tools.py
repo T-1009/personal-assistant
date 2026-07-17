@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 from typing import Any
 
 import pytest
@@ -20,7 +22,7 @@ class FakeMCPClient:
             MCPToolInfo(
                 "target-github-mcp_search_repositories",
                 "Search repositories",
-                {"properties": {"query": {}, "perPage": {}}},
+                {"properties": {"query": {}, "perPage": {}, "page": {}}},
             ),
             MCPToolInfo(
                 "target-github-mcp_list_commits",
@@ -32,6 +34,7 @@ class FakeMCPClient:
                         "since": {},
                         "until": {},
                         "perPage": {},
+                        "page": {},
                     }
                 },
             ),
@@ -44,6 +47,7 @@ class FakeMCPClient:
                         "repo": {},
                         "state": {},
                         "perPage": {},
+                        "page": {},
                     }
                 },
             ),
@@ -57,6 +61,7 @@ class FakeMCPClient:
                         "state": {},
                         "since": {},
                         "perPage": {},
+                        "page": {},
                     }
                 },
             ),
@@ -68,6 +73,8 @@ class FakeMCPClient:
                         "owner": {},
                         "repo": {},
                         "issueNumber": {},
+                        "perPage": {},
+                        "page": {},
                     }
                 },
             ),
@@ -149,6 +156,234 @@ class FakeMCPClient:
                 ]
             }
         raise AssertionError(f"Unexpected tool: {name}")
+
+
+class PaginatedMCPClient:
+    def __init__(
+        self,
+        *,
+        issues: list[dict[str, Any]] | None = None,
+        fail_commits: bool = False,
+        retryable_commits: bool = False,
+    ) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.fail_commits = fail_commits
+        self.retryable_commits = retryable_commits
+        self.commits = [
+            {
+                "sha": f"commit-{index}",
+                "author": {"login": "T-1009"},
+                "commit": {
+                    "message": f"Commit {index}",
+                    "author": {"date": f"2026-07-0{index}T12:00:00Z"},
+                },
+            }
+            for index in range(1, 4)
+        ]
+        self.pull_requests = [
+            {
+                "number": 17,
+                "title": "Feature 17",
+                "user": {"login": "T-1009"},
+                "state": "open",
+                "created_at": "2026-07-04T12:00:00Z",
+                "updated_at": "2026-07-04T13:00:00Z",
+            }
+        ]
+        self.issues = issues or [
+            {
+                "number": 99,
+                "title": "Pagination issue",
+                "user": {"login": "T-1009"},
+                "state": "open",
+                "created_at": "2026-07-05T12:00:00Z",
+                "updated_at": "2026-07-05T13:00:00Z",
+            }
+        ]
+        self.comments = [
+            {
+                "id": 100 + index,
+                "body": f"Comment {index}",
+                "user": {"login": "T-1009"},
+                "created_at": f"2026-07-0{5 + index}T12:00:00Z",
+            }
+            for index in range(1, 4)
+        ]
+        self.reviews = [
+            {
+                "id": 200 + index,
+                "body": f"Review {index}",
+                "state": "COMMENTED",
+                "user": {"login": "T-1009"},
+                "submitted_at": f"2026-07-0{5 + index}T13:00:00Z",
+            }
+            for index in range(1, 4)
+        ]
+
+    async def list_tools(self) -> list[MCPToolInfo]:
+        common = {"owner": {}, "repo": {}, "perPage": {}, "page": {}}
+        return [
+            MCPToolInfo("target-github-mcp_get_me", "Get me", {}),
+            MCPToolInfo(
+                "target-github-mcp_list_commits",
+                "List commits",
+                {"properties": common | {"since": {}, "until": {}}},
+            ),
+            MCPToolInfo(
+                "target-github-mcp_list_pull_requests",
+                "List pull requests",
+                {"properties": common | {"state": {}}},
+            ),
+            MCPToolInfo(
+                "target-github-mcp_list_issues",
+                "List issues",
+                {
+                    "properties": {
+                        "owner": {},
+                        "repo": {},
+                        "perPage": {},
+                        "after": {},
+                        "state": {},
+                        "since": {},
+                    }
+                },
+            ),
+            MCPToolInfo(
+                "target-github-mcp_get_issue_comments",
+                "Get issue comments",
+                {
+                    "properties": common
+                    | {
+                        "issueNumber": {},
+                    }
+                },
+            ),
+            MCPToolInfo(
+                "target-github-mcp_get_pull_request_reviews",
+                "Get pull request reviews",
+                {
+                    "properties": common
+                    | {
+                        "pullNumber": {},
+                    }
+                },
+            ),
+        ]
+
+    @staticmethod
+    def _page(items: list[dict[str, Any]], arguments: dict[str, Any]) -> Any:
+        page_size = arguments["perPage"]
+        page = arguments.get("page", 1)
+        start = (page - 1) * page_size
+        return items[start : start + page_size]
+
+    def _issue_page(self, arguments: dict[str, Any]) -> dict[str, Any]:
+        page_size = arguments["perPage"]
+        after = arguments.get("after")
+        start = int(after.split(":", maxsplit=1)[1]) if after else 0
+        end = min(start + page_size, len(self.issues))
+        has_next = end < len(self.issues)
+        return {
+            "issues": self.issues[start:end],
+            "pageInfo": {
+                "hasNextPage": has_next,
+                "endCursor": f"issues:{end}" if has_next else None,
+            },
+        }
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        self.calls.append((name, arguments))
+        if name.endswith("get_me"):
+            return {"login": "T-1009"}
+        if name.endswith("list_commits"):
+            if self.fail_commits:
+                raise MCPGatewayError(
+                    "permission_denied",
+                    "Commit activity is not readable.",
+                    retryable=self.retryable_commits,
+                )
+            return self._page(self.commits, arguments)
+        if name.endswith("list_pull_requests"):
+            return self._page(self.pull_requests, arguments)
+        if name.endswith("list_issues"):
+            return self._issue_page(arguments)
+        if name.endswith("get_issue_comments"):
+            return {"comments": self._page(self.comments, arguments)}
+        if name.endswith("get_pull_request_reviews"):
+            return self._page(self.reviews, arguments)
+        raise AssertionError(f"Unexpected tool: {name}")
+
+
+class UnpageableMCPClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def list_tools(self) -> list[MCPToolInfo]:
+        return [
+            MCPToolInfo("target-github-mcp_get_me", "Get me", {}),
+            MCPToolInfo(
+                "target-github-mcp_list_commits",
+                "List commits",
+                {
+                    "properties": {
+                        "owner": {},
+                        "repo": {},
+                        "perPage": {},
+                    }
+                },
+            ),
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        self.calls.append((name, arguments))
+        if name.endswith("get_me"):
+            return {"login": "T-1009"}
+        return [
+            {
+                "sha": "only-page",
+                "author": {"login": "T-1009"},
+                "commit": {
+                    "message": "Potentially truncated",
+                    "author": {"date": "2026-07-10T12:00:00Z"},
+                },
+            }
+        ]
+
+
+class RepositoryDiscoveryMCPClient(PaginatedMCPClient):
+    async def list_tools(self) -> list[MCPToolInfo]:
+        return [
+            MCPToolInfo(
+                "target-github-mcp_search_repositories",
+                "Search repositories",
+                {
+                    "properties": {
+                        "query": {},
+                        "perPage": {},
+                        "after": {},
+                    }
+                },
+            ),
+            *(await super().list_tools()),
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        if name.endswith("search_repositories"):
+            self.calls.append((name, arguments))
+            return {
+                "repositories": [
+                    {
+                        "name": "personal-assistant",
+                        "full_name": "T-1009/personal-assistant",
+                        "archived": False,
+                    }
+                ],
+                "pageInfo": {
+                    "hasNextPage": True,
+                    "endCursor": "repositories:1",
+                },
+            }
+        return await super().call_tool(name, arguments)
 
 
 class DetailMCPClient:
@@ -348,13 +583,16 @@ async def test_search_activity_normalizes_events(fake_client):
         limit=10,
     )
 
-    assert isinstance(result, list)
-    event_types = {event.event_type for event in result}
+    assert isinstance(result, gmt.GitHubActivityResult)
+    assert result.identity_scope == "platform"
+    assert result.warnings == []
+    assert result.next_cursor is None
+    event_types = {event.event_type for event in result.events}
     assert event_types == {"commit", "pull_request", "issue", "comment"}
-    commit = next(event for event in result if event.event_type == "commit")
+    commit = next(event for event in result.events if event.event_type == "commit")
     assert commit.external_id == "abcdef123456"
     assert commit.metrics["additions"] == 10
-    issue = next(event for event in result if event.event_type == "issue")
+    issue = next(event for event in result.events if event.event_type == "issue")
     assert issue.external_id == "99"
 
 
@@ -372,6 +610,9 @@ async def test_chat_search_activity_returns_json_safe_result(fake_client):
     assert result["count"] == 1
     assert result["events"][0]["event_type"] == "commit"
     assert result["events"][0]["repository"] == "T-1009/personal-assistant"
+    assert result["warnings"] == []
+    assert result["next_cursor"] is None
+    assert result["identity_scope"] == "platform"
 
 
 @pytest.mark.asyncio
@@ -389,9 +630,416 @@ async def test_search_activity_maps_gateway_error_to_warning(monkeypatch):
         end_at="2026-07-13T23:59:59+08:00",
     )
 
-    assert isinstance(result, gmt.GitHubMCPWarning)
-    assert result.warning_type == "permission_denied"
-    assert "permissions" in result.message
+    assert isinstance(result, gmt.GitHubActivityResult)
+    assert result.events == []
+    assert result.warnings[0].warning_type == "permission_denied"
+    assert "permissions" in result.warnings[0].message
+
+
+@pytest.mark.asyncio
+async def test_search_activity_continues_all_event_types_without_duplicates(
+    monkeypatch,
+):
+    client = PaginatedMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    cursor = None
+    events = []
+    for _ in range(10):
+        result = await gmt.github_mcp_search_activity(
+            start_at="2026-07-01T00:00:00Z",
+            end_at="2026-07-13T23:59:59Z",
+            repositories=["T-1009/personal-assistant"],
+            event_types=[
+                "commit",
+                "pull_request",
+                "issue",
+                "comment",
+                "review",
+            ],
+            limit=2,
+            cursor=cursor,
+        )
+
+        assert isinstance(result, gmt.GitHubActivityResult)
+        assert result.identity_scope == "platform"
+        assert result.warnings == []
+        events.extend(result.events)
+        cursor = result.next_cursor
+        if cursor is None:
+            break
+
+    assert cursor is None
+    event_keys = [
+        (
+            event.repository,
+            event.event_type,
+            event.parent_external_id,
+            event.external_id,
+        )
+        for event in events
+    ]
+    assert len(event_keys) == len(set(event_keys)) == 11
+    assert {event.event_type for event in events} == {
+        "commit",
+        "pull_request",
+        "issue",
+        "comment",
+        "review",
+    }
+
+    comment_pages = [
+        arguments["page"]
+        for name, arguments in client.calls
+        if name.endswith("get_issue_comments")
+    ]
+    assert comment_pages == [1, 1, 2]
+    assert any(
+        name.endswith("list_commits") and arguments["page"] == 2
+        for name, arguments in client.calls
+    )
+    assert any(
+        name.endswith("get_pull_request_reviews") and arguments["page"] == 2
+        for name, arguments in client.calls
+    )
+
+
+@pytest.mark.asyncio
+async def test_search_activity_uses_schema_after_cursor(monkeypatch):
+    issues = [
+        {
+            "number": number,
+            "title": f"Issue {number}",
+            "user": {"login": "T-1009"},
+            "state": "open",
+            "created_at": f"2026-07-0{number}T12:00:00Z",
+            "updated_at": f"2026-07-0{number}T13:00:00Z",
+        }
+        for number in range(1, 4)
+    ]
+    client = PaginatedMCPClient(issues=issues)
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    first = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["issue"],
+        limit=2,
+    )
+    second = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["issue"],
+        limit=2,
+        cursor=first.next_cursor,
+    )
+
+    assert first.next_cursor is not None
+    assert second.next_cursor is None
+    assert [event.external_id for event in first.events + second.events] == [
+        "1",
+        "2",
+        "3",
+    ]
+    issue_calls = [
+        arguments for name, arguments in client.calls if name.endswith("list_issues")
+    ]
+    assert "after" not in issue_calls[0]
+    assert issue_calls[1]["after"] == "issues:2"
+
+
+@pytest.mark.asyncio
+async def test_search_activity_rejects_invalid_cursor_before_mcp_call(fake_client):
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit"],
+        cursor="not-a-valid-cursor",
+    )
+
+    assert result.events == []
+    assert result.next_cursor is None
+    assert result.warnings[0].warning_type == "configuration_error"
+    assert fake_client.calls == []
+
+
+@pytest.mark.asyncio
+async def test_search_activity_keeps_partial_events_with_typed_warning(monkeypatch):
+    client = PaginatedMCPClient(fail_commits=True)
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit", "issue"],
+        limit=10,
+    )
+
+    assert [event.event_type for event in result.events] == ["issue"]
+    assert result.warnings[0].warning_type == "permission_denied"
+    assert result.next_cursor is None
+
+
+@pytest.mark.asyncio
+async def test_search_activity_retains_retryable_task_in_cursor(monkeypatch):
+    client = PaginatedMCPClient(
+        fail_commits=True,
+        retryable_commits=True,
+    )
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit", "issue"],
+        limit=10,
+    )
+
+    assert result.events == []
+    assert result.warnings[0].retryable is True
+    assert result.next_cursor is not None
+
+
+@pytest.mark.asyncio
+async def test_search_activity_warns_when_full_page_cannot_continue(monkeypatch):
+    client = UnpageableMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit"],
+        limit=1,
+    )
+
+    assert [event.external_id for event in result.events] == ["only-page"]
+    assert result.next_cursor is None
+    assert result.warnings[0].warning_type == "pagination_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_search_activity_warns_for_unpageable_nonempty_default_page(
+    monkeypatch,
+):
+    client = UnpageableMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit"],
+        limit=100,
+    )
+
+    assert [event.external_id for event in result.events] == ["only-page"]
+    assert result.warnings[0].warning_type == "pagination_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_search_activity_reports_missing_selected_capability(monkeypatch):
+    client = UnpageableMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["issue"],
+        limit=10,
+    )
+
+    assert result.events == []
+    assert result.next_cursor is None
+    assert result.warnings[0].warning_type == "capability_missing"
+    assert "issue" in result.warnings[0].message
+
+
+@pytest.mark.asyncio
+async def test_search_activity_deduplicates_repository_tasks(monkeypatch):
+    client = PaginatedMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=[
+            "T-1009/personal-assistant",
+            "T-1009/personal-assistant",
+        ],
+        event_types=["commit"],
+        limit=100,
+    )
+
+    assert [event.external_id for event in result.events] == [
+        "commit-1",
+        "commit-2",
+        "commit-3",
+    ]
+    assert len([name for name, _ in client.calls if name.endswith("list_commits")]) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_activity_warns_when_repository_discovery_has_more(monkeypatch):
+    client = RepositoryDiscoveryMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        event_types=["commit"],
+        limit=1,
+    )
+
+    warning_types = {warning.warning_type for warning in result.warnings}
+    assert "repository_discovery_truncated" in warning_types
+    repository_call = next(
+        arguments
+        for name, arguments in client.calls
+        if name.endswith("search_repositories")
+    )
+    assert repository_call["perPage"] == 100
+
+
+@pytest.mark.asyncio
+async def test_search_activity_rejects_duplicate_cursor_tasks(monkeypatch):
+    client = PaginatedMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    first = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit"],
+        limit=2,
+    )
+    assert first.next_cursor is not None
+
+    padded = first.next_cursor + "=" * (-len(first.next_cursor) % 4)
+    payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+    payload["tasks"].append(dict(payload["tasks"][0]))
+    forged_cursor = (
+        base64.urlsafe_b64encode(
+            json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        )
+        .decode("ascii")
+        .rstrip("=")
+    )
+    calls_before = len(client.calls)
+
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit"],
+        limit=2,
+        cursor=forged_cursor,
+    )
+
+    assert result.events == []
+    assert result.warnings[0].warning_type == "configuration_error"
+    assert len(client.calls) == calls_before
+
+
+@pytest.mark.asyncio
+async def test_search_activity_warns_when_page_budget_requires_continuation(
+    monkeypatch,
+):
+    client = PaginatedMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    monkeypatch.setattr(gmt, "_MAX_PAGE_CALLS_PER_SEARCH", 1)
+    first = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit", "issue"],
+        limit=10,
+    )
+    second = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit", "issue"],
+        limit=10,
+        cursor=first.next_cursor,
+    )
+
+    assert first.next_cursor is not None
+    assert first.warnings[0].warning_type == "pagination_budget_exhausted"
+    assert [event.event_type for event in second.events] == ["issue"]
+    assert second.next_cursor is None
+    assert second.warnings == []
+
+
+@pytest.mark.asyncio
+async def test_chat_search_activity_passes_continuation_cursor(monkeypatch):
+    client = PaginatedMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    first = await gmt.chat_github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit"],
+        limit=2,
+    )
+    second = await gmt.chat_github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit"],
+        limit=2,
+        cursor=first["next_cursor"],
+    )
+
+    assert first["count"] == 2
+    assert first["next_cursor"] is not None
+    assert second["count"] == 1
+    assert second["next_cursor"] is None
+    assert second["identity_scope"] == "platform"
 
 
 @pytest.mark.parametrize(
@@ -494,8 +1142,8 @@ async def test_search_comment_event_includes_parent_external_id(fake_client):
         limit=10,
     )
 
-    assert isinstance(result, list)
-    comment = next(event for event in result if event.event_type == "comment")
+    assert isinstance(result, gmt.GitHubActivityResult)
+    comment = next(event for event in result.events if event.event_type == "comment")
     assert comment.external_id == "1"
     assert comment.parent_external_id == "99"
 

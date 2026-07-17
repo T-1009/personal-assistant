@@ -54,7 +54,6 @@ class Settings(BaseSettings):
     github_mcp_sts_provider_name: str = "github-mcp-gateway"
     github_mcp_sts_agency_session_name: str = "personal-assistant-github-mcp"
     github_mcp_timeout_seconds: float = Field(default=30.0, gt=0.0)
-    github_mcp_tool_prefix: str = "target-github-mcp"
 
     m365_calendar_provider_name: str = "m365-calendar-provider"
     m365_calendar_scopes: str = "https://graph.microsoft.com/Calendars.Read"
@@ -94,7 +93,6 @@ class Settings(BaseSettings):
         "github_mcp_auth_mode",
         "github_mcp_sts_provider_name",
         "github_mcp_sts_agency_session_name",
-        "github_mcp_tool_prefix",
         "agent_identity_local_jwt_workload_name",
         "iam_users_provider_name",
         "iam_users_agency_session_name",

@@ -164,7 +164,6 @@ Production Runtime：
 | `GITHUB_MCP_AUTH_MODE` | 首期固定为 `iam` |
 | `GITHUB_MCP_STS_PROVIDER_NAME` | 用于获取临时 IAM 凭据的 AgentArts Identity STS provider |
 | `GITHUB_MCP_TIMEOUT_SECONDS` | Gateway / MCP 调用 timeout |
-| `GITHUB_MCP_TOOL_PREFIX` | 远程 MCP tool name prefix，便于诊断冲突 |
 
 ### 5.2 新增 `app/mcp/`
 

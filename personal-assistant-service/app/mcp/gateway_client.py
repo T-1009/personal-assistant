@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import logging
-import uuid
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
+from types import TracebackType
 from typing import Any
 from urllib.parse import SplitResult, urlsplit
 
@@ -16,6 +17,7 @@ from agentarts.sdk.identity.types import StsCredentials
 from huaweicloudsdkcore.auth.credentials import GlobalCredentials
 from huaweicloudsdkcore.sdk_request import SdkRequest
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from mcp import ClientSession
 
 from app.identity import get_github_mcp_config
 
@@ -23,10 +25,8 @@ logger = logging.getLogger(__name__)
 
 _GITHUB_MCP_SERVER_NAME = "github"
 _UNSIGNED_PAYLOAD = "UNSIGNED-PAYLOAD"
-_FIXED_MCP_SESSION_ID = str(uuid.uuid4())
 _DEFAULT_MCP_HEADERS = {
     "Accept": "application/json, text/event-stream",
-    "mcp-session-id": _FIXED_MCP_SESSION_ID,
 }
 _REMOTE_DISCONNECT_MARKERS = (
     "remoteprotocolerror",
@@ -42,7 +42,6 @@ class MCPGatewayConfig:
     sts_provider_name: str
     sts_agency_session_name: str
     timeout_seconds: float
-    tool_prefix: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,7 +94,6 @@ def load_mcp_gateway_config() -> MCPGatewayConfig:
         sts_provider_name=str(raw["sts_provider_name"]),
         sts_agency_session_name=str(raw["sts_agency_session_name"]),
         timeout_seconds=float(raw["timeout_seconds"]),
-        tool_prefix=str(raw["tool_prefix"]).strip(),
     )
 
 
@@ -202,8 +200,11 @@ async def run_with_github_mcp_sts(
         into="sts_credentials",
     )
     async def _run(*, sts_credentials: StsCredentials) -> Any:
-        client = MCPGatewayClient(config=config, sts_credentials=sts_credentials)
-        return await operation(client)
+        async with MCPGatewayClient(
+            config=config,
+            sts_credentials=sts_credentials,
+        ) as client:
+            return await operation(client)
 
     return await _run()
 
@@ -219,6 +220,98 @@ class MCPGatewayClient:
     ) -> None:
         self.config = config
         self._sts_credentials = sts_credentials
+        self._session_context: AbstractAsyncContextManager[ClientSession] | None = None
+        self._session: ClientSession | None = None
+
+    async def __aenter__(self) -> MCPGatewayClient:
+        if self._session_context is not None:
+            raise MCPGatewayError(
+                "configuration_error",
+                "GitHub MCP Gateway client session is already open.",
+                retryable=False,
+            )
+
+        try:
+            session_context = self._client().session(_GITHUB_MCP_SERVER_NAME)
+            self._session_context = session_context
+            self._session = await session_context.__aenter__()
+        except httpx.HTTPStatusError as exc:
+            self._session = None
+            self._session_context = None
+            raise _map_httpx_status_error(exc) from exc
+        except httpx.HTTPError as exc:
+            self._session = None
+            self._session_context = None
+            logger.error(
+                "MCP Gateway HTTP transport error during session initialization | "
+                "%s: %s",
+                type(exc).__name__,
+                exc,
+            )
+            raise MCPGatewayError(
+                "gateway_unavailable",
+                "GitHub MCP Gateway is unavailable.",
+                retryable=True,
+            ) from exc
+        except Exception as exc:
+            self._session = None
+            self._session_context = None
+            raise _map_generic_mcp_error(exc) from exc
+        except BaseException:
+            self._session = None
+            self._session_context = None
+            raise
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None:
+        session_context = self._session_context
+        self._session = None
+        self._session_context = None
+        if session_context is None:
+            return None
+
+        try:
+            return await session_context.__aexit__(
+                exc_type,
+                exc_value,
+                traceback,
+            )
+        except BaseException as close_error:
+            if exc_value is not None and _exception_only_wraps(
+                close_error,
+                exc_value,
+            ):
+                return False
+            if isinstance(close_error, httpx.HTTPStatusError):
+                raise _map_httpx_status_error(close_error) from close_error
+            if not isinstance(close_error, httpx.HTTPError):
+                if isinstance(close_error, Exception):
+                    raise _map_generic_mcp_error(close_error) from close_error
+                raise
+            logger.error(
+                "MCP Gateway HTTP transport error during session close | %s: %s",
+                type(close_error).__name__,
+                close_error,
+            )
+            raise MCPGatewayError(
+                "gateway_unavailable",
+                "GitHub MCP Gateway is unavailable.",
+                retryable=True,
+            ) from close_error
+
+    def _require_session(self) -> ClientSession:
+        if self._session is None:
+            raise MCPGatewayError(
+                "configuration_error",
+                "GitHub MCP Gateway client session is not open.",
+                retryable=False,
+            )
+        return self._session
 
     def _client(self) -> MultiServerMCPClient:
         return MultiServerMCPClient(
@@ -238,10 +331,9 @@ class MCPGatewayClient:
         )
 
     async def list_tools(self) -> list[MCPToolInfo]:
+        session = self._require_session()
         try:
-            client = self._client()
-            async with client.session(_GITHUB_MCP_SERVER_NAME) as session:
-                result = await session.list_tools()
+            result = await session.list_tools()
         except httpx.HTTPStatusError as exc:
             raise _map_httpx_status_error(exc) from exc
         except httpx.HTTPError as exc:
@@ -268,10 +360,9 @@ class MCPGatewayClient:
         ]
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        session = self._require_session()
         try:
-            client = self._client()
-            async with client.session(_GITHUB_MCP_SERVER_NAME) as session:
-                result = await session.call_tool(name, arguments)
+            result = await session.call_tool(name, arguments)
         except httpx.HTTPStatusError as exc:
             raise _map_httpx_status_error(exc) from exc
         except httpx.HTTPError as exc:
@@ -294,6 +385,13 @@ class MCPGatewayClient:
 
 def extract_mcp_payload(result: Any) -> Any:
     """Convert an MCP CallToolResult into JSON-like Python data."""
+    if getattr(result, "isError", False):
+        raise MCPGatewayError(
+            "mcp_error",
+            "GitHub MCP tool execution failed.",
+            retryable=False,
+        )
+
     structured = getattr(result, "structuredContent", None)
     if structured is not None:
         return structured
@@ -377,6 +475,19 @@ def _exception_text(exc: BaseException, seen: set[int] | None = None) -> str:
     if exc.__context__ is not None:
         parts.append(_exception_text(exc.__context__, seen))
     return "\n".join(part for part in parts if part)
+
+
+def _exception_only_wraps(
+    candidate: BaseException,
+    original: BaseException,
+) -> bool:
+    if candidate is original:
+        return True
+    if not isinstance(candidate, BaseExceptionGroup):
+        return False
+    return bool(candidate.exceptions) and all(
+        _exception_only_wraps(nested, original) for nested in candidate.exceptions
+    )
 
 
 def _map_generic_mcp_error(exc: Exception) -> MCPGatewayError:

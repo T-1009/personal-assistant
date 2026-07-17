@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import json
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import Any, Literal
@@ -83,6 +86,11 @@ _SENSITIVE_WORDS = frozenset(
     }
 )
 
+_ACTIVITY_CURSOR_VERSION = 1
+_MAX_PAGE_CALLS_PER_SEARCH = 100
+
+_PaginationKind = Literal["initial", "page", "cursor", "none"]
+
 
 @dataclass(slots=True)
 class GitHubActivityEvent:
@@ -114,6 +122,56 @@ class GitHubMCPWarning:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(slots=True)
+class GitHubActivityResult:
+    events: list[GitHubActivityEvent] = field(default_factory=list)
+    warnings: list[GitHubMCPWarning] = field(default_factory=list)
+    next_cursor: str | None = None
+    identity_scope: Literal["platform"] = "platform"
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class _RemotePagination:
+    kind: _PaginationKind = "initial"
+    value: int | str | None = None
+
+
+@dataclass(slots=True)
+class _CollectedPage:
+    events: list[GitHubActivityEvent]
+    current: _RemotePagination
+    next: _RemotePagination | None = None
+    warning: GitHubMCPWarning | None = None
+
+
+@dataclass(slots=True)
+class _ActivityPageTask:
+    repository: str
+    event_type: GitHubActivityType
+    page_size: int
+    pagination: _RemotePagination = field(default_factory=_RemotePagination)
+    offset: int = 0
+    parent_external_id: str | None = None
+    discover_parents: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "repository": self.repository,
+            "event_type": self.event_type,
+            "page_size": self.page_size,
+            "pagination": {
+                "kind": self.pagination.kind,
+                "value": self.pagination.value,
+            },
+            "offset": self.offset,
+            "parent_external_id": self.parent_external_id,
+            "discover_parents": self.discover_parents,
+        }
 
 
 def _warning(
@@ -234,6 +292,135 @@ def _set_arg(
     args[name] = value
 
 
+def _declared_argument_name(
+    tool: MCPToolInfo,
+    *candidates: str,
+) -> str | None:
+    properties = _schema_properties(tool)
+    for candidate in candidates:
+        for expanded in _candidate_names(candidate):
+            if expanded in properties:
+                return expanded
+    return None
+
+
+def _prepare_remote_pagination(
+    args: dict[str, Any],
+    tool: MCPToolInfo,
+    *,
+    page_size: int,
+    pagination: _RemotePagination,
+) -> _RemotePagination:
+    _set_arg(args, tool, page_size, "per_page", "perPage", "limit")
+    cursor_arg = _declared_argument_name(tool, "after", "cursor")
+    page_arg = _declared_argument_name(tool, "page", "page_number", "pageNumber")
+
+    if pagination.kind == "initial":
+        if cursor_arg is not None:
+            return _RemotePagination("cursor", None)
+        if page_arg is not None:
+            args[page_arg] = 1
+            return _RemotePagination("page", 1)
+        return _RemotePagination("none", None)
+
+    if pagination.kind == "cursor":
+        if cursor_arg is None:
+            raise MCPGatewayError(
+                "pagination_incompatible",
+                f"GitHub MCP tool {tool.name} no longer accepts a cursor.",
+                retryable=False,
+            )
+        if pagination.value is not None:
+            args[cursor_arg] = pagination.value
+        return _RemotePagination("cursor", pagination.value)
+
+    if pagination.kind == "page":
+        if page_arg is None or not isinstance(pagination.value, int):
+            raise MCPGatewayError(
+                "pagination_incompatible",
+                f"GitHub MCP tool {tool.name} no longer accepts a page number.",
+                retryable=False,
+            )
+        args[page_arg] = pagination.value
+        return _RemotePagination("page", pagination.value)
+
+    return _RemotePagination("none", None)
+
+
+def _pagination_metadata(payload: Any) -> tuple[bool | None, str | None]:
+    if not isinstance(payload, dict):
+        return None, None
+
+    containers = [payload]
+    for key in ("pageInfo", "page_info", "pagination"):
+        value = payload.get(key)
+        if isinstance(value, dict):
+            containers.insert(0, value)
+
+    has_more: bool | None = None
+    next_cursor: str | None = None
+    for container in containers:
+        for key in ("hasNextPage", "has_next_page", "hasMore", "has_more"):
+            value = container.get(key)
+            if isinstance(value, bool):
+                has_more = value
+                break
+        for key in ("endCursor", "end_cursor", "nextCursor", "next_cursor"):
+            value = container.get(key)
+            if isinstance(value, str) and value:
+                next_cursor = value
+                break
+        if has_more is not None or next_cursor is not None:
+            break
+    return has_more, next_cursor
+
+
+def _next_remote_pagination(
+    tool: MCPToolInfo,
+    payload: Any,
+    *,
+    raw_count: int,
+    page_size: int,
+    current: _RemotePagination,
+) -> tuple[_RemotePagination | None, GitHubMCPWarning | None]:
+    has_more, next_cursor = _pagination_metadata(payload)
+    page_size_supported = (
+        _declared_argument_name(tool, "per_page", "perPage", "limit") is not None
+    )
+
+    if current.kind == "cursor":
+        if has_more is False:
+            return None, None
+        if next_cursor is not None:
+            return _RemotePagination("cursor", next_cursor), None
+        if has_more is True or raw_count > 0:
+            return None, _warning(
+                "pagination_unsupported",
+                f"GitHub MCP tool {tool.name} did not return a continuation cursor.",
+            )
+        return None, None
+
+    if current.kind == "page":
+        if has_more is False:
+            return None, None
+        if (
+            has_more is True
+            or next_cursor is not None
+            or (page_size_supported and raw_count >= page_size)
+            or (not page_size_supported and raw_count > 0)
+        ):
+            page = current.value if isinstance(current.value, int) else 1
+            return _RemotePagination("page", page + 1), None
+        return None, None
+
+    if has_more is True or next_cursor is not None or raw_count > 0:
+        return None, _warning(
+            "pagination_unsupported",
+            f"GitHub MCP tool {tool.name} does not expose a pagination input.",
+        )
+    return None, None
+
+
 def _repo_parts(repository: str) -> tuple[str, str]:
     owner, separator, repo = repository.strip().partition("/")
     if not owner or not separator or not repo:
@@ -293,6 +480,150 @@ def _parse_datetime(value: str | datetime | None, timezone: str) -> datetime | N
 
 def _iso_utc(value: datetime) -> str:
     return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+
+
+def _activity_query_key(
+    *,
+    start_at: datetime,
+    end_at: datetime,
+    timezone: str,
+    repositories: list[str] | None,
+    actor: str | None,
+    event_types: tuple[GitHubActivityType, ...],
+) -> str:
+    query = {
+        "start_at": _iso_utc(start_at),
+        "end_at": _iso_utc(end_at),
+        "timezone": timezone,
+        "repositories": sorted(set(repositories or [])),
+        "actor": actor,
+        "event_types": sorted(set(event_types)),
+    }
+    encoded = json.dumps(query, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _encode_activity_cursor(
+    query_key: str,
+    tasks: list[_ActivityPageTask],
+) -> str:
+    payload = {
+        "version": _ACTIVITY_CURSOR_VERSION,
+        "query": query_key,
+        "tasks": [task.to_dict() for task in tasks],
+    }
+    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return base64.urlsafe_b64encode(raw).decode().rstrip("=")
+
+
+def _activity_task_from_dict(value: Any) -> _ActivityPageTask:
+    if not isinstance(value, dict):
+        raise ValueError("cursor task must be an object")
+
+    repository = value.get("repository")
+    event_type = value.get("event_type")
+    page_size = value.get("page_size")
+    offset = value.get("offset", 0)
+    pagination_value = value.get("pagination")
+    parent_external_id = value.get("parent_external_id")
+    discover_parents = value.get("discover_parents", False)
+
+    if not isinstance(repository, str) or not repository:
+        raise ValueError("cursor task repository is invalid")
+    if event_type not in _DEFAULT_EVENT_TYPES:
+        raise ValueError("cursor task event type is invalid")
+    if not isinstance(page_size, int) or not 1 <= page_size <= 100:
+        raise ValueError("cursor task page size is invalid")
+    if not isinstance(offset, int) or not 0 <= offset <= 100:
+        raise ValueError("cursor task offset is invalid")
+    if not isinstance(pagination_value, dict):
+        raise ValueError("cursor task pagination is invalid")
+
+    pagination_kind = pagination_value.get("kind")
+    remote_value = pagination_value.get("value")
+    if pagination_kind not in {"initial", "page", "cursor", "none"}:
+        raise ValueError("cursor task pagination kind is invalid")
+    if pagination_kind == "page" and (
+        not isinstance(remote_value, int) or remote_value < 1
+    ):
+        raise ValueError("cursor task page number is invalid")
+    if (
+        pagination_kind == "cursor"
+        and remote_value is not None
+        and not isinstance(remote_value, str)
+    ):
+        raise ValueError("cursor task remote cursor is invalid")
+    if pagination_kind in {"initial", "none"} and remote_value is not None:
+        raise ValueError("cursor task pagination value is invalid")
+    if pagination_kind == "initial" and offset:
+        raise ValueError("cursor task initial offset is invalid")
+    if parent_external_id is not None and not isinstance(parent_external_id, str):
+        raise ValueError("cursor task parent id is invalid")
+    if not isinstance(discover_parents, bool):
+        raise ValueError("cursor task discovery flag is invalid")
+    if discover_parents and event_type not in {"comment", "review"}:
+        raise ValueError("cursor task discovery type is invalid")
+    if (
+        not discover_parents
+        and event_type in {"comment", "review"}
+        and not parent_external_id
+    ):
+        raise ValueError("cursor child task parent id is missing")
+
+    return _ActivityPageTask(
+        repository=repository,
+        event_type=event_type,
+        page_size=page_size,
+        pagination=_RemotePagination(pagination_kind, remote_value),
+        offset=offset,
+        parent_external_id=parent_external_id,
+        discover_parents=discover_parents,
+    )
+
+
+def _decode_activity_cursor(
+    cursor: str,
+    *,
+    query_key: str,
+    selected_types: tuple[GitHubActivityType, ...],
+    repositories: list[str] | None,
+) -> list[_ActivityPageTask]:
+    if not cursor or len(cursor) > 262_144:
+        raise ValueError("activity cursor is invalid")
+    padded = cursor + "=" * (-len(cursor) % 4)
+    raw = base64.b64decode(padded, altchars=b"-_", validate=True)
+    payload = json.loads(raw.decode("utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("activity cursor payload is invalid")
+    if payload.get("version") != _ACTIVITY_CURSOR_VERSION:
+        raise ValueError("activity cursor version is invalid")
+    if payload.get("query") != query_key:
+        raise ValueError("activity cursor does not match the query")
+
+    raw_tasks = payload.get("tasks")
+    if not isinstance(raw_tasks, list) or not raw_tasks or len(raw_tasks) > 10_000:
+        raise ValueError("activity cursor tasks are invalid")
+    tasks = [_activity_task_from_dict(item) for item in raw_tasks]
+    task_keys = [
+        (
+            task.repository,
+            task.event_type,
+            task.discover_parents,
+            task.parent_external_id,
+        )
+        for task in tasks
+    ]
+    if len(task_keys) != len(set(task_keys)):
+        raise ValueError("activity cursor contains duplicate tasks")
+    selected = set(selected_types)
+    allowed_repositories = set(repositories) if repositories else None
+    if any(task.event_type not in selected for task in tasks):
+        raise ValueError("activity cursor event type does not match the query")
+    if allowed_repositories is not None and any(
+        task.repository not in allowed_repositories for task in tasks
+    ):
+        raise ValueError("activity cursor repository does not match the query")
+    return tasks
 
 
 def _timestamp_in_window(
@@ -556,6 +887,104 @@ async def github_mcp_list_repositories(
         return _warning_from_error(exc)
 
 
+async def _discover_activity_repositories(
+    client: MCPGatewayClient,
+    tools: dict[str, MCPToolInfo],
+    *,
+    platform_login: str | None,
+) -> tuple[list[str], list[GitHubMCPWarning]]:
+    tool = _find_optional_tool(tools, ("search_repositories",))
+    if tool is None:
+        return [], [
+            _warning(
+                "capability_missing",
+                "GitHub MCP Gateway cannot discover repositories because the "
+                "required read-only tool is unavailable.",
+            )
+        ]
+
+    if platform_login is None:
+        identity = await _resolve_identity_with_tools(client, tools)
+        platform_login = _login_from_payload(identity)
+    search_query = f"user:{platform_login}" if platform_login else "sort:updated-desc"
+    page_size = 100
+    args: dict[str, Any] = {}
+    _set_arg(args, tool, search_query, "query", "q", required=True)
+    current = _prepare_remote_pagination(
+        args,
+        tool,
+        page_size=page_size,
+        pagination=_RemotePagination(),
+    )
+    payload = await client.call_tool(tool.name, args)
+    items = _coerce_items(payload, "repositories", "items")
+    next_page, pagination_warning = _next_remote_pagination(
+        tool,
+        payload,
+        raw_count=len(items),
+        page_size=page_size,
+        current=current,
+    )
+
+    repositories = list(
+        dict.fromkeys(
+            str(item.get("full_name") or item.get("name"))
+            for item in items
+            if not item.get("archived") and (item.get("full_name") or item.get("name"))
+        )
+    )
+    warnings = [pagination_warning] if pagination_warning is not None else []
+    if next_page is not None or pagination_warning is not None:
+        warnings.append(
+            _warning(
+                "repository_discovery_truncated",
+                "GitHub MCP repository discovery has additional or unverifiable "
+                "results; specify repositories explicitly to guarantee completeness.",
+            )
+        )
+    return repositories, warnings
+
+
+def _collected_page(
+    events: list[GitHubActivityEvent],
+    *,
+    tool: MCPToolInfo,
+    payload: Any,
+    raw_count: int,
+    page_size: int,
+    current: _RemotePagination,
+) -> _CollectedPage:
+    next_page, warning = _next_remote_pagination(
+        tool,
+        payload,
+        raw_count=raw_count,
+        page_size=page_size,
+        current=current,
+    )
+    return _CollectedPage(
+        events=events,
+        current=current,
+        next=next_page,
+        warning=warning,
+    )
+
+
+def _missing_activity_page(
+    *,
+    repository: str,
+    event_type: GitHubActivityType,
+) -> _CollectedPage:
+    return _CollectedPage(
+        events=[],
+        current=_RemotePagination("none", None),
+        warning=_warning(
+            "capability_missing",
+            f"GitHub MCP Gateway cannot collect {event_type} activity for "
+            f"{repository} because the required read-only tool is unavailable.",
+        ),
+    )
+
+
 async def _collect_commits(
     client: MCPGatewayClient,
     tools: dict[str, MCPToolInfo],
@@ -566,21 +995,28 @@ async def _collect_commits(
     timezone: str,
     actor: str | None,
     limit: int,
-) -> list[GitHubActivityEvent]:
+    pagination: _RemotePagination,
+) -> _CollectedPage:
     owner, repo = _repo_parts(repository)
     tool = _find_optional_tool(tools, ("list_commits",))
     if tool is None:
-        return []
+        return _missing_activity_page(repository=repository, event_type="commit")
 
     args: dict[str, Any] = {}
     _set_arg(args, tool, owner, "owner", required=True)
     _set_arg(args, tool, repo, "repo", "repository", required=True)
     _set_arg(args, tool, _iso_utc(start_at), "since")
     _set_arg(args, tool, _iso_utc(end_at), "until")
-    _set_arg(args, tool, limit, "per_page", "perPage", "limit")
+    current = _prepare_remote_pagination(
+        args,
+        tool,
+        page_size=limit,
+        pagination=pagination,
+    )
     payload = await client.call_tool(tool.name, args)
-    events = [_commit_to_event(item, repository) for item in _coerce_items(payload)]
-    return [
+    items = _coerce_items(payload)
+    events = [_commit_to_event(item, repository) for item in items]
+    filtered = [
         event
         for event in events
         if _event_matches(
@@ -591,6 +1027,14 @@ async def _collect_commits(
             actor=actor,
         )
     ]
+    return _collected_page(
+        filtered,
+        tool=tool,
+        payload=payload,
+        raw_count=len(items),
+        page_size=limit,
+        current=current,
+    )
 
 
 async def _collect_pull_requests(
@@ -603,11 +1047,15 @@ async def _collect_pull_requests(
     timezone: str,
     actor: str | None,
     limit: int,
-) -> list[GitHubActivityEvent]:
+    pagination: _RemotePagination,
+) -> _CollectedPage:
     owner, repo = _repo_parts(repository)
     tool = _find_optional_tool(tools, ("list_pull_requests",))
     if tool is None:
-        return []
+        return _missing_activity_page(
+            repository=repository,
+            event_type="pull_request",
+        )
 
     args: dict[str, Any] = {}
     _set_arg(args, tool, owner, "owner", required=True)
@@ -615,12 +1063,16 @@ async def _collect_pull_requests(
     _set_arg(args, tool, "all", "state")
     _set_arg(args, tool, "updated", "sort")
     _set_arg(args, tool, "desc", "direction")
-    _set_arg(args, tool, limit, "per_page", "perPage", "limit")
+    current = _prepare_remote_pagination(
+        args,
+        tool,
+        page_size=limit,
+        pagination=pagination,
+    )
     payload = await client.call_tool(tool.name, args)
-    events = [
-        _pull_request_to_event(item, repository) for item in _coerce_items(payload)
-    ]
-    return [
+    items = _coerce_items(payload)
+    events = [_pull_request_to_event(item, repository) for item in items]
+    filtered = [
         event
         for event in events
         if _event_matches(
@@ -631,6 +1083,14 @@ async def _collect_pull_requests(
             actor=actor,
         )
     ]
+    return _collected_page(
+        filtered,
+        tool=tool,
+        payload=payload,
+        raw_count=len(items),
+        page_size=limit,
+        current=current,
+    )
 
 
 async def _collect_issues(
@@ -643,25 +1103,32 @@ async def _collect_issues(
     timezone: str,
     actor: str | None,
     limit: int,
-) -> list[GitHubActivityEvent]:
+    pagination: _RemotePagination,
+) -> _CollectedPage:
     owner, repo = _repo_parts(repository)
     tool = _find_optional_tool(tools, ("list_issues",))
     if tool is None:
-        return []
+        return _missing_activity_page(repository=repository, event_type="issue")
 
     args: dict[str, Any] = {}
     _set_arg(args, tool, owner, "owner", required=True)
     _set_arg(args, tool, repo, "repo", "repository", required=True)
     _set_arg(args, tool, "all", "state")
     _set_arg(args, tool, _iso_utc(start_at), "since")
-    _set_arg(args, tool, limit, "per_page", "perPage", "limit")
+    current = _prepare_remote_pagination(
+        args,
+        tool,
+        page_size=limit,
+        pagination=pagination,
+    )
     payload = await client.call_tool(tool.name, args)
+    items = _coerce_items(payload)
     events = [
         _issue_to_event(item, repository)
-        for item in _coerce_items(payload)
+        for item in items
         if not item.get("pull_request")
     ]
-    return [
+    filtered = [
         event
         for event in events
         if _event_matches(
@@ -672,6 +1139,14 @@ async def _collect_issues(
             actor=actor,
         )
     ]
+    return _collected_page(
+        filtered,
+        tool=tool,
+        payload=payload,
+        raw_count=len(items),
+        page_size=limit,
+        current=current,
+    )
 
 
 async def _collect_issue_comments(
@@ -684,11 +1159,13 @@ async def _collect_issue_comments(
     end_at: datetime,
     timezone: str,
     actor: str | None,
-) -> list[GitHubActivityEvent]:
+    limit: int,
+    pagination: _RemotePagination,
+) -> _CollectedPage:
     owner, repo = _repo_parts(repository)
     tool = _find_optional_tool(tools, ("get_issue_comments",))
     if tool is None:
-        return []
+        return _missing_activity_page(repository=repository, event_type="comment")
 
     args: dict[str, Any] = {}
     _set_arg(args, tool, owner, "owner", required=True)
@@ -701,7 +1178,14 @@ async def _collect_issue_comments(
         "issueNumber",
         required=True,
     )
+    current = _prepare_remote_pagination(
+        args,
+        tool,
+        page_size=limit,
+        pagination=pagination,
+    )
     payload = await client.call_tool(tool.name, args)
+    items = _coerce_items(payload, "comments")
     events = [
         _comment_to_event(
             item,
@@ -709,9 +1193,9 @@ async def _collect_issue_comments(
             parent_external_id=issue_number,
             title_prefix=f"Issue #{issue_number} comment",
         )
-        for item in _coerce_items(payload, "comments")
+        for item in items
     ]
-    return [
+    filtered = [
         event
         for event in events
         if _event_matches(
@@ -722,6 +1206,14 @@ async def _collect_issue_comments(
             actor=actor,
         )
     ]
+    return _collected_page(
+        filtered,
+        tool=tool,
+        payload=payload,
+        raw_count=len(items),
+        page_size=limit,
+        current=current,
+    )
 
 
 async def _collect_pull_request_reviews(
@@ -734,11 +1226,13 @@ async def _collect_pull_request_reviews(
     end_at: datetime,
     timezone: str,
     actor: str | None,
-) -> list[GitHubActivityEvent]:
+    limit: int,
+    pagination: _RemotePagination,
+) -> _CollectedPage:
     owner, repo = _repo_parts(repository)
     tool = _find_optional_tool(tools, ("get_pull_request_reviews",))
     if tool is None:
-        return []
+        return _missing_activity_page(repository=repository, event_type="review")
 
     args: dict[str, Any] = {}
     _set_arg(args, tool, owner, "owner", required=True)
@@ -751,16 +1245,23 @@ async def _collect_pull_request_reviews(
         "pullNumber",
         required=True,
     )
+    current = _prepare_remote_pagination(
+        args,
+        tool,
+        page_size=limit,
+        pagination=pagination,
+    )
     payload = await client.call_tool(tool.name, args)
+    items = _coerce_items(payload)
     events = [
         _review_to_event(
             item,
             repository,
             parent_external_id=pull_number,
         )
-        for item in _coerce_items(payload)
+        for item in items
     ]
-    return [
+    filtered = [
         event
         for event in events
         if _event_matches(
@@ -770,6 +1271,104 @@ async def _collect_pull_request_reviews(
             timezone=timezone,
             actor=actor,
         )
+    ]
+    return _collected_page(
+        filtered,
+        tool=tool,
+        payload=payload,
+        raw_count=len(items),
+        page_size=limit,
+        current=current,
+    )
+
+
+def _initial_activity_tasks(
+    repositories: list[str],
+    event_types: tuple[GitHubActivityType, ...],
+    *,
+    page_size: int,
+) -> list[_ActivityPageTask]:
+    return [
+        _ActivityPageTask(
+            repository=repository,
+            event_type=event_type,
+            page_size=page_size,
+            discover_parents=event_type in {"comment", "review"},
+        )
+        for repository in dict.fromkeys(repositories)
+        for event_type in event_types
+    ]
+
+
+async def _collect_activity_task(
+    client: MCPGatewayClient,
+    tools: dict[str, MCPToolInfo],
+    task: _ActivityPageTask,
+    *,
+    start_at: datetime,
+    end_at: datetime,
+    timezone: str,
+    actor: str | None,
+) -> _CollectedPage:
+    common = {
+        "repository": task.repository,
+        "start_at": start_at,
+        "end_at": end_at,
+        "timezone": timezone,
+        "actor": actor,
+        "limit": task.page_size,
+        "pagination": task.pagination,
+    }
+    if task.discover_parents:
+        common["actor"] = None
+        if task.event_type == "comment":
+            return await _collect_issues(client, tools, **common)
+        return await _collect_pull_requests(client, tools, **common)
+    if task.event_type == "commit":
+        return await _collect_commits(client, tools, **common)
+    if task.event_type == "pull_request":
+        return await _collect_pull_requests(client, tools, **common)
+    if task.event_type == "issue":
+        return await _collect_issues(client, tools, **common)
+    if task.event_type == "comment" and task.parent_external_id is not None:
+        return await _collect_issue_comments(
+            client,
+            tools,
+            issue_number=task.parent_external_id,
+            **common,
+        )
+    if task.event_type == "review" and task.parent_external_id is not None:
+        return await _collect_pull_request_reviews(
+            client,
+            tools,
+            pull_number=task.parent_external_id,
+            **common,
+        )
+    raise MCPGatewayError(
+        "configuration_error",
+        "GitHub MCP activity pagination task is invalid.",
+        retryable=False,
+    )
+
+
+def _child_tasks_from_parent_page(
+    task: _ActivityPageTask,
+    page: _CollectedPage,
+) -> list[_ActivityPageTask]:
+    parent_ids: list[str] = []
+    seen: set[str] = set()
+    for event in page.events:
+        if event.external_id and event.external_id not in seen:
+            seen.add(event.external_id)
+            parent_ids.append(event.external_id)
+    return [
+        _ActivityPageTask(
+            repository=task.repository,
+            event_type=task.event_type,
+            page_size=task.page_size,
+            parent_external_id=parent_id,
+        )
+        for parent_id in parent_ids
     ]
 
 
@@ -784,128 +1383,153 @@ async def github_mcp_search_activity(
     event_types: list[GitHubActivityType] | None = None,
     limit: int = 100,
     cursor: str | None = None,
-) -> list[GitHubActivityEvent] | GitHubMCPWarning:
+) -> GitHubActivityResult:
     """Search GitHub engineering activity through the MCP data source."""
-    del cursor
-
     if provider != "github":
-        return _warning("configuration_error", "Only provider='github' is supported.")
+        return GitHubActivityResult(
+            warnings=[
+                _warning("configuration_error", "Only provider='github' is supported.")
+            ]
+        )
     start = _parse_datetime(start_at, timezone)
     end = _parse_datetime(end_at, timezone)
     if start is None or end is None or start > end:
-        return _warning("configuration_error", "Invalid activity time window.")
+        return GitHubActivityResult(
+            warnings=[_warning("configuration_error", "Invalid activity time window.")]
+        )
 
-    selected_types = tuple(event_types or _DEFAULT_EVENT_TYPES)
+    selected_types = tuple(dict.fromkeys(event_types or _DEFAULT_EVENT_TYPES))
+    if any(event_type not in _DEFAULT_EVENT_TYPES for event_type in selected_types):
+        return GitHubActivityResult(
+            warnings=[
+                _warning("configuration_error", "Unsupported GitHub activity type.")
+            ]
+        )
     capped_limit = min(max(limit, 1), 100)
+    query_key = _activity_query_key(
+        start_at=start,
+        end_at=end,
+        timezone=timezone,
+        repositories=repositories,
+        actor=actor,
+        event_types=selected_types,
+    )
+    cursor_tasks: list[_ActivityPageTask] | None = None
+    if cursor is not None:
+        try:
+            cursor_tasks = _decode_activity_cursor(
+                cursor,
+                query_key=query_key,
+                selected_types=selected_types,
+                repositories=repositories,
+            )
+        except Exception:
+            return GitHubActivityResult(
+                warnings=[
+                    _warning(
+                        "configuration_error",
+                        "Invalid or incompatible GitHub activity cursor.",
+                    )
+                ]
+            )
 
-    async def _operation(client: MCPGatewayClient) -> list[GitHubActivityEvent]:
+    async def _operation(client: MCPGatewayClient) -> GitHubActivityResult:
         tools = await _tool_index(client)
+        warnings: list[GitHubMCPWarning] = []
         platform_login: str | None = None
         if actor == "platform":
             identity = await _resolve_identity_with_tools(client, tools)
             platform_login = _login_from_payload(identity)
 
-        repo_names = repositories
-        if not repo_names:
-            repo_items = await _list_repositories_with_tools(
+        tasks = list(cursor_tasks) if cursor_tasks is not None else None
+        repo_names = repositories if tasks is None else None
+        if tasks is None and not repo_names:
+            repo_names, discovery_warnings = await _discover_activity_repositories(
                 client,
                 tools,
-                query=None,
-                limit=min(capped_limit, 30),
-                include_archived=False,
+                platform_login=platform_login,
             )
-            repo_names = [
-                str(item.get("full_name") or item.get("name"))
-                for item in repo_items
-                if item.get("full_name") or item.get("name")
-            ]
+            warnings.extend(discovery_warnings)
+        if tasks is None:
+            tasks = _initial_activity_tasks(
+                repo_names or [],
+                selected_types,
+                page_size=capped_limit,
+            )
 
         events: list[GitHubActivityEvent] = []
-        for repository in repo_names or []:
-            remaining = capped_limit - len(events)
-            if remaining <= 0:
-                break
-            if "commit" in selected_types:
-                events.extend(
-                    await _collect_commits(
-                        client,
-                        tools,
-                        repository=repository,
-                        start_at=start,
-                        end_at=end,
-                        timezone=timezone,
-                        actor=platform_login,
-                        limit=remaining,
-                    )
+        page_calls = 0
+        while (
+            tasks
+            and len(events) < capped_limit
+            and page_calls < _MAX_PAGE_CALLS_PER_SEARCH
+        ):
+            task = tasks.pop(0)
+            page_calls += 1
+            try:
+                page = await _collect_activity_task(
+                    client,
+                    tools,
+                    task,
+                    start_at=start,
+                    end_at=end,
+                    timezone=timezone,
+                    actor=platform_login,
                 )
-            if "pull_request" in selected_types:
-                events.extend(
-                    await _collect_pull_requests(
-                        client,
-                        tools,
-                        repository=repository,
-                        start_at=start,
-                        end_at=end,
-                        timezone=timezone,
-                        actor=platform_login,
-                        limit=remaining,
-                    )
-                )
-            if "issue" in selected_types:
-                events.extend(
-                    await _collect_issues(
-                        client,
-                        tools,
-                        repository=repository,
-                        start_at=start,
-                        end_at=end,
-                        timezone=timezone,
-                        actor=platform_login,
-                        limit=remaining,
-                    )
-                )
-            if {"comment", "review"} & set(selected_types):
-                seeds = [
-                    event
-                    for event in events
-                    if event.repository == repository
-                    and event.event_type in {"issue", "pull_request"}
-                ]
-                for seed in seeds[:remaining]:
-                    if "comment" in selected_types and seed.event_type == "issue":
-                        events.extend(
-                            await _collect_issue_comments(
-                                client,
-                                tools,
-                                repository=repository,
-                                issue_number=seed.external_id,
-                                start_at=start,
-                                end_at=end,
-                                timezone=timezone,
-                                actor=platform_login,
-                            )
-                        )
-                    if "review" in selected_types and seed.event_type == "pull_request":
-                        events.extend(
-                            await _collect_pull_request_reviews(
-                                client,
-                                tools,
-                                repository=repository,
-                                pull_number=seed.external_id,
-                                start_at=start,
-                                end_at=end,
-                                timezone=timezone,
-                                actor=platform_login,
-                            )
-                        )
+            except Exception as exc:
+                warnings.append(_warning_from_error(exc))
+                if isinstance(exc, MCPGatewayError) and exc.retryable:
+                    tasks.insert(0, task)
+                    break
+                continue
+            if page.warning is not None:
+                warnings.append(page.warning)
 
+            if task.discover_parents:
+                child_tasks = _child_tasks_from_parent_page(task, page)
+                continuation: list[_ActivityPageTask] = []
+                if page.next is not None:
+                    task.pagination = page.next
+                    task.offset = 0
+                    continuation.append(task)
+                tasks[0:0] = child_tasks + continuation
+                continue
+
+            remaining = capped_limit - len(events)
+            page_events = page.events[task.offset :]
+            emitted = page_events[:remaining]
+            events.extend(emitted)
+            consumed = task.offset + len(emitted)
+            if consumed < len(page.events):
+                task.pagination = page.current
+                task.offset = consumed
+                tasks.insert(0, task)
+            elif page.next is not None:
+                task.pagination = page.next
+                task.offset = 0
+                tasks.insert(0, task)
+
+        if tasks and page_calls >= _MAX_PAGE_CALLS_PER_SEARCH:
+            warnings.append(
+                _warning(
+                    "pagination_budget_exhausted",
+                    "GitHub MCP activity search reached its per-request page budget; "
+                    "continue with next_cursor.",
+                    retryable=True,
+                )
+            )
         events.sort(key=lambda item: item.updated_at or item.created_at or "")
-        return events[:capped_limit]
+        next_cursor = _encode_activity_cursor(query_key, tasks) if tasks else None
+        return GitHubActivityResult(
+            events=events,
+            warnings=warnings,
+            next_cursor=next_cursor,
+        )
 
     try:
         return await run_with_github_mcp_sts(_operation)
     except Exception as exc:
-        return _warning_from_error(exc)
+        return GitHubActivityResult(warnings=[_warning_from_error(exc)])
 
 
 def _supported_issue_read_methods(tool: MCPToolInfo) -> tuple[str, ...]:
@@ -1157,7 +1781,7 @@ def github_mcp_public_schema_is_secret_free() -> bool:
 
 
 def _serialize_activity_value(value: Any) -> Any:
-    if isinstance(value, GitHubActivityEvent | GitHubMCPWarning):
+    if isinstance(value, GitHubActivityEvent | GitHubActivityResult | GitHubMCPWarning):
         return value.to_dict()
     if isinstance(value, list):
         return [_serialize_activity_value(item) for item in value]
@@ -1208,6 +1832,7 @@ async def chat_github_mcp_search_activity(
     event_types: list[GitHubActivityType] | None = None,
     limit: int = 30,
     timezone: str = "Asia/Shanghai",
+    cursor: str | None = None,
 ) -> dict[str, Any]:
     """Search read-only GitHub engineering activity through MCP Gateway."""
     result = await github_mcp_search_activity(
@@ -1217,14 +1842,17 @@ async def chat_github_mcp_search_activity(
         repositories=repositories,
         event_types=event_types,
         limit=limit,
+        cursor=cursor,
     )
-    if isinstance(result, GitHubMCPWarning):
-        return _chat_warning_result(result)
-    events = _serialize_activity_value(result)
+    serialized = _serialize_activity_value(result)
+    events = serialized["events"]
     return {
-        "ok": True,
+        "ok": bool(result.events) or not result.warnings,
         "events": events,
-        "count": len(events) if isinstance(events, list) else 0,
+        "count": len(events),
+        "warnings": serialized["warnings"],
+        "next_cursor": result.next_cursor,
+        "identity_scope": result.identity_scope,
         "start_at": start_at,
         "end_at": end_at,
         "timezone": timezone,

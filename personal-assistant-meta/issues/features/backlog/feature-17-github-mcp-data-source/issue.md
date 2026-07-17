@@ -87,8 +87,7 @@ flowchart TB
   - `GITHUB_MCP_GATEWAY_URL`；
   - `GITHUB_MCP_AUTH_MODE=iam`；
   - `GITHUB_MCP_STS_PROVIDER_NAME`；
-  - `GITHUB_MCP_TIMEOUT_SECONDS`；
-  - `GITHUB_MCP_TOOL_PREFIX`。
+  - `GITHUB_MCP_TIMEOUT_SECONDS`。
 - 单元测试、集成测试和 staging smoke test 覆盖 Gateway / Target / credential boundary。
 
 ### 不包含

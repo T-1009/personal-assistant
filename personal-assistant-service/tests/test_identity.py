@@ -45,7 +45,6 @@ def test_get_github_mcp_config_defaults():
             "sts_provider_name": "github-mcp-gateway",
             "sts_agency_session_name": "personal-assistant-github-mcp",
             "timeout_seconds": 30.0,
-            "tool_prefix": "target-github-mcp",
         }
 
 

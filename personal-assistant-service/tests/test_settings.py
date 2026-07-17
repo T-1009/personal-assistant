@@ -19,7 +19,6 @@ def clear_settings_cache(monkeypatch):
     monkeypatch.delenv("GITHUB_MCP_STS_PROVIDER_NAME", raising=False)
     monkeypatch.delenv("GITHUB_MCP_STS_AGENCY_SESSION_NAME", raising=False)
     monkeypatch.delenv("GITHUB_MCP_TIMEOUT_SECONDS", raising=False)
-    monkeypatch.delenv("GITHUB_MCP_TOOL_PREFIX", raising=False)
     monkeypatch.delenv("GITHUB_MCP_CHAT_TOOL_ENABLED", raising=False)
     get_settings.cache_clear()
     yield
@@ -55,7 +54,6 @@ def test_defaults(monkeypatch):
         settings.github_mcp_sts_agency_session_name == "personal-assistant-github-mcp"
     )
     assert settings.github_mcp_timeout_seconds == 30.0
-    assert settings.github_mcp_tool_prefix == "target-github-mcp"
     assert settings.github_mcp_chat_tool_enabled is True
 
 
@@ -134,7 +132,6 @@ def test_github_mcp_settings_can_be_overridden(monkeypatch):
         "github-mcp-session",
     )
     monkeypatch.setenv("GITHUB_MCP_TIMEOUT_SECONDS", "12")
-    monkeypatch.setenv("GITHUB_MCP_TOOL_PREFIX", "custom-target")
     monkeypatch.setenv("GITHUB_MCP_CHAT_TOOL_ENABLED", "true")
 
     settings = Settings(_env_file=None)
@@ -144,7 +141,6 @@ def test_github_mcp_settings_can_be_overridden(monkeypatch):
     assert settings.github_mcp_sts_provider_name == "github-mcp-provider"
     assert settings.github_mcp_sts_agency_session_name == "github-mcp-session"
     assert settings.github_mcp_timeout_seconds == 12.0
-    assert settings.github_mcp_tool_prefix == "custom-target"
     assert settings.github_mcp_chat_tool_enabled is True
 
 
