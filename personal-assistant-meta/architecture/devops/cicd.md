@@ -232,8 +232,8 @@ flowchart LR
 
 `.github/workflows/deploy-infra.yml` 不在 `main` push 后自动 apply。Apply 必须
 由操作者手动 dispatch，并以已 review 的 plan 为依据。`pa-terraform-state`
-继续保留，为未来 RDS、IAM、VPC、EIP 等 HuaweiCloud resources 提供共享
-state。
+保存 PostgreSQL RDS、VPC/Subnet 引用、Security Group、EIP 和 Agent Identity
+OAuth helper 等 HuaweiCloud resources 的共享 state。
 
 ---
 
@@ -244,4 +244,4 @@ state。
 | Layer 0 — Cloudflare Frontend | Pages + Pages Function | GitHub Actions + Wrangler | 每次 Client 变更 |
 | Layer 1 — AgentArts | `agentarts_config.yaml` | `agentarts launch` | 每次代码变更 |
 | Layer 2 — MaaS | 控制台手动 | 无（REST API 可备选） | 极低（模型选型是 ADR 级决策） |
-| Layer 3 — 基础资源 | OpenTofu + HCL 空基线，State 存储在 OBS | `tofu plan` + 手动 dispatch apply | 首次创建 + 偶尔变更 |
+| Layer 3 — 基础资源 | OpenTofu + HCL 管理 RDS、网络、安全组、EIP 与 OAuth helper，State 存储在 OBS | `tofu plan` + 手动 dispatch apply | 首次创建 + 偶尔变更 |
