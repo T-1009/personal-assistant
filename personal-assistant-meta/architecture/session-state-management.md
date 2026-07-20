@@ -1,6 +1,6 @@
 # Personal Assistant — Session 与 Conversation 状态管理架构
 
-> 状态：Active v2 | 更新时间：2026-07-15 | 基线：Feature 14
+> 状态：Active v2 | 更新时间：2026-07-20 | 基线：Feature 14
 
 本文定义 Web Chat 中 Runtime Session、Conversation、LangGraph thread 与长期 Memory 的
 职责边界。核心原则是：平台路由生命周期不能成为用户业务数据生命周期。
@@ -179,7 +179,9 @@ sequenceDiagram
 Client 使用 assistant-ui `useRemoteThreadListRuntime`：
 
 - `remoteId` 与 `externalId` 都等于 `conversation_id`。
-- New Chat 首次发送前调用 `initialize()` 创建 Conversation。
+- New Chat 先进入不带 `conversation_id` 的本地 draft，不写 PostgreSQL，也不在 sidebar
+  中加入空 item；首次发送前调用 `initialize()` 创建 Conversation。完整生命周期见
+  [ADR-020](ADR/ADR-020-lazy-conversation-creation.md)。
 - Chat adapter 在 run 时等待 `threadListItem.initialize()`，不能把 assistant-ui local thread
   ID 当作 `conversation_id`。
 - 每个 thread 的 history adapter 调用 Message API，并保持 `append()` no-op；只有

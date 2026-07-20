@@ -1,6 +1,6 @@
 # Personal Assistant — 前端架构
 
-> 版本：v0.2 | 状态：Active | 更新时间：2026-07-15 | 关联文档：`backend_architecture.md`
+> 版本：v0.2 | 状态：Active | 更新时间：2026-07-20 | 关联文档：`backend_architecture.md`
 
 ---
 
@@ -347,6 +347,17 @@ Runtime Session 不存在 Browser JavaScript/localStorage 中。desktop sidebar 
 共享 remote thread state，支持 create/select/rename/archive/restore/permanent delete；history
 hydration 完成前显示 loading skeleton。`409 duplicate_message` 只刷新对应 Message history，
 不会重新执行 Invocation。
+
+#### 2.1.6 New Conversation Lazy Creation
+
+New Conversation 采用 Lazy Creation。用户进入 Chat 或点击加号后，assistant-ui 只切换到
+唯一的本地空白 draft；该 draft 没有 `conversation_id`，不调用 Conversation API，也不在
+sidebar 中显示空 item。旧消息清空、welcome state 和已聚焦 Composer 共同提供即时反馈。
+
+首次发送时，Chat Adapter 先等待 `threadListItem.initialize()` 创建持久化 Conversation，
+取得 `conversation_id` 后再调用 Invocation API。未发送的 draft 可以在刷新或离开时丢弃，
+也不显示“创建成功”提示。完整决策与替代方案见
+[ADR-020](ADR/ADR-020-lazy-conversation-creation.md)。
 
 <!-- updated by issues: refactor-email-auth-normal-control-flow, bug-16-auth-card-system-message-duplicated-in-chat, refactor-9-modularize-chat-adapter -->
 
