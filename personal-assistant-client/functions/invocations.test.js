@@ -8,6 +8,7 @@ import {
 
 describe("Cloudflare Pages invocations proxy", () => {
   const originalFetch = globalThis.fetch;
+  const runtimeSessionId = "123e4567-e89b-42d3-a456-426614174000";
   const env = {
     AGENTARTS_INVOCATIONS_URL:
       "https://runtime.example.com/runtimes/personal-assistant/invocations",
@@ -15,9 +16,11 @@ describe("Cloudflare Pages invocations proxy", () => {
 
   afterEach(() => {
     globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
   });
 
   it("forwards the request to the full AgentArts Runtime path", async () => {
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(runtimeSessionId);
     const upstreamBody = new ReadableStream({
       start(controller) {
         controller.enqueue(new TextEncoder().encode("data: token\n\n"));
@@ -40,8 +43,8 @@ describe("Cloudflare Pages invocations proxy", () => {
           Authorization: "Bearer test-jwt",
           Cookie: "should-not-be-forwarded=true",
           "Content-Type": "application/json",
-          "x-hw-agentarts-session-id": "test-session",
-          "X-HW-AgentGateway-User-Id": "test-user",
+          "x-hw-agentarts-session-id": "forged-session",
+          "X-HW-AgentGateway-User-Id": "forged-user",
         },
         body: JSON.stringify({ message: "hello", stream: true }),
       },
@@ -57,8 +60,11 @@ describe("Cloudflare Pages invocations proxy", () => {
       "Bearer test-jwt",
     );
     expect(forwardedRequest.headers.get("x-hw-agentarts-session-id")).toBe(
-      "test-session",
+      runtimeSessionId,
     );
+    expect(
+      forwardedRequest.headers.get("X-HW-AgentGateway-User-Id"),
+    ).toBeNull();
     expect(forwardedRequest.headers.get("Cookie")).toBeNull();
     expect(await forwardedRequest.json()).toEqual({
       message: "hello",
@@ -70,20 +76,42 @@ describe("Cloudflare Pages invocations proxy", () => {
       "pa_oauth2_callback_auth=Bearer%20test-jwt",
     );
     expect(response.headers.get("Set-Cookie")).toContain(
-      "pa_oauth2_callback_session=test-session",
+      `pa_oauth2_callback_session=${runtimeSessionId}`,
     );
     expect(response.headers.get("Set-Cookie")).toContain(
-      "pa_oauth2_callback_user=test-user",
+      `pa_runtime_session=${runtimeSessionId}`,
     );
-    expect(response.headers.get("Set-Cookie")).toContain(
-      "Path=/auth/callback/m365-calendar",
+    expect(response.headers.get("Set-Cookie")).not.toContain(
+      "pa_oauth2_callback_user=forged-user",
     );
     expect(response.headers.get("Set-Cookie")).toContain("HttpOnly");
     expect(response.headers.get("Set-Cookie")).toContain("SameSite=Lax");
     expect(await response.text()).toBe("data: token\n\n");
   });
 
+  it("adds the direct Service invocation path in local Pages mode", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(new Response("ok"));
+    globalThis.fetch = mockFetch;
+    const request = new Request("http://localhost:5173/invocations", {
+      method: "POST",
+      body: "{}",
+    });
+
+    await onRequestPostRoot({
+      request,
+      env: {
+        PA_ENV: "local",
+        AGENTARTS_INVOCATIONS_URL: "http://localhost:8080",
+      },
+    });
+
+    expect(mockFetch.mock.calls[0][0].url).toBe(
+      "http://localhost:8080/invocations",
+    );
+  });
+
   it("returns 502 when the Gateway request fails", async () => {
+    vi.spyOn(globalThis.crypto, "randomUUID").mockReturnValue(runtimeSessionId);
     globalThis.fetch = vi.fn().mockRejectedValue(new Error("network error"));
 
     const request = new Request(
@@ -100,6 +128,9 @@ describe("Cloudflare Pages invocations proxy", () => {
     expect(await response.json()).toEqual({
       message: "AgentArts Gateway is unavailable",
     });
+    expect(response.headers.get("Set-Cookie")).toContain(
+      `pa_runtime_session=${runtimeSessionId}`,
+    );
   });
 
   it("fails clearly when the upstream URL is not configured", async () => {
@@ -126,7 +157,7 @@ describe("Cloudflare Pages invocations proxy", () => {
         "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state&session_uri=urn:test",
       ).toString(),
     ).toBe(
-      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn%3Atest",
     );
   });
 
@@ -141,7 +172,7 @@ describe("Cloudflare Pages invocations proxy", () => {
         "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state&session_uri=urn:test",
       ).toString(),
     ).toBe(
-      "https://service.example.com/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      "https://service.example.com/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn%3Atest",
     );
   });
 
@@ -179,7 +210,7 @@ describe("Cloudflare Pages invocations proxy", () => {
     const forwardedRequest = mockFetch.mock.calls[0][0];
 
     expect(forwardedRequest.url).toBe(
-      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn:test",
+      "https://runtime.example.com/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar?state=signed-state&session_uri=urn%3Atest",
     );
     expect(forwardedRequest.headers.get("Accept")).toBe("text/html");
     expect(forwardedRequest.headers.get("Authorization")).toBe(
@@ -189,7 +220,7 @@ describe("Cloudflare Pages invocations proxy", () => {
       "callback-session",
     );
     expect(forwardedRequest.headers.get("X-HW-AgentGateway-User-Id")).toBe(
-      "callback-user",
+      null,
     );
     expect(forwardedRequest.headers.get("Cookie")).toBeNull();
     expect(forwardedRequest.headers.get("x-pa-oauth2-callback-secret")).toBe(
@@ -259,5 +290,27 @@ describe("Cloudflare Pages invocations proxy", () => {
     expect(text).toContain('"request_id":"signed-state"');
     expect(text).toContain('"status":"failed"');
     expect(text).toContain('BroadcastChannel("m365-calendar-auth")');
+  });
+
+  it("BFF callback ignores malformed unrelated cookies on failure", async () => {
+    globalThis.fetch = vi.fn().mockRejectedValue(new Error("network error"));
+    const request = new Request(
+      "https://agentarts-personal-assistant.pages.dev/auth/callback/m365-calendar?state=signed-state",
+      {
+        headers: {
+          Cookie:
+            "unrelated=%; pa_oauth2_callback_auth=Bearer%20callback-token; "
+            + "pa_oauth2_callback_session=callback-session",
+        },
+      },
+    );
+
+    const response = await onRequestGetCalendarCallback({ request, env });
+
+    expect(response.status).toBe(502);
+    expect(await response.text()).toContain("授权失败");
+    expect(response.headers.get("Set-Cookie")).toContain(
+      "pa_oauth2_callback_auth=; Max-Age=0",
+    );
   });
 });

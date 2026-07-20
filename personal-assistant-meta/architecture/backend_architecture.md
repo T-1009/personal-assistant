@@ -1,6 +1,6 @@
 # Personal Assistant — 后端架构
 
-> 版本：v0.1 | 状态：Draft | 关联文档：`frontend_architecture.md`
+> 版本：v0.2 | 状态：Active | 更新时间：2026-07-15 | 关联文档：`frontend_architecture.md`
 
 ---
 
@@ -8,12 +8,15 @@
 
 后端统一使用 **FastAPI** 应用，部署在 AgentArts 容器中（`:8080`）。不依赖 `AgentArtsRuntimeApp`，而是直接以标准 HTTP Server 方式暴露路由，通过 `agentarts-sdk` 调用平台能力。
 
+图类型：**Component Diagram（组件图）**。用于说明 FastAPI、Agent 编排与平台服务边界。
+
 ```mermaid
 flowchart TB
     subgraph Container["AgentArts 容器 :8080"]
         subgraph Routes["路由层"]
             Ping["GET /ping<br/>健康检查（平台内部）"]
             Invoke["POST /invocations<br/>同步 JSON / SSE 流式对话"]
+            Conversations["/api/conversations<br/>CRUD + Message history"]
             Playground["GET /invocations/playground<br/>Chainlit 调试 UI"]
         end
 
@@ -51,19 +54,27 @@ flowchart TB
 
 ### 2.1 AgentArts Gateway 路由约束
 
-AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。生产环境当前配置为 `PREFIX_MATCH`，Gateway 匹配 `/invocations` 及其所有子路径。
+AgentArts 部署的容器通过 **AgentArts API Gateway** 接收外部请求。生产环境当前配置为
+`PREFIX_MATCH`，Gateway policy 以 `/invocations` 为根路径。
 
-```
-浏览器/客户端 ──→ Gateway (defaultgw-xxx...) ──→ 容器 :8080
-                       │
-                   PREFIX_MATCH: /invocations → ✅ 命中 policy
-                   /invocations/* 子路径 → ✅ 命中 policy
+图类型：**Flowchart（流程图）**。用于区分已验证的 root Invocation 与仍待 G1 probe 的
+Feature 14 suffix methods/header。
+
+```mermaid
+flowchart LR
+    Client["Browser / Client"] --> Gateway["AgentArts Gateway<br/>PREFIX_MATCH /invocations"]
+    Gateway --> Root["POST /invocations<br/>已部署路径"]
+    Gateway -. "G1 deployment probe pending" .-> Suffix["/invocations/api/conversations/*<br/>methods + Session header"]
+    Root --> Container["FastAPI :8080"]
+    Suffix --> Container
 ```
 
 **关键约束**：
 - `/ping` 是平台内部健康检查端点，**不走 Gateway**，AgentArts 控制面直接调容器。必须保留在根路径。
 - `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**，也是浏览器 Web Chat 的生产流式入口。
-- Web Chat 对话调用收敛到 `POST /invocations` 单一路径，通过 JSON body 字段区分同步或流式模式。
+- Web Chat 对话调用收敛到 `POST /invocations`，request 必须携带
+  `conversation_id`、`client_message_id`，通过 `stream` 区分同步或流式模式。
+- Conversation CRUD 与 Message history 使用 `/api/conversations` 显式 suffix routes。
 - `PREFIX_MATCH` 子路径映射规则：`/runtimes/{runtime_name}/invocations/<suffix>` 映射到容器内 `/<suffix>`。
 - Calendar OAuth2 callback 的公网 URL 是 Cloudflare Pages BFF
   `GET /auth/callback/m365-calendar`；BFF server-side 转发 callback query 到 FastAPI
@@ -107,21 +118,16 @@ async def agent_arts_invoke(request: Request):
     """AgentArts Runtime / OfficeClaw / Web Chat 统一调用入口"""
     payload = await request.json()
 
-    if payload.get("stream") is True:
-        return StreamingResponse(
-            agent_handler.handle_stream(
-                message=payload.get("message", ""),
-                user_id=request.headers.get("X-AgentArts-User-Id", "anonymous"),
-            ),
-            media_type="text/event-stream",
-        )
-
-    result = await agent_handler.handle(
-        message=payload.get("message", ""),
-        user_id=request.headers.get("X-AgentArts-User-Id", "anonymous"),
-        session_id=request.headers.get("X-AgentArts-Session-Id"),
+    invocation = InvocationRequest.model_validate(payload)
+    user_id = extract_authenticated_user_id(request)
+    execution = await InvocationService(request.app.state.database).prepare(
+        request=invocation,
+        user_id=user_id,
+        handler=request.app.state.agent_handler,
     )
-    return {"response": result}
+    if invocation.stream:
+        return StreamingResponse(execution.stream_sse(), media_type="text/event-stream")
+    return await execution.run_sync()
 
 # ── 飞书直连 ──
 
@@ -137,7 +143,7 @@ async def feishu_webhook(request: Request):
     reply = await agent_handler.handle(
         message=msg["text"],
         user_id=msg["user_id"],
-        session_id=msg["chat_id"],
+        conversation_id=resolve_channel_conversation(msg),
     )
     await send_feishu_reply(body, reply)
     return {"code": 0}
@@ -166,23 +172,33 @@ mount_chainlit(app=app, target=..., path="/invocations/playground")
 | 路由 | 方法 | 调用方 | 用途 | Gateway 可见 |
 |------|------|--------|------|-------------|
 | `/ping` | GET | AgentArts 平台（控制面） | 健康检查 | ❌ 平台内部 |
-| `/invocations` | POST | AgentArts SDK / OfficeClaw / 浏览器 | `stream: false` 或未传返回 JSON；`stream: true` 返回 SSE | ✅（PREFIX_MATCH） |
-| `/auth/oauth2/callback/m365-calendar` | GET | Cloudflare Pages BFF server-side callback forward | 完成 Calendar Resource Token Auth session binding，并返回 result | ✅ 由 BFF direct upstream 或 Gateway full Runtime path 进入 |
+| `/invocations` | POST | Web Chat BFF；OfficeClaw 为 roadmap | `stream: false` 或未传返回 JSON；`stream: true` 返回 SSE | ✅（PREFIX_MATCH） |
+| `/api/conversations` | GET, POST | Web Chat BFF | list/create Conversation | Target 已实现；G1 deployment probe pending |
+| `/api/conversations/{conversation_id}` | GET, PATCH, DELETE | Web Chat BFF | get/rename/archive/restore/permanent delete | Target 已实现；G1 deployment probe pending |
+| `/api/conversations/{conversation_id}/messages` | GET | Web Chat BFF | Message history pagination | Target 已实现；G1 deployment probe pending |
+| `/auth/oauth2/callback/m365-calendar` | GET | Cloudflare Pages BFF server-side callback forward | 完成 Calendar Resource Token Auth session binding，并返回 result | production 经 Gateway full Runtime path；local 可 direct override |
 | `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅ 通过完整 Runtime path；Cloudflare Function 不代理 |
 
-> **注意**：`/feishu/webhook` 等需要独立公网 URL 的路由无法直接通过 Gateway root path 暴露。Calendar OAuth2 的公网入口由 Cloudflare Pages BFF 提供；BFF 可直接调用 Service callback upstream，或通过 `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` 命中 Gateway policy，容器内 route 保持 Auth 语义路径。
+> **注意**：`/feishu/webhook` 等需要独立公网 URL 的路由无法直接通过 Gateway root path
+> 暴露。Calendar OAuth2 的公网入口由 Cloudflare Pages BFF 提供；production BFF 通过
+> `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` 命中 Gateway
+> policy，只有 local override 直连 Service。容器内 route 保持 Auth 语义路径。
 
 ### 2.3 AgentArts Gateway Header 注入
 
-AgentArts Gateway 在转发请求到 Runtime 容器时，会注入以下 header。后端需在请求处理入口（`main.py` 的 `invocations()` 或 `auth.py`）提取并使用：
+AgentArts Gateway 校验 inbound JWT 并转发 Authorization；BFF 负责受控 Runtime Session
+header。后端在 `main.py` / `auth.py` 按下表使用：
 
 | Header | 用途 | 当前状态 |
 |--------|------|----------|
-| `X-HW-AgentGateway-User-Id` | 经 Gateway 认证后的用户 ID（CUSTOM_JWT 模式为 decoded claim，API Key 模式为 key 别名） | ✅ 已提取（`extract_gateway_user_id()`） |
-| `x-hw-agentarts-session-id` | AgentArts Session ID，用于 Memory Session 关联和 LangGraph checkpoint `thread_id` 构造 | ✅ 已提取 |
-| `X-HW-AgentGateway-Workload-Access-Token` | Workload Access Token — Agent 容器以 Workload Identity 认证 Identity Service 的短期凭证。Gateway 自动注入，无需容器自行获取 | ⚠️ Chore 5 新增提取 |
+| `Authorization` | Gateway 已验证并转发的 Bearer JWT；FastAPI 从 `sub` 派生 canonical `user_id` | ✅ ownership source |
+| `x-hw-agentarts-session-id` | BFF Runtime Cookie resolver 注入的 routing key | ✅ routing only，不构造 `thread_id` |
+| `X-HW-AgentGateway-User-Id` | caller 可伪造且不保证与 JWT claim 绑定 | ❌ BFF 丢弃，Service ownership 忽略 |
+| `X-HW-AgentGateway-Workload-Access-Token` | 容器以 Workload Identity 认证 Identity Service 的短期凭证 | ✅ Gateway 环境优先使用 |
 
 **Workload Access Token 数据流**：
+
+图类型：**Data Flow Diagram（数据流图）**。用于说明 Gateway WAT 到 Identity SDK 的传递。
 
 ```mermaid
 flowchart LR
@@ -193,7 +209,9 @@ flowchart LR
     Deco -->|"跳过本地 fallback"| ID["Identity Service — 直接使用 token"]
 ```
 
-> **Fallback 行为**：若 header 不存在（本地开发环境），不报错，`AgentArtsRuntimeContext` 无 token → SDK 的 `_get_workload_access_token()` 自动 fallback 到本地 `.agent_identity.json` + Identity Service API 调用。不改变现有本地开发体验。
+> Calendar local full flow 必须使用 inbound JWT mint JWT-mode WAT；不能回退到 caller User
+> header 或与 production 不同的 user_id identity mode。普通不调用 Identity Tool 的 chat 可在
+> WAT exchange 失败时继续。
 
 <!-- updated by issue: chore-5-workload-access-token-from-header -->
 
@@ -203,6 +221,8 @@ Service 使用 Uvicorn `--log-config` 作为 process logging 的唯一配置入�
 加载 `config/logging.dev.yaml` 输出 UTC console text，AgentArts Runtime 加载
 `config/logging.prod.yaml` 输出 single-line JSON。Application import 不执行
 `dictConfig`。
+
+图类型：**Flowchart（流程图）**。用于说明开发与生产 logging config 的加载边界。
 
 ```mermaid
 flowchart LR
@@ -226,119 +246,63 @@ Authorization、Workload token、用户输入或 LLM 原始 response。完整决
 
 ## 3. Agent 处理逻辑
 
-> Session 状态管理（Checkpoint + Memory 两阶段模型）的完整架构设计见 [session-state-management.md](session-state-management.md)。
+> Conversation/Runtime/Checkpoint 的完整状态边界见
+> [session-state-management.md](session-state-management.md)。
 
-所有路由最终解析为统一消息格式，调用共享的 Agent 处理逻辑：
+InvocationService 负责 HTTP/SSE transport 与持久化，AgentHandler 只接收业务参数并返回
+structured non-terminal event。下面是接口级摘录，Checkpointer 的 startup/shutdown 由
+`AgentHandler` lifecycle 管理：
 
 ```python
-import asyncio
-import time
-from dataclasses import dataclass
+from collections.abc import AsyncIterator
 
-from deepagents import create_deep_agent
-from langgraph.checkpoint.memory import MemorySaver
-
-@dataclass(frozen=True, slots=True)
-class AgentBundle:
-    agent: object
-    expires_at: float
+from app.invocations.models import AgentEventType, AgentStreamEvent
 
 class AgentHandler:
-    """共享 Agent 处理逻辑 — 所有前端共用"""
-
-    def __init__(self):
-        from app.llm_config import get_model
-        from app.tools import build_tools  # ✅ Feature 10a: 工具注册工厂
-        self.checkpointer = self._init_checkpointer()  # 新增
-        self.tools = build_tools()
-        self._bundle = None
-        self._bundle_lock = asyncio.Lock()
-
-    def _build_agent(self):
-        model = get_model()
-        return create_deep_agent(
-            model=model,
-            system_prompt="你是 Personal Assistant...",
-            tools=self.tools,  # ✅ Feature 10a: 动态加载工具
-            checkpointer=self.checkpointer,  # ✅ 注入 Checkpointer
-        )
-
-    async def get_agent(self):
-        bundle = self._bundle
-        if bundle and time.monotonic() < bundle.expires_at:
-            return bundle.agent
-        async with self._bundle_lock:
-            bundle = self._bundle
-            if bundle and time.monotonic() < bundle.expires_at:
-                return bundle.agent
-            agent = await asyncio.to_thread(self._build_agent)
-            self._bundle = AgentBundle(
-                agent=agent,
-                expires_at=time.monotonic() + 300,
-            )
-            return agent
-
-    def _init_checkpointer(self, settings):
-        """通过 typed Settings 选择 Checkpointer 后端。"""
-        if settings.postgres_dsn:
-            from langgraph.checkpoint.postgres import PostgresSaver
-            return PostgresSaver.from_conn_string(settings.postgres_dsn)
-        if settings.sqlite_db_path:
-            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-            return AsyncSqliteSaver.from_conn_string(str(settings.sqlite_db_path))
-        return MemorySaver()  # 默认：进程内存
-
     @staticmethod
-    def _build_config(user_id: str, session_id: str | None) -> dict:
-        """构造 LangGraph config，thread_id = {user_id}:{session_id}。"""
-        sid = session_id or "default"
-        return {"configurable": {"thread_id": f"{user_id}:{sid}"}}
+    def _build_config(user_id: str, conversation_id: str) -> dict:
+        return {"configurable": {"thread_id": f"{user_id}:{conversation_id}"}}
 
-    async def handle(self, message: str, user_id: str,
-                     session_id: str = None) -> str:
-        config = self._build_config(user_id, session_id)  # ✅ 新增
+    async def handle(
+        self, message: str, user_id: str, conversation_id: str
+    ) -> str:
+        config = self._build_config(user_id, conversation_id)
         agent = await self.get_agent()
         result = await agent.ainvoke(
             {"messages": [{"role": "user", "content": message}]},
-            config=config,  # ✅ 传递 config
+            config=config,
         )
         return result["messages"][-1].content
 
-    async def handle_stream(self, message: str, user_id: str,
-                            session_id: str = None):
-        """通过 LangGraph messages/custom stream 输出 SSE。"""
-        config = self._build_config(user_id, session_id)
-        try:
-            agent = await self.get_agent()
-            async for mode, data in agent.astream(
-                {"messages": [{"role": "user", "content": message}]},
-                stream_mode=["messages", "custom"],
-                config=config,
-            ):
-                if mode == "custom":
-                    event_name = (
-                        "auth_card"
-                        if isinstance(data, dict)
-                        and (data.get("auth_required") or data.get("auth_complete"))
-                        else None
-                    )
-                    prefix = f"event: {event_name}\\n" if event_name else ""
-                    yield f"{prefix}data: {json.dumps(data, ensure_ascii=False)}\\n\\n"
-
-                elif mode == "messages":
-                    token_chunk, _metadata = data
-                    if getattr(token_chunk, "type", None) == "tool":
-                        continue
-                    token = getattr(token_chunk, "content", "") or ""
-                    if token:
-                        payload = {"token": token, "done": False}
-                        yield f"data: {json.dumps(payload, ensure_ascii=False)}\\n\\n"
-
-            yield f"data: {json.dumps({'token': '', 'done': True})}\\n\\n"
-
-        except Exception as error:
-            yield f"data: {json.dumps({'error': str(error), 'done': True})}\\n\\n"
+    async def handle_stream(
+        self, message: str, user_id: str, conversation_id: str
+    ) -> AsyncIterator[AgentStreamEvent]:
+        config = self._build_config(user_id, conversation_id)
+        agent = await self.get_agent()
+        async for mode, data in agent.astream(
+            {"messages": [{"role": "user", "content": message}]},
+            stream_mode=["messages", "custom"],
+            config=config,
+        ):
+            if mode == "custom":
+                auth_card = isinstance(data, dict) and (
+                    data.get("auth_required") or data.get("auth_complete")
+                )
+                event_type = (
+                    AgentEventType.AUTH_CARD if auth_card else AgentEventType.CUSTOM
+                )
+                yield AgentStreamEvent(type=event_type, data=data)
+            elif mode == "messages":
+                token_chunk, _metadata = data
+                token = getattr(token_chunk, "content", "") or ""
+                if getattr(token_chunk, "type", None) != "tool" and token:
+                    yield AgentStreamEvent(type=AgentEventType.TOKEN, token=token)
 ```
+
+AgentHandler 不生成 HTTP/SSE terminal、不吞异常、不 retry。InvocationService 负责
+Advisory Lock、user/assistant Message persistence、commit 后 done=true 和稳定错误响应。
+Production 的 Conversation/Message 与 Checkpointer 均使用 PostgreSQL；in-memory
+Checkpointer 只用于纯 unit test。
 
 Model 和 compiled Agent 作为不可变 Bundle 在单个 worker 内复用。TTL 到期后通过
 single-flight refresh 原子替换 Bundle；Checkpointer 长期独立持有，所以 Agent
@@ -527,6 +491,8 @@ sequenceDiagram
 转述。本系统使用 LangGraph 原生 `get_stream_writer()` 将事件写入 `custom`
 stream，`AgentHandler` 同时消费 `messages` 和 `custom` 两种 stream mode。
 
+图类型：**Sequence Diagram（时序图）**。用于说明 OAuth auth card 的 out-of-band 事件流。
+
 ```mermaid
 sequenceDiagram
     participant User as 用户浏览器
@@ -652,7 +618,7 @@ result = sandbox.execute("print('hello')")
 | **Agent 编排** | deepagents (LangChain) | LangGraph 之上的 batteries-included harness，封装 ReAct loop + summarization + skills。详见 [ADR-009](ADR/ADR-009-deepagents.md) |
 | **LLM** | typed Settings + renewable Agent Bundle | `.env.example` 是唯一用户配置入口；credential 由 AgentArts Identity 提供；Model + compiled Agent 在 TTL 内按 worker 复用并原子刷新。详见 ADR-011、ADR-016 |
 | **Memory** | AgentArts Memory SDK | 短期+长期记忆，三种抽取策略 |
-| **Identity** | AgentArts Identity SDK | Inbound JWT/API Key + Outbound OAuth2/M2M/STS |
+| **Identity** | AgentArts Gateway + Identity SDK | 当前 Inbound 只使用 CUSTOM_JWT；Identity SDK 负责 Outbound OAuth2/M2M/STS |
 | **Gateway** | AgentArts MCP Gateway | API → MCP Tool 自动转换 |
 | **Sandbox** | AgentArts Sandbox SDK | 安全隔离代码执行 |
 | **包管理** | uv (Astral) | 替代 pip/virtualenv，Rust 实现，uv.lock 确定性构建。详见 [ADR-010](ADR/ADR-010-astral-ecosystem-tooling.md) |

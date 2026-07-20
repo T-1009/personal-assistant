@@ -1,7 +1,7 @@
 # Feature 18：Report Root Capability Implementation Plan
 
 > 状态：Draft  
-> 日期：2026-07-17  
+> 日期：2026-07-17
 > 范围：新增 `generate_report` root tool，复用现有 Email / Calendar tools，并接入 Feature 17 的 GitHub MCP activity data source。
 
 ## 1. 概要
