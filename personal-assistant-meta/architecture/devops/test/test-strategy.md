@@ -116,6 +116,7 @@ E2E smoke 回答：**跨系统主入口是否还活着？**
 |------|------|
 | 启动 Service subprocess，`GET /ping` 返回 200 | process-level Service |
 | 启动 Vite + Service，`POST /invocations` 经过 Vite proxy 后到达 Service | Client dev server + Service |
+| Wrangler Pages + Service 中止 SSE 后，经 nested cancellation route 释放 lock 并继续发送 | Pages Functions + Service + PostgreSQL |
 | production Pages `/` 返回 200 | deployed Frontend |
 | production Pages `/invocations` 无身份返回 401 | deployed Frontend + AgentArts Gateway auth gate |
 
@@ -362,6 +363,8 @@ Manual real auth 不应作为默认 CI 命令。它应由受控环境手动触�
 
 - 增加 Vite dev proxy + Service subprocess 的 `/invocations` happy path。
 - 增加 Pages Functions local dev + Service subprocess 的 `/invocations` streaming pass-through。
+- 增加 Pages Functions local dev + Service + PostgreSQL 的 Stop、显式 cancellation、下一次
+  Invocation 回归测试，并断言 production/local upstream path 映射一致。
 - 增加 Pages Functions local dev + Service callback 的 Calendar callback bridge test。
 - 增加 ChatPage browser happy path：mock auth state，发送消息，观察 UI 收到 SSE token。
 
@@ -398,4 +401,3 @@ Manual real auth 不应作为默认 CI 命令。它应由受控环境手动触�
 | Is it industry standard? | Yes。PR 跑 unit / integration / smoke，浏览器与真实账号测试分层，是主流 Web / SaaS CI 模式。 |
 | Is it conventional? | Yes。新成员可通过目录名和 markers 预期测试成本、依赖和运行频率。 |
 | Is it modern? | Yes。使用 Playwright、Pages Functions local dev、mock 外部 OAuth / LLM、真实 auth 受控运行，符合现代前后端分离应用的测试实践。 |
-

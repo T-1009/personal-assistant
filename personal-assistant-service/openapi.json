@@ -252,6 +252,52 @@
         }
       }
     },
+    "/api/conversations/{conversation_id}/invocations/{client_message_id}/cancel": {
+      "post": {
+        "tags": [
+          "conversations"
+        ],
+        "summary": "Cancel Conversation Invocation",
+        "operationId": "cancel_conversation_invocation_api_conversations__conversation_id__invocations__client_message_id__cancel_post",
+        "parameters": [
+          {
+            "name": "conversation_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Conversation Id"
+            }
+          },
+          {
+            "name": "client_message_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid",
+              "title": "Client Message Id"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "The Invocation is cancelled or already finished."
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/conversations/{conversation_id}/messages": {
       "get": {
         "tags": [

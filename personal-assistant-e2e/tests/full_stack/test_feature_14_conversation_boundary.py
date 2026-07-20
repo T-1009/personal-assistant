@@ -218,6 +218,68 @@ def _client(base_url: str, subject: str) -> httpx.Client:
     )
 
 
+def _abort_invocation(
+    *,
+    base_url: str,
+    authorization: str,
+    runtime_session: str,
+    payload: dict[str, object],
+) -> None:
+    script = """
+const controller = new AbortController();
+const response = await fetch(`${process.env.PA_E2E_BASE_URL}/invocations`, {
+  method: "POST",
+  headers: {
+    Accept: "text/event-stream",
+    Authorization: process.env.PA_E2E_AUTHORIZATION,
+    Cookie: `pa_runtime_session=${process.env.PA_E2E_RUNTIME_SESSION}`,
+    "Content-Type": "application/json",
+  },
+  body: process.env.PA_E2E_PAYLOAD,
+  signal: controller.signal,
+});
+if (response.status !== 200) {
+  throw new Error(`Invocation returned ${response.status}`);
+}
+controller.abort();
+try {
+  await response.text();
+} catch (error) {
+  if (error?.name !== "AbortError") throw error;
+}
+const invocation = JSON.parse(process.env.PA_E2E_PAYLOAD);
+const cancelUrl = new URL(
+  `/api/conversations/${invocation.conversation_id}/invocations/${invocation.client_message_id}/cancel`,
+  process.env.PA_E2E_BASE_URL,
+);
+const cancelled = await fetch(cancelUrl, {
+  method: "POST",
+  headers: {
+    Accept: "application/json",
+    Authorization: process.env.PA_E2E_AUTHORIZATION,
+    Cookie: `pa_runtime_session=${process.env.PA_E2E_RUNTIME_SESSION}`,
+  },
+});
+if (cancelled.status !== 204) {
+  throw new Error(`Cancellation returned ${cancelled.status}`);
+}
+"""
+    result = subprocess.run(
+        [_node_command(), "--input-type=module", "--eval", script],
+        env={
+            **os.environ,
+            "PA_E2E_BASE_URL": base_url,
+            "PA_E2E_AUTHORIZATION": authorization,
+            "PA_E2E_RUNTIME_SESSION": runtime_session,
+            "PA_E2E_PAYLOAD": json.dumps(payload),
+        },
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 def test_runtime_cookie_multi_browser_ownership_delete_and_oauth_snapshot(
     pages_stack,
 ):
@@ -414,3 +476,43 @@ def test_runtime_cookie_multi_browser_ownership_delete_and_oauth_snapshot(
     if conversation_id is not None:
         with _client(pages_stack, user_subject) as cleanup:
             cleanup.delete(f"/api/conversations/{conversation_id}")
+
+
+@pytest.mark.regression
+def test_bug_23_cancelled_stream_allows_next_invocation(pages_stack):
+    user_subject = f"bug-23-{uuid4()}"
+    with _client(pages_stack, user_subject) as client:
+        created = client.post(
+            "/api/conversations",
+            json={"title": "Bug 23 cancellation regression"},
+        )
+        assert created.status_code == 201
+        conversation_id = created.json()["id"]
+
+        runtime_session = client.cookies.get("pa_runtime_session")
+        assert runtime_session
+        _abort_invocation(
+            base_url=pages_stack,
+            authorization=client.headers["Authorization"],
+            runtime_session=runtime_session,
+            payload={
+                "conversation_id": conversation_id,
+                "client_message_id": str(uuid4()),
+                "message": "cancel this response",
+                "stream": True,
+            },
+        )
+
+        time.sleep(0.1)
+        retried = client.post(
+            "/invocations",
+            json={
+                "conversation_id": conversation_id,
+                "client_message_id": str(uuid4()),
+                "message": "continue after cancellation",
+                "stream": False,
+            },
+        )
+
+        assert retried.status_code == 200
+        assert retried.json() == {"response": "Echo: continue after cancellation"}

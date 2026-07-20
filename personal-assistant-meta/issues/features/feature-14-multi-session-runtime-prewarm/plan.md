@@ -121,6 +121,7 @@ Set-Cookie: pa_runtime_session=<uuid>; Path=/; HttpOnly; Secure; SameSite=Lax
 | `GET/POST /api/conversations` | `functions/api/conversations.js` | same |
 | `GET/PATCH/DELETE /api/conversations/{id}` | `functions/api/conversations/[conversation_id].js` | same |
 | `GET /api/conversations/{id}/messages` | `functions/api/conversations/[conversation_id]/messages.js` | same |
+| `POST /api/conversations/{id}/invocations/{client_message_id}/cancel` | `functions/api/conversations/[conversation_id]/invocations/[client_message_id]/cancel.js` | same |
 | `POST /auth/logout` | `functions/auth/logout.js` | BFF-only |
 
 `POST /auth/logout` 删除 Runtime Cookie 和 OAuth callback context Cookies，返回 `204`。
@@ -393,6 +394,15 @@ Rules：
 - disconnect/cancel 释放 lock；已显示但未 commit 的 partial token 不进入历史。
 - 同一 Conversation busy 返回 409；不同 Conversation 可并发。
 
+#### Bug 23 cancellation addendum
+
+Browser transport abort 只能作为 best-effort，不能证明 Cloudflare 与 AgentArts Gateway 后的
+execution 已停止。Client Stop 另外发送幂等
+`POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel`；Service
+active execution registry 以 `user_id + conversation_id + client_message_id` 定位任务，在
+204 前等待 Advisory Lock 释放。同一 Conversation 的下一次 `POST /invocations` 必须等待
+该 cancellation command 完成。
+
 ### 5.5 Advisory Lock
 
 实现 `ConversationLock`：
@@ -532,7 +542,7 @@ flowchart LR
 - Store：CRUD、ownership、pagination、archive、cascade；
 - lock：same Conversation conflict、different Conversation parallel、exception releases lock；
 - Invocation：duplicate ID、assistant commit-before-done、sync/stream common core、
-  AgentHandler no terminal/no retry、error propagation；
+  AgentHandler no terminal/no retry、error propagation、显式 cancellation 释放 lock；
 - Delete：busy、success、idempotent missing、Checkpoint failure；
 - auth：trusted `sub`、forged user header、missing Authorization；
 - OpenAPI schema uses `snake_case`。
@@ -558,6 +568,7 @@ flowchart LR
 - no Runtime/User header；
 - unique `client_message_id`；
 - no retry on fetch ambiguity；
+- Stop 后发送 Conversation-scoped cancellation，并在下一次 Invocation 前等待 204；
 - loading, empty, error, busy and delete states；
 - 清除旧 localStorage Session；展示环境不迁移旧 Checkpoint。
 
@@ -567,6 +578,7 @@ flowchart LR
 - second user cannot access first user's UUID；
 - two browser contexts have different Runtime Cookies but share user business data；
 - same Conversation concurrent send returns one 409；
+- abort SSE、显式取消并立即继续发送不会返回 `conversation_busy`；
 - Delete removes history and blocks access；
 - OAuth callback keeps authorization-start snapshot after main Cookie rotation；
 - G1 method/path probe；

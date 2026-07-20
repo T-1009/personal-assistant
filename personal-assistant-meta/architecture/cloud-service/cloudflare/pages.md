@@ -45,6 +45,7 @@ Pages 使用 file-based routing，production 只公开显式 Functions：
 | `/api/conversations` | `functions/api/conversations.js` | GET, POST | `/api/conversations` |
 | `/api/conversations/{conversation_id}` | `functions/api/conversations/[conversation_id].js` | GET, PATCH, DELETE | same path |
 | `/api/conversations/{conversation_id}/messages` | `functions/api/conversations/[conversation_id]/messages.js` | GET | same path |
+| `/api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` | `functions/api/conversations/[conversation_id]/invocations/[client_message_id]/cancel.js` | POST | same path |
 | `/auth/callback/m365-calendar` | `functions/auth/callback/m365-calendar.js` | GET | `/auth/oauth2/callback/m365-calendar` |
 | `/auth/logout` | `functions/auth/logout.js` | POST | edge-only, no upstream |
 
@@ -102,7 +103,7 @@ Cookie 不原样转发。主 Runtime Cookie 后续轮换时，本次 callback �
 | `functions/_shared/agentarts-proxy.js` | upstream URL、method/query/header allowlist、body/SSE pass-through |
 | `functions/_shared/callback-context.js` | OAuth Authorization/Session snapshot 与恢复 |
 | `functions/invocations.js` | Invocation route；local Pages 模式补 `/invocations` upstream prefix |
-| `functions/api/conversations*.js` | Conversation collection/item/messages 显式 routes |
+| `functions/api/conversations*.js` | Conversation collection/item/messages 与 nested cancellation 显式 routes |
 | `functions/auth/callback/m365-calendar.js` | server-side callback bridge |
 | `functions/auth/logout.js` | edge-only Cookie cleanup |
 | `src/lib/chat/chat-api-client.ts` | same-origin Invocation client，不发送平台 headers |
@@ -156,7 +157,9 @@ npm run pages:dev:local
 
 `pages:dev:local` 绑定 `PA_ENV=local`，把 `AGENTARTS_INVOCATIONS_URL` 指向
 `http://localhost:8080`。Invocation Function 在 local 模式补上 `/invocations`；Conversation
-Functions 直接拼 `/api/conversations`，从而与 FastAPI path 对齐。
+Functions（包括 cancellation）直接拼完整 `/api/conversations/...`，从而与 FastAPI path
+对齐。production 使用相同 suffix；Gateway 去掉 Runtime invocation root 后也得到相同的
+FastAPI path。
 
 部署与查询：
 

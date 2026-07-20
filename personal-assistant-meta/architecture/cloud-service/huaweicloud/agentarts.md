@@ -956,9 +956,11 @@ msalInstance.handleRedirectPromise().then(async (response) => {
 | `/runtimes/personal-assistant/invocations/api/conversations` | `/api/conversations` |
 | `/runtimes/personal-assistant/invocations/api/conversations/{conversation_id}` | `/api/conversations/{conversation_id}` |
 | `/runtimes/personal-assistant/invocations/api/conversations/{conversation_id}/messages` | `/api/conversations/{conversation_id}/messages` |
+| `/runtimes/personal-assistant/invocations/api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` | `/api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` |
 | `/runtimes/personal-assistant/invocations/auth/oauth2/callback/m365-calendar` | `/auth/oauth2/callback/m365-calendar` |
 
 `/auth/oauth2/callback/m365-calendar` 只是 suffix 映射的一个业务例子，不是特殊规则。
+Invocation cancellation 使用 AgentArts custom-path API 支持的 `POST`，不使用 `DELETE`。
 
 Cloudflare Pages BFF 可复用该 Gateway full Runtime path 转发 Calendar OAuth2
 callback，也可以通过 `AGENTARTS_OAUTH_CALLBACK_URL` 配置 direct Service callback

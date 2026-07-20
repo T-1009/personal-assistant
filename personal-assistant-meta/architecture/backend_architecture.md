@@ -74,7 +74,8 @@ flowchart LR
 - `/invocations` 是 AgentArts SDK invoke 入口，**必须保留在根路径**，也是浏览器 Web Chat 的生产流式入口。
 - Web Chat 对话调用收敛到 `POST /invocations`，request 必须携带
   `conversation_id`、`client_message_id`，通过 `stream` 区分同步或流式模式。
-- Conversation CRUD 与 Message history 使用 `/api/conversations` 显式 suffix routes。
+- Conversation CRUD、Message history 与 Conversation-scoped cancellation command 使用
+  `/api/conversations` 显式 suffix routes。
 - `PREFIX_MATCH` 子路径映射规则：`/runtimes/{runtime_name}/invocations/<suffix>` 映射到容器内 `/<suffix>`。
 - Calendar OAuth2 callback 的公网 URL 是 Cloudflare Pages BFF
   `GET /auth/callback/m365-calendar`；BFF server-side 转发 callback query 到 FastAPI
@@ -176,6 +177,7 @@ mount_chainlit(app=app, target=..., path="/invocations/playground")
 | `/api/conversations` | GET, POST | Web Chat BFF | list/create Conversation | Target 已实现；G1 deployment probe pending |
 | `/api/conversations/{conversation_id}` | GET, PATCH, DELETE | Web Chat BFF | get/rename/archive/restore/permanent delete | Target 已实现；G1 deployment probe pending |
 | `/api/conversations/{conversation_id}/messages` | GET | Web Chat BFF | Message history pagination | Target 已实现；G1 deployment probe pending |
+| `/api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` | POST | Web Chat BFF | 幂等取消 active Invocation，并在 204 前释放 Conversation lock | Target 已实现；G1 deployment probe pending |
 | `/auth/oauth2/callback/m365-calendar` | GET | Cloudflare Pages BFF server-side callback forward | 完成 Calendar Resource Token Auth session binding，并返回 result | production 经 Gateway full Runtime path；local 可 direct override |
 | `/invocations/playground` | GET | 浏览器 | Chainlit 调试 UI | ✅ 通过完整 Runtime path；Cloudflare Function 不代理 |
 

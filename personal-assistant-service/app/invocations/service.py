@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import AbstractAsyncContextManager
@@ -61,10 +62,14 @@ class InvocationExecution:
         self._lock_context = lock_context
         self._lock_lease = lock_lease
         self._closed = False
+        self._closed_event = asyncio.Event()
+        self._running_task: asyncio.Task[object] | None = None
+        self._cancel_requested = False
         self.status = "prepared"
 
     async def run_sync(self) -> InvocationResponse:
         self.status = "running"
+        self._bind_current_task()
         try:
             response = await self._handler.handle(
                 message=self._request.message,
@@ -74,6 +79,9 @@ class InvocationExecution:
             await self._commit_assistant(response)
             self.status = "success"
             return InvocationResponse(response=response)
+        except asyncio.CancelledError:
+            self.status = "cancelled"
+            raise
         except Exception:
             self.status = "error"
             raise
@@ -82,6 +90,7 @@ class InvocationExecution:
 
     async def stream_sse(self) -> AsyncIterator[str]:
         self.status = "running"
+        self._bind_current_task()
         tokens: list[str] = []
         try:
             async for event in self._handler.handle_stream(
@@ -105,6 +114,9 @@ class InvocationExecution:
             await self._commit_assistant(response)
             self.status = "success"
             yield _sse_data({"token": "", "done": True})
+        except asyncio.CancelledError:
+            self.status = "cancelled"
+            raise
         except Exception as error:
             self.status = "error"
             logger.exception("Invocation stream execution failed", exc_info=error)
@@ -119,9 +131,28 @@ class InvocationExecution:
 
     async def close(self) -> None:
         if self._closed:
+            await self._closed_event.wait()
             return
         self._closed = True
-        await self._lock_context.__aexit__(None, None, None)
+        try:
+            await self._lock_context.__aexit__(None, None, None)
+        finally:
+            self._closed_event.set()
+
+    async def cancel(self) -> None:
+        self._cancel_requested = True
+        task = self._running_task
+        if task is not None and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+        await self._closed_event.wait()
+
+    def _bind_current_task(self) -> None:
+        task = asyncio.current_task()
+        if task is None:
+            raise RuntimeError("invocation execution requires an asyncio task")
+        self._running_task = task
+        if self._cancel_requested:
+            task.cancel()
 
     async def _commit_assistant(self, response: str) -> None:
         if not isinstance(response, str) or not response:

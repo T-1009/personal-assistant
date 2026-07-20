@@ -161,9 +161,17 @@ sequenceDiagram
         API->>Agent: run thread_id=user_id:conversation_id
         Agent-->>API: non-terminal structured events
         API-->>UI: token SSE events
-        API->>DB: insert assistant Message + commit
-        API-->>UI: done=true
-        API->>DB: advisory unlock
+        alt User stops generation
+            UI->>BFF: POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel
+            BFF->>API: same Runtime Session cancellation command
+            API->>Agent: cancel active execution task
+            API->>DB: advisory unlock
+            API-->>UI: 204 cancellation completed
+        else Agent completes
+            API->>DB: insert assistant Message + commit
+            API-->>UI: done=true
+            API->>DB: advisory unlock
+        end
     end
 ```
 
@@ -171,6 +179,12 @@ sequenceDiagram
 - LLM/SSE 期间持有 lock connection，但不持有数据库 transaction。
 - `409 duplicate_message` 不重跑 Agent；Client 重新读取该 Conversation history。
 - Client、BFF、Service 都不自动重试 `POST /invocations`。
+- Transport disconnect 只作为 best-effort；Client Stop 必须发送幂等
+  `POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel`。
+  Service 的 active
+  execution registry 以 `user_id + conversation_id + client_message_id` 定位任务，取消后
+  等待 lock 释放再返回 204。相同 Runtime Session header 保证取消命令路由到发起任务的
+  Runtime；若任务已结束或不存在，仍幂等返回 204。
 - `AgentHandler` 只产生非 terminal event；Invocation Service 独占 HTTP/SSE terminal。
 - sync JSON 与 SSE 共用同一个 prepare、lock、idempotency 和 Message persistence core。
 

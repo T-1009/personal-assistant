@@ -4,7 +4,11 @@ import type {
   ChatModelRunResult,
 } from "@assistant-ui/react";
 import { handleChatEvent } from "@/lib/chat/chat-event-handler";
-import { ChatApiError, invokeChat } from "@/lib/chat/chat-api-client";
+import {
+  cancelChat,
+  ChatApiError,
+  invokeChat,
+} from "@/lib/chat/chat-api-client";
 import { parseSSEStream } from "@/lib/chat/sse-parser";
 
 /**
@@ -21,6 +25,24 @@ type DuplicateMessageHandler = (conversationId: string) => void;
 
 const defaultConversationIdResolver: ConversationIdResolver = (options) =>
   options.unstable_threadId;
+const pendingCancellations = new Map<string, Promise<void>>();
+
+function trackCancellation(
+  conversationId: string,
+  clientMessageId: string,
+): void {
+  let tracked: Promise<void>;
+  tracked = cancelChat(conversationId, clientMessageId)
+    .catch((error) => {
+      console.error("Failed to cancel Invocation", error);
+    })
+    .finally(() => {
+      if (pendingCancellations.get(conversationId) === tracked) {
+        pendingCancellations.delete(conversationId);
+      }
+    });
+  pendingCancellations.set(conversationId, tracked);
+}
 
 async function* runChat(
   options: ChatModelRunOptions,
@@ -39,44 +61,62 @@ async function* runChat(
     if (!conversationId) {
       throw new Error("Conversation initialization did not return an ID.");
     }
+    await pendingCancellations.get(conversationId);
+    const clientMessageId = crypto.randomUUID();
     let fullText = "";
     let completed = false;
+    let invocationStarted = false;
+    let cancellationStarted = false;
 
-    let stream: ReadableStream<Uint8Array>;
+    const handleAbort = () => {
+      if (!invocationStarted || cancellationStarted) return;
+      cancellationStarted = true;
+      trackCancellation(conversationId, clientMessageId);
+    };
+    abortSignal.addEventListener("abort", handleAbort, { once: true });
+
     try {
-      stream = await invokeChat(
-        query,
-        conversationId,
-        crypto.randomUUID(),
-        abortSignal,
-      );
-    } catch (error) {
-      if (
-        error instanceof ChatApiError &&
-        error.code === "duplicate_message"
-      ) {
-        onDuplicateMessage?.(conversationId);
-      }
-      throw error;
-    }
+      invocationStarted = true;
+      if (abortSignal.aborted) handleAbort();
 
-    for await (const event of parseSSEStream(stream)) {
-      const result = handleChatEvent(event, {
-        assistantMessageId,
-        fullText,
-      });
-      fullText = result.fullText;
-
-      for (const text of result.contentUpdates) {
-        yield {
-          content: [{ type: "text", text }],
-        };
+      let stream: ReadableStream<Uint8Array>;
+      try {
+        stream = await invokeChat(
+          query,
+          conversationId,
+          clientMessageId,
+          abortSignal,
+        );
+      } catch (error) {
+        if (
+          error instanceof ChatApiError &&
+          error.code === "duplicate_message"
+        ) {
+          onDuplicateMessage?.(conversationId);
+        }
+        throw error;
       }
 
-      if (result.done) {
-        completed = true;
-        break;
+      for await (const event of parseSSEStream(stream)) {
+        const result = handleChatEvent(event, {
+          assistantMessageId,
+          fullText,
+        });
+        fullText = result.fullText;
+
+        for (const text of result.contentUpdates) {
+          yield {
+            content: [{ type: "text", text }],
+          };
+        }
+
+        if (result.done) {
+          completed = true;
+          break;
+        }
       }
+    } finally {
+      abortSignal.removeEventListener("abort", handleAbort);
     }
 
     if (!completed) {

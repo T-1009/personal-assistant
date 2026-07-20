@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.responses import JSONResponse
 
-from app.auth import extract_authenticated_user_id
+from app.auth import extract_authenticated_user_id, extract_gateway_session_id
 from app.conversations.locks import ConversationBusyError, ConversationLock
 from app.conversations.models import (
     ApiError,
@@ -25,6 +25,7 @@ from app.conversations.service import (
 )
 from app.conversations.store import ConversationStore
 from app.database import Database
+from app.invocations.registry import InvocationKey, InvocationRegistry
 
 router = APIRouter(prefix="/api/conversations", tags=["conversations"])
 
@@ -148,6 +149,32 @@ async def delete_conversation(
         )
     except CheckpointDeleteError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+
+
+@router.post(
+    "/{conversation_id}/invocations/{client_message_id}/cancel",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    responses={
+        204: {"description": "The Invocation is cancelled or already finished."},
+    },
+)
+async def cancel_conversation_invocation(
+    request: Request,
+    conversation_id: UUID,
+    client_message_id: UUID,
+) -> Response:
+    user_id = extract_authenticated_user_id(request)
+    extract_gateway_session_id(request)
+    registry: InvocationRegistry = request.app.state.invocation_registry
+    await registry.cancel(
+        key=InvocationKey(
+            user_id=user_id,
+            conversation_id=conversation_id,
+            client_message_id=client_message_id,
+        )
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.get(

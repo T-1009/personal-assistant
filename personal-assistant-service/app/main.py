@@ -37,10 +37,8 @@ from app.conversations.locks import ConversationBusyError  # noqa: E402
 from app.conversations.models import ApiError  # noqa: E402
 from app.conversations.routes import router as conversations_router  # noqa: E402
 from app.database import Database  # noqa: E402
-from app.invocations.models import (  # noqa: E402
-    InvocationRequest,
-    InvocationResponse,
-)
+from app.invocations.models import InvocationRequest, InvocationResponse  # noqa: E402
+from app.invocations.registry import InvocationKey, InvocationRegistry  # noqa: E402
 from app.invocations.service import (  # noqa: E402
     ArchivedConversationError,
     DuplicateMessageError,
@@ -404,6 +402,7 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+app.state.invocation_registry = InvocationRegistry()
 app.add_middleware(RequestLoggingMiddleware)
 app.include_router(conversations_router)
 
@@ -535,6 +534,19 @@ async def invocations(request: Request):
 
     started_at = time.perf_counter()
     logger.info("Invocation started mode=%s", mode)
+    registry: InvocationRegistry = request.app.state.invocation_registry
+    invocation_key = InvocationKey(
+        user_id=user_id,
+        conversation_id=invocation.conversation_id,
+        client_message_id=invocation.client_message_id,
+    )
+    registry.register(key=invocation_key, execution=execution)
+
+    async def finalize_execution() -> None:
+        try:
+            await execution.close()
+        finally:
+            registry.unregister(key=invocation_key, execution=execution)
 
     if stream:
 
@@ -543,6 +555,7 @@ async def invocations(request: Request):
                 async for sse_data in execution.stream_sse():
                     yield sse_data
             finally:
+                await finalize_execution()
                 logger.info(
                     "Invocation completed mode=stream status=%s duration_ms=%.2f",
                     execution.status,
@@ -557,7 +570,7 @@ async def invocations(request: Request):
                 "Connection": "keep-alive",
                 "X-Accel-Buffering": "no",
             },
-            background=BackgroundTask(execution.close),
+            background=BackgroundTask(finalize_execution),
         )
 
     try:
@@ -574,6 +587,8 @@ async def invocations(request: Request):
             code="invocation_failed",
             detail="The assistant could not complete this request.",
         )
+    finally:
+        registry.unregister(key=invocation_key, execution=execution)
 
     logger.info(
         "Invocation completed mode=sync status=success duration_ms=%.2f",

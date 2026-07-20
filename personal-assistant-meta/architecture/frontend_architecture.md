@@ -335,8 +335,8 @@ flowchart LR
 
 | 模块 | 稳定职责 |
 |------|----------|
-| `chat-adapter.ts` | 等待 remote Conversation 初始化，生成唯一 `client_message_id`，编排 invoke/parse/handle |
-| `chat-api-client.ts` | 构造 Conversation-aware body、proactive refresh、401/403 fail-closed；不 retry POST |
+| `chat-adapter.ts` | 等待 remote Conversation 初始化，生成唯一 `client_message_id`，编排 invoke/parse/handle；Stop 后等待 cancellation 204 再允许同 Conversation 的下一次 POST |
+| `chat-api-client.ts` | 构造 Conversation-aware body、proactive refresh、401/403 fail-closed；通过 `POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` 显式取消，不 retry Invocation |
 | `conversations/api.ts` | snake_case wire 与 camelCase domain 转换、CRUD、Message history pagination |
 | `conversations/runtime.tsx` | RemoteThreadListAdapter、`remoteId=conversation_id`、load-only history adapter |
 | `sse-parser.ts` | 处理 stream chunk、CRLF normalization、`data:` line 和 JSON decode |

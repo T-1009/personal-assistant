@@ -107,7 +107,8 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
 
 | Namespace | 用途 | 示例 |
 |-----------|------|------|
-| `/invocations` | 对话入口，仅保留 `POST /invocations` 主 contract | `POST /invocations` |
+| `/invocations` | AgentArts Runtime 对话执行入口 | `POST /invocations` |
+| `/api/conversations/...` | Conversation、Message history 与 Conversation-scoped commands | `GET /api/conversations/{conversation_id}/messages`、`POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` |
 | `/auth/...` | inbound login、OAuth2 callback、委托授权 BFF redirect route | `GET /auth/callback/m365-calendar` |
 | `/api/calendar/...` | 日历资源或日历相关 first-party API | `GET /api/calendar/events` |
 | `/api/mail/...` | 邮件资源或邮件相关 first-party API | `GET /api/mail/messages` |
@@ -164,6 +165,7 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
 | 能力 | Frontend path | Cloudflare Function route | Gateway full Runtime path | Backend container path |
 |------|---------------|--------------------------|---------------------------|------------------------|
 | Web Chat invocation | `POST /invocations` | `functions/invocations.js` | `POST /runtimes/personal-assistant/invocations` | `POST /invocations` |
+| Invocation cancellation | `POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` | `functions/api/conversations/[conversation_id]/invocations/[client_message_id]/cancel.js` | `POST /runtimes/personal-assistant/invocations/api/conversations/{conversation_id}/invocations/{client_message_id}/cancel` | same public path |
 | Conversation list/create | `GET/POST /api/conversations` | `functions/api/conversations.js` | `GET/POST /runtimes/personal-assistant/invocations/api/conversations` | `GET/POST /api/conversations` |
 | Conversation get/update/delete | `GET/PATCH/DELETE /api/conversations/{conversation_id}` | `functions/api/conversations/[conversation_id].js` | same suffix under Runtime invocation root | same public path |
 | Conversation messages | `GET /api/conversations/{conversation_id}/messages` | `functions/api/conversations/[conversation_id]/messages.js` | same suffix under Runtime invocation root | same public path |

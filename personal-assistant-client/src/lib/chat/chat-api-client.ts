@@ -142,3 +142,21 @@ export async function invokeChat(
   }
   return response.body;
 }
+
+export async function cancelChat(
+  conversationId: string,
+  clientMessageId: string,
+): Promise<void> {
+  const idToken = await getRequestToken();
+  const response = await fetch(
+    `/api/conversations/${encodeURIComponent(conversationId)}/invocations/${encodeURIComponent(clientMessageId)}/cancel`,
+    {
+      method: "POST",
+      headers: buildHeaders(idToken, "application/json"),
+      credentials: "same-origin",
+    },
+  );
+  if (!response.ok) {
+    await throwResponseError(response);
+  }
+}

@@ -39,6 +39,8 @@ class DeterministicAgentHandler(AgentHandler):
             type=AgentEventType.TOKEN,
             token=f"Echo: {message}",
         )
+        if message == "cancel this response":
+            await asyncio.sleep(5)
 
 
 _handler: DeterministicAgentHandler | None = None

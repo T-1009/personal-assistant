@@ -173,6 +173,74 @@ describe("chatAdapter", () => {
       const init = mockFetch.mock.calls[0][1] as RequestInit;
       expect(init.signal).toBe(controller.signal);
     });
+
+    it("cancels the active Invocation before sending the next message", async () => {
+      let resolveCancellation: ((response: Response) => void) | undefined;
+      let postCount = 0;
+      const mockFetch = vi.fn().mockImplementation(
+        (url: string, init?: RequestInit) => {
+          if (url.endsWith("/cancel")) {
+            return new Promise<Response>((resolve) => {
+              resolveCancellation = resolve;
+            });
+          }
+
+          postCount += 1;
+          if (postCount === 1) {
+            return Promise.resolve({
+              ok: true,
+              body: new ReadableStream<Uint8Array>({
+                start(streamController) {
+                  init?.signal?.addEventListener(
+                    "abort",
+                    () => {
+                      streamController.error(
+                        new DOMException("The operation was aborted", "AbortError"),
+                      );
+                    },
+                    { once: true },
+                  );
+                },
+              }),
+            });
+          }
+
+          return Promise.resolve({
+            ok: true,
+            body: createMockStream([]),
+          });
+        },
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+      const controller = new AbortController();
+      const firstRun = collectResults("first", controller.signal).catch(
+        (error: unknown) => error,
+      );
+
+      await vi.waitFor(() => expect(postCount).toBe(1));
+      const firstPostBody = JSON.parse(
+        String((mockFetch.mock.calls[0][1] as RequestInit).body),
+      ) as Record<string, unknown>;
+      controller.abort();
+
+      await vi.waitFor(() => {
+        expect(mockFetch).toHaveBeenCalledTimes(2);
+        expect(mockFetch.mock.calls[1][1]).toMatchObject({ method: "POST" });
+      });
+      expect(mockFetch.mock.calls[1][0]).toBe(
+        `/api/conversations/11111111-1111-4111-8111-111111111111/invocations/${String(firstPostBody.client_message_id)}/cancel`,
+      );
+
+      const secondRun = collectResults("second");
+      await Promise.resolve();
+      expect(postCount).toBe(1);
+
+      resolveCancellation?.(new Response(null, { status: 204 }));
+
+      await secondRun;
+      expect(postCount).toBe(2);
+      expect((await firstRun as DOMException).name).toBe("AbortError");
+    });
   });
 
   describe("SSE token parsing", () => {

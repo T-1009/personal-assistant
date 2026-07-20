@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -239,6 +240,106 @@ async def test_stream_commits_assistant_before_success_terminal(
     assert [message.role for message in after_done] == ["user", "assistant"]
     with pytest.raises(StopAsyncIteration):
         await anext(stream)
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_cancelled_stream_releases_conversation_lock(
+    invocation_context: InvocationTestContext,
+):
+    context = invocation_context
+    conversation = await context.store.create(user_id="user-1", title="Cancelled")
+    execution = await InvocationService(context.database).prepare(
+        request=InvocationRequest.model_validate(_payload(conversation, stream=True)),
+        user_id="user-1",
+        handler=context.handler,
+    )
+    stream = execution.stream_sse()
+
+    first = json.loads((await anext(stream)).removeprefix("data: "))
+    assert first == {"token": "Hello", "done": False}
+    await stream.aclose()
+
+    next_execution = await InvocationService(context.database).prepare(
+        request=InvocationRequest.model_validate(_payload(conversation, stream=True)),
+        user_id="user-1",
+        handler=context.handler,
+    )
+    await next_execution.close()
+
+    messages = await context.store.list_messages(
+        conversation_pk=conversation.pk,
+        after_sequence=None,
+        limit=10,
+    )
+    assert [message.role for message in messages] == ["user", "user"]
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.asyncio
+async def test_cancel_command_stops_stream_before_next_invocation(
+    invocation_context: InvocationTestContext,
+):
+    context = invocation_context
+    conversation = await context.store.create(user_id="user-1", title="Cancel API")
+
+    class BlockingAgentHandler(FakeAgentHandler):
+        def __init__(self) -> None:
+            super().__init__()
+            self.started = asyncio.Event()
+            self.release = asyncio.Event()
+
+        async def handle_stream(
+            self,
+            message: str,
+            user_id: str,
+            conversation_id: str,
+        ) -> AsyncIterator[AgentStreamEvent]:
+            del message, user_id, conversation_id
+            self.started.set()
+            yield AgentStreamEvent(type=AgentEventType.TOKEN, token="partial")
+            await self.release.wait()
+
+    blocking_handler = BlockingAgentHandler()
+    app.state.agent_handler = blocking_handler
+    client_message_id = uuid4()
+    first_request = asyncio.create_task(
+        context.client.post(
+            "/invocations",
+            json=_payload(
+                conversation,
+                client_message_id=client_message_id,
+                stream=True,
+            ),
+            headers=_headers("user-1"),
+        )
+    )
+    await blocking_handler.started.wait()
+
+    cancelled = await context.client.post(
+        f"/api/conversations/{conversation.id}/invocations/{client_message_id}/cancel",
+        headers=_headers("user-1"),
+    )
+    assert cancelled.status_code == 204
+    first_result = await asyncio.gather(first_request, return_exceptions=True)
+    assert isinstance(first_result[0], (httpx.Response, AssertionError))
+
+    app.state.agent_handler = context.handler
+    retried = await context.client.post(
+        "/invocations",
+        json=_payload(conversation),
+        headers=_headers("user-1"),
+    )
+    assert retried.status_code == 200
+
+    messages = await context.store.list_messages(
+        conversation_pk=conversation.pk,
+        after_sequence=None,
+        limit=10,
+    )
+    assert [message.role for message in messages] == ["user", "user", "assistant"]
 
 
 @pytest.mark.integration

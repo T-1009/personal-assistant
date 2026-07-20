@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { onRequestPost as onRequestPostRoot } from "./invocations.js";
+import { onRequestPost as onRequestPostCancellation } from "./api/conversations/[conversation_id]/invocations/[client_message_id]/cancel.js";
 import {
   buildCallbackUpstreamUrl,
   onRequestGet as onRequestGetCalendarCallback,
@@ -107,6 +108,62 @@ describe("Cloudflare Pages invocations proxy", () => {
 
     expect(mockFetch.mock.calls[0][0].url).toBe(
       "http://localhost:8080/invocations",
+    );
+  });
+
+  it("forwards explicit invocation cancellation through the Gateway suffix path", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    globalThis.fetch = mockFetch;
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const clientMessageId = "22222222-2222-4222-8222-222222222222";
+    const request = new Request(
+      `https://agentarts-personal-assistant.pages.dev/api/conversations/${conversationId}/invocations/${clientMessageId}/cancel`,
+      {
+        method: "POST",
+      },
+    );
+
+    const response = await onRequestPostCancellation({
+      request,
+      env,
+      params: {
+        conversation_id: conversationId,
+        client_message_id: clientMessageId,
+      },
+    });
+    const forwardedRequest = mockFetch.mock.calls[0][0];
+
+    expect(forwardedRequest.method).toBe("POST");
+    expect(forwardedRequest.url).toBe(
+      `${env.AGENTARTS_INVOCATIONS_URL}/api/conversations/${conversationId}/invocations/${clientMessageId}/cancel`,
+    );
+    expect(response.status).toBe(204);
+  });
+
+  it("uses the same Service cancellation path in local Pages mode", async () => {
+    const mockFetch = vi.fn().mockResolvedValue(new Response(null, { status: 204 }));
+    globalThis.fetch = mockFetch;
+    const conversationId = "11111111-1111-4111-8111-111111111111";
+    const clientMessageId = "22222222-2222-4222-8222-222222222222";
+    const path = `/api/conversations/${conversationId}/invocations/${clientMessageId}/cancel`;
+    const request = new Request(`http://localhost:5173${path}`, {
+      method: "POST",
+    });
+
+    await onRequestPostCancellation({
+      request,
+      env: {
+        PA_ENV: "local",
+        AGENTARTS_INVOCATIONS_URL: "http://localhost:8080",
+      },
+      params: {
+        conversation_id: conversationId,
+        client_message_id: clientMessageId,
+      },
+    });
+
+    expect(mockFetch.mock.calls[0][0].url).toBe(
+      `http://localhost:8080${path}`,
     );
   });
 
