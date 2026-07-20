@@ -84,7 +84,23 @@ cp .env.example .env
 本地开发填写 `.env`；生产环境在 AgentArts Runtime / CI/CD 注入同名环境变量。
 `app/settings.py` 是内部读取实现，不是需要修改的配置文件。
 
-### 3. 配置本地 JWT Workload Identity
+### 3. 初始化或升级 PostgreSQL Schema
+
+先在 `.env` 配置 `POSTGRES_DSN`。首次初始化数据库或拉取到新 migration 后，执行
+`upgrade head`。
+
+| 用途 | 命令 |
+|------|------|
+| 查看数据库当前 revision | `uv run --env-file .env alembic current` |
+| 查看 migration 历史 | `uv run --env-file .env alembic history` |
+| 查看最新 head | `uv run --env-file .env alembic heads` |
+| 升级到最新 schema | `uv run --env-file .env alembic upgrade head` |
+| 升级到指定 revision | `uv run --env-file .env alembic upgrade <revision>` |
+| 创建空 migration | `uv run alembic revision -m "<description>"` |
+
+当前 migration 需手写并审查，不使用 `--autogenerate`，也不支持 downgrade。
+
+### 4. 配置本地 JWT Workload Identity
 
 本地普通对话可以只用 mock header；如果要跑 Calendar OAuth2 full flow，并让
 Service 使用真实 Microsoft Entra `Authorization: Bearer <id_token>` 主动
@@ -102,7 +118,7 @@ Service 默认读取
 `AGENT_IDENTITY_LOCAL_JWT_WORKLOAD_NAME=pa-local-jwt-workload`。不要把它改成
 service-created `agent-personal-assistant`，该 workload 只能被 Gateway 路径使用。
 
-### 4. 配置 LLM 凭据
+### 5. 配置 LLM 凭据
 
 DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Identity 中创建 API key credential provider：
 
@@ -116,7 +132,7 @@ DeepSeek API key 不再通过环境变量注入 Runtime。请在 AgentArts Ident
 模型、Provider 和可选 endpoint override 分别使用 `LLM_MODEL`、`LLM_PROVIDER` 和
 `LLM_BASE_URL`。旧的 `MODEL_*` 环境变量不再支持。
 
-### 5. 启动服务
+### 6. 启动服务
 
 ```bash
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload \
@@ -127,7 +143,7 @@ Production container 使用 `config/logging.prod.yaml`，将 Uvicorn lifecycle�
 application 和 HTTP completion events 统一输出为常规 stdout console logs。`LOG_LEVEL`
 同时控制全部 logger；request ID 会通过 `X-Request-ID` response header 返回。
 
-### 6. 打开浏览器
+### 7. 打开浏览器
 
 访问 `http://localhost:8080/invocations/playground` 进入 Chainlit 调试界面。API 端点见下方。
 
