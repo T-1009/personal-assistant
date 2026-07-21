@@ -69,6 +69,8 @@ describe("Conversation remote thread adapter", () => {
       3,
       "active",
       "active-next",
+      50,
+      undefined,
     );
   });
 
@@ -146,7 +148,18 @@ describe("Conversation remote thread adapter", () => {
   it("allows initialization after a list timeout", async () => {
     vi.useFakeTimers();
     try {
-      api.listConversations.mockImplementation(() => new Promise(() => {}));
+      const signals: AbortSignal[] = [];
+      api.listConversations.mockImplementation(
+        (
+          _status: string,
+          _cursor: string | undefined,
+          _limit: number,
+          signal: AbortSignal,
+        ) => {
+          signals.push(signal);
+          return new Promise(() => {});
+        },
+      );
       api.createConversation.mockResolvedValue(active);
 
       const list = adapter.list();
@@ -159,6 +172,8 @@ describe("Conversation remote thread adapter", () => {
       await vi.runOnlyPendingTimersAsync();
 
       await listResult;
+      expect(signals).toHaveLength(2);
+      expect(signals.every((signal) => signal.aborted)).toBe(true);
       await expect(initialize).resolves.toEqual({
         remoteId: active.id,
         externalId: active.id,

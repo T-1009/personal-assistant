@@ -23,6 +23,13 @@ interface PageCursor {
   archivedDone?: boolean;
 }
 
+type ConversationThreadListAdapter = Omit<RemoteThreadListAdapter, "list"> & {
+  list(
+    options?: Parameters<RemoteThreadListAdapter["list"]>[0],
+    signal?: AbortSignal,
+  ): ReturnType<RemoteThreadListAdapter["list"]>;
+};
+
 const CONVERSATION_LIST_TIMEOUT_MS = 15_000;
 const CONVERSATION_LIST_ERROR = "Conversations could not be loaded.";
 
@@ -48,9 +55,14 @@ function setConversationListError(error: unknown): void {
     );
 }
 
-function withConversationListTimeout<T>(request: Promise<T>): Promise<T> {
+function withConversationListTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const request = run(controller.signal);
   return new Promise((resolve, reject) => {
     const timeout = window.setTimeout(() => {
+      controller.abort();
       reject(new Error(CONVERSATION_LIST_ERROR));
     }, CONVERSATION_LIST_TIMEOUT_MS);
 
@@ -118,18 +130,18 @@ function ConversationThreadProvider({ children }: PropsWithChildren) {
   );
 }
 
-const conversationThreadListAdapter: RemoteThreadListAdapter = {
-  async list(options) {
+const conversationThreadListAdapter: ConversationThreadListAdapter = {
+  async list(options, signal) {
     useConversationListStore.getState().setError(null);
     try {
       const cursor = decodePageCursor(options?.after);
       const [active, archived] = await Promise.all([
         cursor.activeDone
           ? Promise.resolve({ items: [], nextCursor: undefined })
-          : listConversations("active", cursor.active),
+          : listConversations("active", cursor.active, 50, signal),
         cursor.archivedDone
           ? Promise.resolve({ items: [], nextCursor: undefined })
-          : listConversations("archived", cursor.archived),
+          : listConversations("archived", cursor.archived, 50, signal),
       ]);
       const next: PageCursor = {
         active: active.nextCursor,
@@ -211,8 +223,8 @@ export function createConversationThreadListAdapter(): RemoteThreadListAdapter {
 
       const token = Symbol("full-list");
       currentFullListToken = token;
-      const request = withConversationListTimeout(
-        conversationThreadListAdapter.list(options),
+      const request = withConversationListTimeout((signal) =>
+        conversationThreadListAdapter.list(options, signal),
       );
       void request.then(
         () => undefined,

@@ -42,7 +42,13 @@ describe("Conversation API", () => {
     );
     globalThis.fetch = mockFetch;
 
-    const result = await listConversations("active", undefined, 25);
+    const controller = new AbortController();
+    const result = await listConversations(
+      "active",
+      undefined,
+      25,
+      controller.signal,
+    );
 
     expect(result).toEqual({
       items: [
@@ -60,6 +66,7 @@ describe("Conversation API", () => {
     const [url, init] = mockFetch.mock.calls[0] as [string, RequestInit];
     expect(url).toBe("/api/conversations?status=active&limit=25");
     expect(init.credentials).toBe("same-origin");
+    expect(init.signal).toBe(controller.signal);
     expect(init.headers).not.toHaveProperty("x-hw-agentarts-session-id");
     expect(init.headers).not.toHaveProperty("X-HW-AgentGateway-User-Id");
   });
