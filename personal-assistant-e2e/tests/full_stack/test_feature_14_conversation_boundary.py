@@ -158,6 +158,63 @@ class PagesDevProcess:
         self.process = None
 
 
+class ViteDevProcess:
+    """Run the Dev Mode UI while proxying API calls through Pages Functions."""
+
+    def __init__(self, *, port: int, proxy_target: str):
+        self.port = port
+        self.proxy_target = proxy_target
+        self.url = f"http://127.0.0.1:{port}"
+        self.process: subprocess.Popen | None = None
+
+    def start(self, timeout: float = 60.0) -> None:
+        self.process = subprocess.Popen(
+            [
+                _npm_command(),
+                "run",
+                "dev",
+                "--",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(self.port),
+                "--strictPort",
+            ],
+            cwd=str(CLIENT_DIR),
+            env={
+                **os.environ,
+                "BROWSER": "none",
+                "PA_SERVICE_PROXY_TARGET": self.proxy_target,
+                "VITE_ENTRA_CLIENT_ID": "",
+            },
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if self.process.poll() is not None:
+                stdout, stderr = self.process.communicate(timeout=5)
+                raise RuntimeError(
+                    "Vite exited before Bug 26 E2E startup:\n"
+                    f"{stdout.decode(errors='replace')[-500:]}\n"
+                    f"{stderr.decode(errors='replace')[-500:]}"
+                )
+            try:
+                if httpx.get(self.url, timeout=2.0).status_code == 200:
+                    return
+            except (httpx.ConnectError, httpx.TimeoutException):
+                pass
+            time.sleep(0.5)
+        self.stop()
+        raise TimeoutError("Vite did not become ready for Bug 26 E2E")
+
+    def stop(self) -> None:
+        if self.process is not None:
+            terminate_process_tree(self.process)
+        self.process = None
+
+
 @pytest.fixture
 def pages_stack():
     dsn = os.getenv("TEST_POSTGRES_DSN")
@@ -515,3 +572,81 @@ def test_bug_23_cancelled_stream_allows_next_invocation(pages_stack):
 
         assert retried.status_code == 200
         assert retried.json() == {"response": "Echo: continue after cancellation"}
+
+
+@pytest.mark.browser
+@pytest.mark.regression
+def test_bug_26_cancel_failure_shows_retry_before_next_invocation(pages_stack):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        if os.getenv("CI"):
+            raise
+        pytest.skip("playwright is not installed")
+
+    cancel_attempts = 0
+
+    def intercept_cancellation(route) -> None:
+        nonlocal cancel_attempts
+        cancel_attempts += 1
+        if cancel_attempts <= 2:
+            route.fulfill(
+                status=404,
+                content_type="application/json",
+                body=json.dumps({"detail": "Not Found"}),
+            )
+            return
+        route.continue_()
+
+    vite = ViteDevProcess(port=_find_free_port(), proxy_target=pages_stack)
+    vite.start()
+    try:
+        with sync_playwright() as playwright:
+            try:
+                browser = playwright.chromium.launch(headless=True)
+            except Exception as error:
+                if os.getenv("CI"):
+                    raise
+                pytest.skip(f"Playwright Chromium is unavailable: {error}")
+
+            page = browser.new_page(viewport={"width": 1280, "height": 800})
+            page.route(
+                "**/api/conversations/*/invocations/*/cancel",
+                intercept_cancellation,
+            )
+            try:
+                page.goto(vite.url, wait_until="networkidle", timeout=30_000)
+                composer = page.get_by_label("Message input")
+                composer.wait_for(timeout=15_000)
+                composer.fill("cancel this response")
+                page.get_by_label("Send message").click()
+
+                stop = page.get_by_label("Stop generating")
+                stop.wait_for(timeout=10_000)
+                stop.click()
+
+                retry = page.get_by_label("Retry stop")
+                retry.wait_for(timeout=10_000)
+                assert cancel_attempts == 2
+                assert page.get_by_label("Send message").count() == 0
+                assert page.get_by_text("Not Found", exact=True).count() == 0
+
+                composer.fill("continue after cancellation")
+                composer.press("Enter")
+                assert composer.input_value() == "continue after cancellation"
+
+                retry.click()
+                page.get_by_label("Send message").wait_for(timeout=10_000)
+                assert cancel_attempts == 3
+                assert composer.input_value() == "continue after cancellation"
+
+                page.get_by_label("Send message").click()
+                page.get_by_text(
+                    "Echo: continue after cancellation",
+                    exact=True,
+                ).wait_for(timeout=15_000)
+            finally:
+                page.close()
+                browser.close()
+    finally:
+        vite.stop()

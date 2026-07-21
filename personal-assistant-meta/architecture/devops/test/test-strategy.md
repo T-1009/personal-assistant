@@ -117,6 +117,7 @@ E2E smoke 回答：**跨系统主入口是否还活着？**
 | 启动 Service subprocess，`GET /ping` 返回 200 | process-level Service |
 | 启动 Vite + Service，`POST /invocations` 经过 Vite proxy 后到达 Service | Client dev server + Service |
 | Wrangler Pages + Service 中止 SSE 后，经 nested cancellation route 释放 lock 并继续发送 | Pages Functions + Service + PostgreSQL |
+| cancel 前两次返回 404 时显示 Retry stop，204 后恢复发送 | Browser + Pages Functions + Service + PostgreSQL |
 | production Pages `/` 返回 200 | deployed Frontend |
 | production Pages `/invocations` 无身份返回 401 | deployed Frontend + AgentArts Gateway auth gate |
 
@@ -372,7 +373,8 @@ Manual real auth 不应作为默认 CI 命令。它应由受控环境手动触�
   Invocation 回归测试，并断言 production/local upstream path 映射一致；204 后立即继续，
   不使用 sleep 掩盖 unlock race。
 - Service 覆盖 cancellation 抢先到达的 tombstone；Client 覆盖 cancellation 失败、同 key
-  重试、失败期间禁止新 Invocation，以及 bounded timeout。
+  有限自动重试、`Retry stop`、失败期间禁止新 Invocation，以及 bounded timeout；Browser
+  full-stack 覆盖 404 后不显示 Send/裸错误、手动重试 204 后恢复发送。
 - 增加 Pages Functions local dev + Service callback 的 Calendar callback bridge test。
 - 增加 ChatPage browser happy path：mock auth state，发送消息，观察 UI 收到 SSE token。
 

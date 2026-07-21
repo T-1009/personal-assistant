@@ -20,6 +20,11 @@ import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { AuthCard } from "@/components/chat/AuthCard";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
+import {
+  retryInvocationCancellation,
+  type InvocationCancellationStatus,
+  useInvocationCancellationStore,
+} from "@/lib/chat/cancellation-coordinator";
 import { cn } from "@/lib/utils";
 import {
   ActionBarMorePrimitive,
@@ -39,10 +44,12 @@ import {
   CheckIcon,
   CopyIcon,
   DownloadIcon,
+  LoaderCircleIcon,
   MoreHorizontalIcon,
+  RotateCwIcon,
   SquareIcon,
 } from "lucide-react";
-import type { FC } from "react";
+import type { FC, FormEvent } from "react";
 
 export const Thread: FC = () => {
   return (
@@ -144,9 +151,32 @@ const ThreadSuggestionItem: FC = () => {
   );
 };
 
+export function guardComposerSubmission(
+  status: InvocationCancellationStatus,
+  event: Pick<FormEvent<HTMLFormElement>, "preventDefault">,
+): void {
+  if (status !== "idle") {
+    event.preventDefault();
+  }
+}
+
 const Composer: FC = () => {
+  const conversationId = useAuiState(
+    (state) => state.threadListItem.remoteId,
+  );
+  const cancellationStatus = useInvocationCancellationStore((state) =>
+    conversationId
+      ? (state.byConversation[conversationId]?.status ?? "idle")
+      : "idle",
+  );
+
   return (
-    <ComposerPrimitive.Root className="aui-composer-root relative flex w-full flex-col">
+    <ComposerPrimitive.Root
+      className="aui-composer-root relative flex w-full flex-col"
+      onSubmit={(event) => {
+        guardComposerSubmission(cancellationStatus, event);
+      }}
+    >
       <ComposerPrimitive.AttachmentDropzone render={<div data-slot="aui_composer-shell" className="bg-background focus-within:border-ring/75 focus-within:ring-ring/20 data-[dragging=true]:border-ring data-[dragging=true]:bg-accent/50 flex w-full flex-col gap-2 rounded-(--composer-radius) border p-(--composer-padding) transition-shadow focus-within:ring-2 data-[dragging=true]:border-dashed" />}><ComposerAttachments /><ComposerPrimitive.Input
                       placeholder="Send a message..."
                       className="aui-composer-input placeholder:text-muted-foreground/80 max-h-32 min-h-10 w-full resize-none bg-transparent px-1.75 py-1 text-sm outline-none"
@@ -158,16 +188,84 @@ const Composer: FC = () => {
   );
 };
 
+interface CancellationActionProps {
+  status: InvocationCancellationStatus;
+  onRetry: () => void;
+}
+
+export const CancellationAction: FC<CancellationActionProps> = ({
+  status,
+  onRetry,
+}) => {
+  if (status === "idle") return null;
+
+  if (status === "cancelling") {
+    return (
+      <TooltipIconButton
+        tooltip="Stopping response"
+        type="button"
+        variant="default"
+        size="icon"
+        className="aui-composer-cancel size-8 rounded-full"
+        aria-label="Stopping response"
+        data-cancellation-state="cancelling"
+        disabled
+      >
+        <LoaderCircleIcon className="size-4 animate-spin" />
+      </TooltipIconButton>
+    );
+  }
+
+  return (
+    <TooltipIconButton
+      tooltip="Retry stop"
+      type="button"
+      variant="default"
+      size="icon"
+      className="aui-composer-cancel size-8 rounded-full"
+      aria-label="Retry stop"
+      data-cancellation-state="cancel_failed"
+      onClick={onRetry}
+    >
+      <RotateCwIcon className="size-4" />
+    </TooltipIconButton>
+  );
+};
+
 const ComposerAction: FC = () => {
+  const conversationId = useAuiState(
+    (state) => state.threadListItem.remoteId,
+  );
+  const cancellationStatus = useInvocationCancellationStore((state) =>
+    conversationId
+      ? (state.byConversation[conversationId]?.status ?? "idle")
+      : "idle",
+  );
+
+  const retryCancellation = () => {
+    if (conversationId) {
+      void retryInvocationCancellation(conversationId);
+    }
+  };
+
   return (
     <div className="aui-composer-action-wrapper relative flex items-center justify-between">
       <ComposerAddAttachment />
-      <AuiIf condition={(s) => !s.thread.isRunning}>
-        <ComposerPrimitive.Send render={<TooltipIconButton tooltip="Send message" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-8 rounded-full" aria-label="Send message" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
-      </AuiIf>
-      <AuiIf condition={(s) => s.thread.isRunning}>
-        <ComposerPrimitive.Cancel render={<Button type="button" variant="default" size="icon" className="aui-composer-cancel size-8 rounded-full" aria-label="Stop generating" />}><SquareIcon className="aui-composer-cancel-icon size-3 fill-current" /></ComposerPrimitive.Cancel>
-      </AuiIf>
+      {cancellationStatus === "idle" ? (
+        <>
+          <AuiIf condition={(s) => !s.thread.isRunning}>
+            <ComposerPrimitive.Send render={<TooltipIconButton tooltip="Send message" side="bottom" type="button" variant="default" size="icon" className="aui-composer-send size-8 rounded-full" aria-label="Send message" />}><ArrowUpIcon className="aui-composer-send-icon size-4" /></ComposerPrimitive.Send>
+          </AuiIf>
+          <AuiIf condition={(s) => s.thread.isRunning}>
+            <ComposerPrimitive.Cancel render={<Button type="button" variant="default" size="icon" className="aui-composer-cancel size-8 rounded-full" aria-label="Stop generating" />}><SquareIcon className="aui-composer-cancel-icon size-3 fill-current" /></ComposerPrimitive.Cancel>
+          </AuiIf>
+        </>
+      ) : (
+        <CancellationAction
+          status={cancellationStatus}
+          onRetry={retryCancellation}
+        />
+      )}
     </div>
   );
 };

@@ -198,10 +198,11 @@ sequenceDiagram
   Service registry 在 `prepare()` 前 reserve
   `user_id + conversation_id + client_message_id`；抢先到达的 cancellation 保存 120 秒
   tombstone，迟到 Invocation 命中后直接返回 `409 invocation_cancelled`。已 reserve 或运行的
-  execution 取消后等待 lock 释放再返回 204。Client cancellation 使用 15 秒 timeout；失败
-  状态保留在 per-Conversation barrier，下一次发送使用同一 `client_message_id` 重试，成功前
-  不发送新的 Invocation。相同 Runtime Session header 保证命令路由到发起任务的 Runtime；
-  若任务已结束或不存在，仍幂等返回 204。
+  execution 取消后等待 lock 释放再返回 204。Client cancellation 使用 15 秒 timeout，首次
+  Stop 最多执行两次 cancel 请求；最终失败后状态保留在 per-Conversation barrier，并显示
+  `Retry stop`，由用户使用同一 `client_message_id` 重试。204 前不显示 Send，也不发送新的
+  Invocation；输入草稿与 New Conversation 不受影响。相同 Runtime Session header 保证命令
+  路由到发起任务的 Runtime；若任务已结束或不存在，仍幂等返回 204。
 - `AgentHandler` 只产生非 terminal event；Invocation Service 独占 HTTP/SSE terminal。
 - sync JSON 与 SSE 共用同一个 prepare、lock、idempotency 和 Message persistence core。
 
