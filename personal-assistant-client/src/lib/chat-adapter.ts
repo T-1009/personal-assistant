@@ -4,11 +4,11 @@ import type {
   ChatModelRunResult,
 } from "@assistant-ui/react";
 import { handleChatEvent } from "@/lib/chat/chat-event-handler";
+import { ChatApiError, invokeChat } from "@/lib/chat/chat-api-client";
 import {
-  cancelChat,
-  ChatApiError,
-  invokeChat,
-} from "@/lib/chat/chat-api-client";
+  startInvocationCancellation,
+  waitForInvocationCancellation,
+} from "@/lib/chat/cancellation-coordinator";
 import { parseSSEStream } from "@/lib/chat/sse-parser";
 
 /**
@@ -22,72 +22,8 @@ type ConversationIdResolver = (
   options: ChatModelRunOptions,
 ) => string | undefined | Promise<string | undefined>;
 type DuplicateMessageHandler = (conversationId: string) => void;
-type CancellationResult =
-  | { ok: true }
-  | { ok: false; error: unknown };
-type PendingCancellation = {
-  clientMessageId: string;
-  result: Promise<CancellationResult>;
-};
-
 const defaultConversationIdResolver: ConversationIdResolver = (options) =>
   options.unstable_threadId;
-const pendingCancellations = new Map<string, PendingCancellation>();
-
-function startCancellation(
-  conversationId: string,
-  clientMessageId: string,
-): PendingCancellation {
-  return {
-    clientMessageId,
-    result: cancelChat(conversationId, clientMessageId).then(
-      () => ({ ok: true }),
-      (error: unknown) => {
-        console.error("Failed to cancel Invocation", error);
-        return { ok: false, error };
-      },
-    ),
-  };
-}
-
-function trackCancellation(
-  conversationId: string,
-  clientMessageId: string,
-): void {
-  const pending = startCancellation(conversationId, clientMessageId);
-  pendingCancellations.set(conversationId, pending);
-  void pending.result.then((result) => {
-    if (result.ok && pendingCancellations.get(conversationId) === pending) {
-      pendingCancellations.delete(conversationId);
-    }
-  });
-}
-
-async function waitForPendingCancellation(conversationId: string): Promise<void> {
-  let pending = pendingCancellations.get(conversationId);
-  if (!pending) return;
-
-  let result = await pending.result;
-  if (!result.ok) {
-    const current = pendingCancellations.get(conversationId);
-    if (current === pending) {
-      const retry = startCancellation(conversationId, pending.clientMessageId);
-      pendingCancellations.set(conversationId, retry);
-      pending = retry;
-    } else if (current) {
-      pending = current;
-    }
-    result = await pending.result;
-  }
-
-  if (result.ok) {
-    if (pendingCancellations.get(conversationId) === pending) {
-      pendingCancellations.delete(conversationId);
-    }
-  } else {
-    throw result.error;
-  }
-}
 
 async function* runChat(
   options: ChatModelRunOptions,
@@ -106,7 +42,7 @@ async function* runChat(
     if (!conversationId) {
       throw new Error("Conversation initialization did not return an ID.");
     }
-    await waitForPendingCancellation(conversationId);
+    if (!(await waitForInvocationCancellation(conversationId))) return;
     const clientMessageId = crypto.randomUUID();
     let fullText = "";
     let completed = false;
@@ -116,7 +52,7 @@ async function* runChat(
     const handleAbort = () => {
       if (!invocationStarted || cancellationStarted) return;
       cancellationStarted = true;
-      trackCancellation(conversationId, clientMessageId);
+      startInvocationCancellation(conversationId, clientMessageId);
     };
     abortSignal.addEventListener("abort", handleAbort, { once: true });
 

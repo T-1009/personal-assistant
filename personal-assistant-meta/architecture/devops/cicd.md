@@ -105,7 +105,14 @@ flowchart LR
 
 > 完整部署操作手册见 [agentarts-deploy-runbook.md](./agentarts-deploy-runbook.md)。
 
-### 3.3 注意事项
+### 3.3 跨端 API 兼容发布
+
+Frontend 与 Service deployment workflows 保持独立。新增跨端 API 时使用 additive
+Service-first rollout：先独立部署并验证 Service endpoint，再独立部署使用该能力的
+Frontend。Client 必须容忍短暂版本错配，不把 endpoint 404 变成不可恢复的聊天错误。
+该发布顺序是单次 contract change 的兼容策略，不构成 workflow 间的永久依赖。
+
+### 3.4 注意事项
 
 - AgentArts 部署需要 ARM64 镜像。CI Runner 必须是 ARM64 机器或使用 QEMU 模拟（`docker buildx`）
 - SWR 不支持 OCI 镜像格式。Docker 27+ 需设置 `export BUILDKIT_USE_OCI_MEDIA_TYPES=0`

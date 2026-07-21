@@ -160,6 +160,10 @@ jobs:
         working-directory: personal-assistant-e2e
         run: uv sync --locked
 
+      - name: Install Playwright Chromium
+        working-directory: personal-assistant-e2e
+        run: uv run playwright install --with-deps chromium
+
       - name: Install client dependencies
         working-directory: personal-assistant-client
         run: npm ci

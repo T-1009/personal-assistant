@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from "vitest";
 import { chatAdapter, createChatAdapter } from "./chat-adapter";
+import {
+  resetInvocationCancellations,
+  retryInvocationCancellation,
+  useInvocationCancellationStore,
+} from "@/lib/chat/cancellation-coordinator";
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useAuthStore } from "@/stores/auth-store";
 import type { ChatModelRunOptions, ChatModelRunResult } from "@assistant-ui/react";
@@ -105,6 +110,7 @@ describe("chatAdapter", () => {
     // Reset auth store to clean state before each test
     useAuthStore.getState().clearToken();
     useAuthCardStore.getState().clearAuth();
+    resetInvocationCancellations();
     mockAcquireIdTokenSilently.mockReset();
     mockClearInboundAuthSession.mockReset();
     mockClearInboundAuthSession.mockImplementation(async () => {
@@ -242,7 +248,7 @@ describe("chatAdapter", () => {
       expect((await firstRun as DOMException).name).toBe("AbortError");
     });
 
-    it("retries a failed cancellation and blocks new Invocations until it succeeds", async () => {
+    it("exposes a failed cancellation for manual retry without sending a new Invocation", async () => {
       let cancellationCount = 0;
       let resolveCancellation: ((response: Response) => void) | undefined;
       let postCount = 0;
@@ -254,8 +260,8 @@ describe("chatAdapter", () => {
             if (cancellationCount <= 2) {
               return Promise.resolve(
                 Response.json(
-                  { code: "cancellation_failed", detail: "try again" },
-                  { status: 503 },
+                  { detail: "Not Found" },
+                  { status: 404, statusText: "Not Found" },
                 ),
               );
             }
@@ -298,19 +304,33 @@ describe("chatAdapter", () => {
 
       await vi.waitFor(() => expect(postCount).toBe(1));
       controller.abort();
-      await vi.waitFor(() => expect(cancellationCount).toBe(1));
-
-      await expect(collectResults("blocked")).rejects.toMatchObject({
-        status: 503,
+      await vi.waitFor(() => expect(cancellationCount).toBe(2));
+      await vi.waitFor(() => {
+        expect(
+          useInvocationCancellationStore.getState().byConversation[
+            "11111111-1111-4111-8111-111111111111"
+          ]?.status,
+        ).toBe("cancel_failed");
       });
+
+      await expect(collectResults("blocked")).resolves.toEqual([]);
       expect(cancellationCount).toBe(2);
       expect(postCount).toBe(1);
 
-      const continued = collectResults("continued");
+      const retry = retryInvocationCancellation(
+        "11111111-1111-4111-8111-111111111111",
+      );
       await vi.waitFor(() => expect(cancellationCount).toBe(3));
       expect(postCount).toBe(1);
       resolveCancellation?.(new Response(null, { status: 204 }));
+      await expect(retry).resolves.toBe(true);
+      expect(
+        useInvocationCancellationStore.getState().byConversation[
+          "11111111-1111-4111-8111-111111111111"
+        ],
+      ).toBeUndefined();
 
+      const continued = collectResults("continued");
       await continued;
       expect(postCount).toBe(2);
       expect((await firstRun as DOMException).name).toBe("AbortError");
