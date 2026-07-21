@@ -580,6 +580,8 @@ def test_bug_26_cancel_failure_shows_retry_before_next_invocation(pages_stack):
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
+        if os.getenv("CI"):
+            raise
         pytest.skip("playwright is not installed")
 
     cancel_attempts = 0
@@ -603,6 +605,8 @@ def test_bug_26_cancel_failure_shows_retry_before_next_invocation(pages_stack):
             try:
                 browser = playwright.chromium.launch(headless=True)
             except Exception as error:
+                if os.getenv("CI"):
+                    raise
                 pytest.skip(f"Playwright Chromium is unavailable: {error}")
 
             page = browser.new_page(viewport={"width": 1280, "height": 800})
