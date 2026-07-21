@@ -210,6 +210,11 @@ Manual real auth 不进入默认 PR gate。它需要受控测试账号、环境�
 | Wrangler Pages dev + Service subprocess | `personal-assistant-e2e/` |
 | Production Cloudflare Pages + AgentArts Gateway | `personal-assistant-e2e/` 或 deployment smoke |
 
+Stale PostgreSQL Checkpointer recovery 属于 Service 内部 lifecycle 行为，使用 mock 的
+`psycopg.OperationalError` 在 `personal-assistant-service/tests/` 覆盖 sync、Streaming
+输出前 retry 和输出后不 retry。E2E 只需复用既有 SSE/full-stack 测试确认跨边界 contract
+未改变；不在 E2E 中伪造 Runtime 内部数据库连接故障。
+
 ### 5.2 Mocking rule
 
 允许 mock 外部平台，不应 mock 当前测试正在验证的内部边界。

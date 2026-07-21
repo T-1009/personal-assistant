@@ -101,6 +101,18 @@ Runtime Session 是稳定逻辑 routing key，不是物理 container identity。
 是否降低首条消息延迟必须由部署后的 fresh-cookie 两组 benchmark 证明；在 p50/p95 采样
 完成前，不承诺 warm-up latency 收益。
 
+### 3.3 Checkpointer connection recovery
+
+Runtime Session ID、FastAPI 进程生命周期和 PostgreSQL Checkpointer connection 是三个
+独立边界。RDS/PostgreSQL 可能在 Runtime 进程仍存活时关闭 AsyncPostgresSaver 持有的
+idle connection；这不代表 Runtime Session 或 Conversation 已失效。
+
+Service 检测到明确的 psycopg idle/closed connection error 时，会在复用原 Runtime
+Session ID、`user_id`、`conversation_id` 和 `thread_id` 的前提下重新打开 persistent
+Checkpointer，并最多重试当前 Agent invocation 一次。Streaming 已产生首个 event 后
+不重试，避免重复 token 或 custom event；平台回收 Runtime 只能作为额外的 operational
+recovery，不能替代 Service 自愈。
+
 ## 4. Conversation 与 Message
 
 Conversation 是用户可见、可持久化的对话，状态只有 `active` 和 `archived`。Message read

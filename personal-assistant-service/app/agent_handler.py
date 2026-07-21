@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from deepagents import create_deep_agent
+from psycopg import OperationalError
 
 from app.invocations.models import AgentEventType, AgentStreamEvent
 from app.llm_config import get_model
@@ -14,6 +15,13 @@ from app.tools import build_tools
 
 _handler_instance: "AgentHandler | None" = None
 logger = logging.getLogger("app.agent_handler")
+
+_RECOVERABLE_CHECKPOINTER_ERROR_MARKERS = (
+    "terminating connection due to idle-session timeout",
+    "the connection is closed",
+    "connection is closed",
+    "connection closed",
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -279,6 +287,33 @@ class AgentHandler:
             self._checkpointer_context = None
             await context.__aexit__(None, None, None)
 
+    def _uses_persistent_checkpointer(self) -> bool:
+        return bool(self.settings.postgres_dsn or self.settings.sqlite_db_path)
+
+    @staticmethod
+    def _is_recoverable_checkpointer_error(error: Exception) -> bool:
+        if not isinstance(error, OperationalError):
+            return False
+        message = str(error).lower()
+        return any(
+            marker in message for marker in _RECOVERABLE_CHECKPOINTER_ERROR_MARKERS
+        )
+
+    async def _restart_checkpointer(self, stale_checkpointer: Any) -> None:
+        """Reopen persistent Checkpointer resources after a stale connection."""
+        if not self._uses_persistent_checkpointer():
+            return
+
+        # A concurrent request may have already replaced the failed connection.
+        # Serialize the identity check and restart with Agent Bundle publication.
+        async with self._bundle_lock:
+            if self.checkpointer is not stale_checkpointer:
+                return
+
+            logger.warning("Restarting persistent Checkpointer after stale connection")
+            await self.shutdown()
+            await self.startup()
+
     @staticmethod
     def _build_config(user_id: str, conversation_id: str) -> dict:
         """构造 LangGraph config，thread_id = {user_id}:{conversation_id}。
@@ -297,7 +332,24 @@ class AgentHandler:
     ) -> str:
         """Invoke the agent synchronously and return the final response."""
         config = self._build_config(user_id, conversation_id)
-        result = await self._ainvoke_once(message, config)
+        await self.startup()
+        stale_checkpointer = self.checkpointer
+
+        try:
+            result = await self._ainvoke_once(message, config)
+        except Exception as error:
+            if not (
+                self._uses_persistent_checkpointer()
+                and self._is_recoverable_checkpointer_error(error)
+            ):
+                raise
+
+            logger.warning(
+                "Recoverable Checkpointer error during sync invocation; retrying once",
+                exc_info=True,
+            )
+            await self._restart_checkpointer(stale_checkpointer)
+            result = await self._ainvoke_once(message, config)
 
         messages = result.get("messages", [])
         if not messages:
@@ -319,8 +371,29 @@ class AgentHandler:
     ) -> AsyncGenerator[AgentStreamEvent, None]:
         """Yield structured, non-terminal Agent events."""
         config = self._build_config(user_id, conversation_id)
-        async for event in self._stream_once(message, config):
-            yield event
+        await self.startup()
+        stale_checkpointer = self.checkpointer
+        emitted = False
+
+        try:
+            async for event in self._stream_once(message, config):
+                emitted = True
+                yield event
+        except Exception as error:
+            if (
+                emitted
+                or not self._uses_persistent_checkpointer()
+                or not self._is_recoverable_checkpointer_error(error)
+            ):
+                raise
+
+            logger.warning(
+                "Recoverable Checkpointer error before stream output; retrying once",
+                exc_info=True,
+            )
+            await self._restart_checkpointer(stale_checkpointer)
+            async for event in self._stream_once(message, config):
+                yield event
 
     async def _stream_once(
         self,
