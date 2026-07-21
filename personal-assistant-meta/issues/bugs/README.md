@@ -20,6 +20,7 @@
 | [23](bug-23-cancelled-chat-keeps-conversation-busy/issue.md) | 中断聊天后 Conversation 仍保持 busy | feature-14-multi-session-runtime-prewarm | implemented |
 | [24](bug-24-checkpointer-recovery-regression/issue.md) | Feature 14 重构导致 PostgreSQL Checkpointer 自愈回归 | feature-14-multi-session-runtime-prewarm | implemented |
 | [25](bug-25-first-conversation-missing-from-sidebar/issue.md) | 首次聊天创建的 Conversation 未出现在 Sidebar | feature-14-multi-session-runtime-prewarm | implemented |
+| [26](bug-26-cancel-failure-recovery/issue.md) | Cancel 失败后 Conversation 无法恢复发送 | feature-14-multi-session-runtime-prewarm | in_progress |
 
 ## 已解决 Bug
 
