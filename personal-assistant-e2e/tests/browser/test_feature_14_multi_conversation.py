@@ -329,3 +329,80 @@ def test_create_send_switch_refresh_and_delete(vite_url):
         finally:
             page.close()
             browser.close()
+
+
+@pytest.mark.regression
+def test_bug_25_first_conversation_survives_delayed_initial_list(vite_url):
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        pytest.skip("playwright is not installed")
+
+    backend = ConversationHttpDouble()
+    with sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(headless=True)
+        except Exception as error:
+            pytest.skip(f"Playwright Chromium is unavailable: {error}")
+
+        page = browser.new_page(viewport={"width": 1280, "height": 800})
+        browser_errors: list[str] = []
+        page.on(
+            "console",
+            lambda message: (
+                browser_errors.append(message.text) if message.type == "error" else None
+            ),
+        )
+        page.on("pageerror", lambda error: browser_errors.append(str(error)))
+        page.add_init_script(
+            script="""
+                (() => {
+                  const originalFetch = window.fetch.bind(window);
+                  let releaseLists;
+                  const listGate = new Promise((resolve) => {
+                    releaseLists = resolve;
+                  });
+                  window.__bug25PendingLists = 0;
+                  window.__releaseBug25Lists = () => releaseLists();
+                  window.fetch = async (input, init) => {
+                    const request = input instanceof Request ? input : null;
+                    const method = (
+                      init?.method ?? request?.method ?? "GET"
+                    ).toUpperCase();
+                    const rawUrl = typeof input === "string" ? input : input.url;
+                    const response = await originalFetch(input, init);
+                    const path = new URL(rawUrl, window.location.href).pathname;
+                    if (method === "GET" && path === "/api/conversations") {
+                      window.__bug25PendingLists += 1;
+                      await listGate;
+                    }
+                    return response;
+                  };
+                })();
+            """
+        )
+        page.route("**/api/conversations**", backend.handle_conversations)
+        page.route("**/invocations", backend.handle_invocation)
+        try:
+            page.goto(vite_url, wait_until="domcontentloaded", timeout=30_000)
+            page.get_by_label("Message input").wait_for(timeout=15_000)
+            page.wait_for_function("window.__bug25PendingLists === 2")
+
+            message = "First conversation remains visible"
+            page.get_by_label("Message input").fill(message)
+            page.get_by_label("Send message").click()
+
+            assert backend.conversations == {}
+            assert backend.invocation_payloads == []
+
+            page.evaluate("window.__releaseBug25Lists()")
+            page.get_by_text(f"Answer: {message}", exact=True).wait_for(timeout=15_000)
+            page.get_by_role("button", name=message, exact=True).wait_for()
+
+            assert len(backend.conversations) == 1
+            assert len(backend.invocation_payloads) == 1
+            assert page.get_by_role("button", name=message, exact=True).count() == 1
+            assert browser_errors == []
+        finally:
+            page.close()
+            browser.close()

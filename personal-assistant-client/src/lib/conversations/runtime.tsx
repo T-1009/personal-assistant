@@ -74,7 +74,7 @@ function ConversationThreadProvider({ children }: PropsWithChildren) {
   );
 }
 
-export const conversationThreadListAdapter: RemoteThreadListAdapter = {
+const conversationThreadListAdapter: RemoteThreadListAdapter = {
   async list(options) {
     useConversationListStore.getState().setError(null);
     try {
@@ -158,3 +158,25 @@ export const conversationThreadListAdapter: RemoteThreadListAdapter = {
   },
   unstable_Provider: ConversationThreadProvider,
 };
+
+export function createConversationThreadListAdapter(): RemoteThreadListAdapter {
+  let initialListSettled: Promise<void> | undefined;
+
+  return {
+    ...conversationThreadListAdapter,
+    list(options) {
+      const request = conversationThreadListAdapter.list(options);
+      if (!options?.after && !initialListSettled) {
+        initialListSettled = request.then(
+          () => undefined,
+          () => undefined,
+        );
+      }
+      return request;
+    },
+    async initialize(threadId) {
+      await initialListSettled;
+      return conversationThreadListAdapter.initialize(threadId);
+    },
+  };
+}

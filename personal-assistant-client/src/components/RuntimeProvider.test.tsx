@@ -11,6 +11,8 @@ const runtime = vi.hoisted(() => {
     importHistory: vi.fn(),
     initialize: vi.fn(),
     loadConversationHistory: vi.fn(),
+    threadListAdapter: { list: vi.fn() },
+    createConversationThreadListAdapter: vi.fn(),
   };
 });
 
@@ -23,7 +25,8 @@ vi.mock("@/lib/conversations/api", () => ({
 }));
 
 vi.mock("@/lib/conversations/runtime", () => ({
-  conversationThreadListAdapter: { list: vi.fn() },
+  createConversationThreadListAdapter:
+    runtime.createConversationThreadListAdapter,
 }));
 
 vi.mock("@assistant-ui/react", () => ({
@@ -49,6 +52,9 @@ import { RuntimeProvider } from "./RuntimeProvider";
 describe("RuntimeProvider", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    runtime.createConversationThreadListAdapter.mockReturnValue(
+      runtime.threadListAdapter,
+    );
     runtime.getThreadListItemState.mockReturnValue({ remoteId: undefined });
     runtime.initialize.mockResolvedValue({
       remoteId: "11111111-1111-4111-8111-111111111111",
@@ -69,6 +75,7 @@ describe("RuntimeProvider", () => {
 
     expect(screen.getByTestId("child")).toHaveTextContent("Hello World");
     expect(runtime.createChatAdapter).toHaveBeenCalledOnce();
+    expect(runtime.createConversationThreadListAdapter).toHaveBeenCalledOnce();
   });
 
   it("initializes a remote Conversation before the first Invocation", async () => {
