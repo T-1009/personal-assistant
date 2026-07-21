@@ -1,5 +1,5 @@
 ---
-status: todo
+status: implemented
 related:
   - bug-19-postgres-idle-session-timeout-breaks-chat-session
   - feature-14-multi-session-runtime-prewarm
@@ -112,18 +112,29 @@ sequenceDiagram
 
 ## 验收标准
 
-- [ ] sync Invocation 首次遇到可恢复的 Checkpointer connection 错误后，重启
+- [x] sync Invocation 首次遇到可恢复的 Checkpointer connection 错误后，重启
       Checkpointer 并重试成功。
-- [ ] Streaming Invocation 在输出 event 前遇到 `the connection is closed` 后，重启
+- [x] Streaming Invocation 在输出 event 前遇到 `the connection is closed` 后，重启
       Checkpointer 并重试成功。
-- [ ] Streaming Invocation 已输出 event 后不重试，不产生重复 token 或 custom event。
-- [ ] 非 Checkpointer connection 错误仍按原有 error path 返回。
-- [ ] recovery 前后保持相同的 AgentArts Runtime Session ID、`user_id` 和
+- [x] Streaming Invocation 已输出 event 后不重试，不产生重复 token 或 custom event。
+- [x] 非 Checkpointer connection 错误仍按原有 error path 返回。
+- [x] recovery 前后保持相同的 AgentArts Runtime Session ID、`user_id` 和
       `conversation_id`。
 - [ ] `uv run ruff check .` 和 `uv run ruff format --check .` 通过。
-- [ ] `uv run pytest tests/test_agent_handler.py tests/test_checkpointer.py` 通过。
+- [x] `uv run pytest tests/test_agent_handler.py tests/test_checkpointer.py` 通过。
 - [ ] production 部署后，同一 Runtime Session 遇到模拟或真实 stale connection 时可在
       单次请求内恢复，不依赖无痕窗口或 Runtime 回收。
+
+## Verification（2026-07-21）
+
+- Service focused：`48 passed`。
+- Service full suite：`310 passed, 39 skipped`；`uv run ruff check .` 通过。
+- 受影响 Python 文件 `ruff format --check` 通过；全 Service format gate 仍被两个本次未改动的
+  既有文件阻断：`scripts/generate_openapi.py`、`tests/test_email_integration.py`。
+- E2E：使用临时 PostgreSQL 17 运行 Feature 14 Pages + Service full-stack，`2 passed`；
+  E2E Ruff lint/format 通过。
+- GitNexus detect changes：8 个 tracked files、37 个 symbols、1 条 affected flow，风险
+  `medium`，与 AgentHandler sync/stream recovery 范围一致。
 
 ## Affected Specs / Architecture Docs
 

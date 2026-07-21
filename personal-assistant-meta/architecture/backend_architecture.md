@@ -303,8 +303,11 @@ class AgentHandler:
                     yield AgentStreamEvent(type=AgentEventType.TOKEN, token=token)
 ```
 
-AgentHandler 不生成 HTTP/SSE terminal、不吞异常、不 retry。InvocationService 负责
-Advisory Lock、user/assistant Message persistence、commit 后 done=true 和稳定错误响应。
+AgentHandler 不生成 HTTP/SSE terminal、不吞一般异常。对于 persistent Checkpointer
+明确的 PostgreSQL idle/closed connection error，AgentHandler 在产生首个 structured
+event 前最多执行一次 Checkpointer restart + retry；已产生 event 或其他异常直接传播。
+InvocationService 负责 Advisory Lock、user/assistant Message persistence、commit 后
+done=true 和稳定错误响应。
 Production 的 Conversation/Message 与 Checkpointer 均使用 PostgreSQL；in-memory
 Checkpointer 只用于纯 unit test。
 
