@@ -117,6 +117,9 @@ sequenceDiagram
 - list 成功或失败都会释放 barrier；失败时保留现有 Sidebar error/retry，同时允许首次
   Conversation 继续创建。
 - 不执行 initialize 后 reload，不修改 assistant-ui 内部状态，也不引入额外依赖。
+- Follow-up：`initialize()` 会等待调用时正在进行的 full-list（包括 Retry）；每次
+  full-list 最多等待 15 秒，超时向 Sidebar 返回可重试错误并放行 Conversation 创建，
+  迟到响应不再提交给 assistant-ui runtime。
 
 ## 验收标准
 
@@ -155,6 +158,8 @@ sequenceDiagram
   race 共 `8 passed`。
 - Browser E2E：Feature 14 正常 CRUD 场景与 Bug 25 delayed initial list regression
   共 `2 passed`。
+- Follow-up targeted tests：覆盖 initial failure -> Retry -> send、永不 settle 的
+  full-list timeout 和 stale completion，共 `9 passed`。
 - E2E：Ruff lint passed；`14 files already formatted`。
 - 修复仅涉及 Client adapter lifecycle 与测试；Service、BFF、API、PostgreSQL schema 和
   Lazy Creation 产品 contract 均未修改。

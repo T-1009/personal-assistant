@@ -12,6 +12,7 @@ const api = vi.hoisted(() => ({
 vi.mock("./api", () => api);
 
 import { createConversationThreadListAdapter } from "./runtime";
+import { useConversationListStore } from "@/stores/conversation-list-store";
 
 const active = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -35,6 +36,7 @@ describe("Conversation remote thread adapter", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    useConversationListStore.getState().setError(null);
     adapter = createConversationThreadListAdapter();
   });
 
@@ -139,5 +141,83 @@ describe("Conversation remote thread adapter", () => {
       remoteId: active.id,
       externalId: active.id,
     });
+  });
+
+  it("allows initialization after a list timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      api.listConversations.mockImplementation(() => new Promise(() => {}));
+      api.createConversation.mockResolvedValue(active);
+
+      const list = adapter.list();
+      const listResult = expect(list).rejects.toThrow(
+        "Conversations could not be loaded.",
+      );
+      const initialize = adapter.initialize("local-thread");
+
+      expect(api.createConversation).not.toHaveBeenCalled();
+      await vi.runOnlyPendingTimersAsync();
+
+      await listResult;
+      await expect(initialize).resolves.toEqual({
+        remoteId: active.id,
+        externalId: active.id,
+      });
+      expect(useConversationListStore.getState().error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("exposes a retryable error when a list times out without a send", async () => {
+    vi.useFakeTimers();
+    try {
+      api.listConversations.mockImplementation(() => new Promise(() => {}));
+
+      const list = adapter.list();
+      const listResult = expect(list).rejects.toThrow(
+        "Conversations could not be loaded.",
+      );
+      await vi.runOnlyPendingTimersAsync();
+
+      await listResult;
+      expect(useConversationListStore.getState().error).toBe(
+        "Conversations could not be loaded.",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("ignores a stale list failure after a successful retry", async () => {
+    vi.useFakeTimers();
+    try {
+      let rejectStale!: (error: Error) => void;
+      api.listConversations
+        .mockImplementationOnce(
+          () =>
+            new Promise((_, reject) => {
+              rejectStale = reject;
+            }),
+        )
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockResolvedValue({ items: [], nextCursor: undefined });
+
+      const stale = adapter.list();
+      const staleResult = expect(stale).rejects.toThrow(
+        "Conversations could not be loaded.",
+      );
+      await vi.runOnlyPendingTimersAsync();
+      await staleResult;
+
+      await adapter.list();
+      expect(useConversationListStore.getState().error).toBeNull();
+
+      rejectStale(new Error("late stale failure"));
+      await Promise.resolve();
+      expect(useConversationListStore.getState().error).toBeNull();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
