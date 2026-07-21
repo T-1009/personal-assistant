@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({
 
 vi.mock("./api", () => api);
 
-import { conversationThreadListAdapter } from "./runtime";
+import { createConversationThreadListAdapter } from "./runtime";
 
 const active = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -31,8 +31,11 @@ const archived = {
 };
 
 describe("Conversation remote thread adapter", () => {
+  let adapter: ReturnType<typeof createConversationThreadListAdapter>;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    adapter = createConversationThreadListAdapter();
   });
 
   it("merges active and archived pages and preserves both cursors", async () => {
@@ -41,8 +44,8 @@ describe("Conversation remote thread adapter", () => {
       .mockResolvedValueOnce({ items: [archived], nextCursor: undefined })
       .mockResolvedValueOnce({ items: [], nextCursor: undefined });
 
-    const first = await conversationThreadListAdapter.list();
-    const second = await conversationThreadListAdapter.list({
+    const first = await adapter.list();
+    const second = await adapter.list({
       after: first.nextCursor,
     });
 
@@ -72,13 +75,13 @@ describe("Conversation remote thread adapter", () => {
     api.getConversation.mockResolvedValue(archived);
 
     await expect(
-      conversationThreadListAdapter.initialize("local-thread"),
+      adapter.initialize("local-thread"),
     ).resolves.toEqual({ remoteId: active.id, externalId: active.id });
-    await conversationThreadListAdapter.rename(active.id, "Renamed");
-    await conversationThreadListAdapter.archive(active.id);
-    await conversationThreadListAdapter.unarchive(active.id);
-    await conversationThreadListAdapter.delete(active.id);
-    await expect(conversationThreadListAdapter.fetch(archived.id)).resolves.toEqual(
+    await adapter.rename(active.id, "Renamed");
+    await adapter.archive(active.id);
+    await adapter.unarchive(active.id);
+    await adapter.delete(active.id);
+    await expect(adapter.fetch(archived.id)).resolves.toEqual(
       expect.objectContaining({
         status: "archived",
         remoteId: archived.id,
@@ -96,5 +99,45 @@ describe("Conversation remote thread adapter", () => {
       status: "active",
     });
     expect(api.deleteConversation).toHaveBeenCalledWith(active.id);
+  });
+
+  it("waits for the initial list to settle before creating a Conversation", async () => {
+    let resolveActive!: (value: { items: []; nextCursor: undefined }) => void;
+    let resolveArchived!: (value: { items: []; nextCursor: undefined }) => void;
+    api.listConversations.mockImplementation((status: string) =>
+      new Promise((resolve) => {
+        if (status === "active") resolveActive = resolve;
+        else resolveArchived = resolve;
+      }),
+    );
+    api.createConversation.mockResolvedValue(active);
+
+    const list = adapter.list();
+    const initialize = adapter.initialize("local-thread");
+
+    expect(api.createConversation).not.toHaveBeenCalled();
+    resolveActive({ items: [], nextCursor: undefined });
+    resolveArchived({ items: [], nextCursor: undefined });
+
+    await list;
+    await expect(initialize).resolves.toEqual({
+      remoteId: active.id,
+      externalId: active.id,
+    });
+    expect(api.createConversation).toHaveBeenCalledOnce();
+  });
+
+  it("allows initialization after the initial list fails", async () => {
+    api.listConversations.mockRejectedValue(new Error("list unavailable"));
+    api.createConversation.mockResolvedValue(active);
+
+    const list = adapter.list();
+    const initialize = adapter.initialize("local-thread");
+
+    await expect(list).rejects.toThrow("list unavailable");
+    await expect(initialize).resolves.toEqual({
+      remoteId: active.id,
+      externalId: active.id,
+    });
   });
 });

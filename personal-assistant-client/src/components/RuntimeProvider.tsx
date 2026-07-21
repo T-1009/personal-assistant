@@ -6,7 +6,7 @@ import {
   useRemoteThreadListRuntime,
 } from "@assistant-ui/react";
 import { createChatAdapter } from "../lib/chat-adapter";
-import { conversationThreadListAdapter } from "@/lib/conversations/runtime";
+import { createConversationThreadListAdapter } from "@/lib/conversations/runtime";
 import { loadConversationHistory } from "@/lib/conversations/api";
 
 function useConversationThreadRuntime() {
@@ -36,9 +36,13 @@ function useConversationThreadRuntime() {
 }
 
 export function RuntimeProvider({ children }: { children: ReactNode }) {
+  const threadListAdapter = useMemo(
+    () => createConversationThreadListAdapter(),
+    [],
+  );
   const runtime = useRemoteThreadListRuntime({
     runtimeHook: useConversationThreadRuntime,
-    adapter: conversationThreadListAdapter,
+    adapter: threadListAdapter,
   });
   return (
     <AssistantRuntimeProvider runtime={runtime}>

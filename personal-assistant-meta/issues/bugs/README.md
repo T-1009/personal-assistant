@@ -19,6 +19,7 @@
 | [22](resolved/bug-22-calendar-oauth2-local-complete-user-token-wat-mismatch/issue.md) | Calendar OAuth2 本地 complete 使用 user_token 与 WAT identity 不匹配 | feature-15-calendar-agentarts-full-oauth2 | superseded |
 | [23](bug-23-cancelled-chat-keeps-conversation-busy/issue.md) | 中断聊天后 Conversation 仍保持 busy | feature-14-multi-session-runtime-prewarm | implemented |
 | [24](bug-24-checkpointer-recovery-regression/issue.md) | Feature 14 重构导致 PostgreSQL Checkpointer 自愈回归 | feature-14-multi-session-runtime-prewarm | implemented |
+| [25](bug-25-first-conversation-missing-from-sidebar/issue.md) | 首次聊天创建的 Conversation 未出现在 Sidebar | feature-14-multi-session-runtime-prewarm | implemented |
 
 ## 已解决 Bug
 
