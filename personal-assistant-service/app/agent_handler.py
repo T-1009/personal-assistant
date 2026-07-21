@@ -314,6 +314,33 @@ class AgentHandler:
             await self.shutdown()
             await self.startup()
 
+    async def _ensure_checkpointer_ready(self, config: dict) -> None:
+        """Recover a stale PostgreSQL connection before Agent execution starts."""
+        await self.startup()
+        if not self.settings.postgres_dsn:
+            return
+
+        stale_checkpointer = self.checkpointer
+        if stale_checkpointer is None:
+            raise RuntimeError("Checkpointer is not initialized")
+
+        try:
+            await stale_checkpointer.aget_tuple(config)
+        except Exception as error:
+            if not self._is_recoverable_checkpointer_error(error):
+                raise
+
+            logger.warning(
+                "Recoverable Checkpointer error during preflight; retrying once",
+                exc_info=True,
+            )
+            await self._restart_checkpointer(stale_checkpointer)
+
+            checkpointer = self.checkpointer
+            if checkpointer is None:
+                raise RuntimeError("Checkpointer is not initialized") from error
+            await checkpointer.aget_tuple(config)
+
     @staticmethod
     def _build_config(user_id: str, conversation_id: str) -> dict:
         """构造 LangGraph config，thread_id = {user_id}:{conversation_id}。
@@ -332,24 +359,8 @@ class AgentHandler:
     ) -> str:
         """Invoke the agent synchronously and return the final response."""
         config = self._build_config(user_id, conversation_id)
-        await self.startup()
-        stale_checkpointer = self.checkpointer
-
-        try:
-            result = await self._ainvoke_once(message, config)
-        except Exception as error:
-            if not (
-                self._uses_persistent_checkpointer()
-                and self._is_recoverable_checkpointer_error(error)
-            ):
-                raise
-
-            logger.warning(
-                "Recoverable Checkpointer error during sync invocation; retrying once",
-                exc_info=True,
-            )
-            await self._restart_checkpointer(stale_checkpointer)
-            result = await self._ainvoke_once(message, config)
+        await self._ensure_checkpointer_ready(config)
+        result = await self._ainvoke_once(message, config)
 
         messages = result.get("messages", [])
         if not messages:
@@ -371,29 +382,9 @@ class AgentHandler:
     ) -> AsyncGenerator[AgentStreamEvent, None]:
         """Yield structured, non-terminal Agent events."""
         config = self._build_config(user_id, conversation_id)
-        await self.startup()
-        stale_checkpointer = self.checkpointer
-        emitted = False
-
-        try:
-            async for event in self._stream_once(message, config):
-                emitted = True
-                yield event
-        except Exception as error:
-            if (
-                emitted
-                or not self._uses_persistent_checkpointer()
-                or not self._is_recoverable_checkpointer_error(error)
-            ):
-                raise
-
-            logger.warning(
-                "Recoverable Checkpointer error before stream output; retrying once",
-                exc_info=True,
-            )
-            await self._restart_checkpointer(stale_checkpointer)
-            async for event in self._stream_once(message, config):
-                yield event
+        await self._ensure_checkpointer_ready(config)
+        async for event in self._stream_once(message, config):
+            yield event
 
     async def _stream_once(
         self,

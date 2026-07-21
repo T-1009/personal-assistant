@@ -12,18 +12,18 @@ Checkpointer 自愈，同时保持 AgentArts Runtime Session ID、Invocation API
    `psycopg.OperationalError` 识别为可恢复 Checkpointer 错误。
 2. 复用现有 Agent Bundle lock 串行化 Checkpointer restart，并通过失败时的
    Checkpointer 对象身份避免并发请求重复重启新连接。
-3. sync Invocation 遇到可恢复错误时 restart 后重试一次。
-4. Streaming Invocation 仅在未输出任何 `AgentStreamEvent` 时 restart 后重试一次；
-   已输出 event 后保持原 error path。
-5. 更新 Service unit regression tests，覆盖 sync、stream 输出前、stream 输出后和
-   非 Checkpointer error。
+3. sync 与 Streaming Invocation 在 Agent 启动前执行 Checkpointer read preflight；
+   preflight 遇到可恢复错误时 restart 后重试一次。
+4. Agent execution 启动后的异常不触发整轮 retry，即使 Streaming 尚未输出 event。
+5. 更新 Service unit regression tests，覆盖 preflight recovery、single retry 和 Agent
+   启动后不 retry。
 6. 同步 backend、session state 和 test strategy 文档中的恢复边界。
 
 ## 影响范围
 
 | 子系统 | 变更 |
 |--------|------|
-| Service | `AgentHandler` Checkpointer lifecycle 与 sync/stream retry |
+| Service | `AgentHandler` Checkpointer lifecycle 与 preflight retry |
 | Service tests | 恢复 Bug 19 regression coverage，并适配 structured event |
 | Meta | 记录 Runtime Session 与数据库 connection 生命周期独立 |
 | Client / Cloudflare / Gateway | 无变更 |
@@ -35,7 +35,7 @@ Checkpointer 自愈，同时保持 AgentArts Runtime Session ID、Invocation API
 |------|------|
 | 把 LLM/工具网络错误误判为 Checkpointer 错误 | 同时约束 exception type 和已知 message |
 | 并发失败重复关闭刚恢复的 Checkpointer | restart 前比较失败时的 Checkpointer 对象身份 |
-| Streaming 重试产生重复内容 | 仅允许首个 event 输出前重试 |
+| Agent retry 重复执行写工具 | 只重试 Agent 启动前的 Checkpointer read preflight |
 | 影响 Runtime Session continuity | 不读取或修改 Runtime Session ID，继续使用原 `conversation_id` config |
 
 ## 验证

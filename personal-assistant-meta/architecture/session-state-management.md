@@ -109,8 +109,9 @@ idle connection；这不代表 Runtime Session 或 Conversation 已失效。
 
 Service 检测到明确的 psycopg idle/closed connection error 时，会在复用原 Runtime
 Session ID、`user_id`、`conversation_id` 和 `thread_id` 的前提下重新打开 persistent
-Checkpointer，并最多重试当前 Agent invocation 一次。Streaming 已产生首个 event 后
-不重试，避免重复 token 或 custom event；平台回收 Runtime 只能作为额外的 operational
+Checkpointer，并最多重试 Agent 启动前的 Checkpointer read preflight 一次。preflight
+成功后才启动 Agent；Agent execution 启动后的 checkpoint、LLM 或 tool error 不触发整轮
+retry，避免重复发送邮件等非幂等副作用。平台回收 Runtime 只能作为额外的 operational
 recovery，不能替代 Service 自愈。
 
 ## 4. Conversation 与 Message
