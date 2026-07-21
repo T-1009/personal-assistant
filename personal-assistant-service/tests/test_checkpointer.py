@@ -136,6 +136,44 @@ class TestInitCheckpointer:
             await handler.shutdown()
             context.__aexit__.assert_awaited_once_with(None, None, None)
 
+    @pytest.mark.asyncio
+    async def test_restart_replaces_stale_postgres_checkpointer(self):
+        """Recovery closes the stale context and opens a fresh Checkpointer."""
+        from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+        settings = Settings(
+            _env_file=None,
+            postgres_dsn="postgresql://localhost/test",
+        )
+        stale_checkpointer = MagicMock(spec=AsyncPostgresSaver)
+        stale_checkpointer.setup = AsyncMock()
+        stale_context = MagicMock()
+        stale_context.__aenter__ = AsyncMock(return_value=stale_checkpointer)
+        stale_context.__aexit__ = AsyncMock(return_value=None)
+
+        fresh_checkpointer = MagicMock(spec=AsyncPostgresSaver)
+        fresh_checkpointer.setup = AsyncMock()
+        fresh_context = MagicMock()
+        fresh_context.__aenter__ = AsyncMock(return_value=fresh_checkpointer)
+        fresh_context.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(
+            AsyncPostgresSaver,
+            "from_conn_string",
+            side_effect=[stale_context, fresh_context],
+        ) as mock_from:
+            handler = AgentHandler(settings=settings)
+            await handler.startup()
+            await handler._restart_checkpointer(stale_checkpointer)
+
+            assert handler.checkpointer is fresh_checkpointer
+            assert mock_from.call_count == 2
+            stale_context.__aexit__.assert_awaited_once_with(None, None, None)
+            fresh_checkpointer.setup.assert_awaited_once()
+
+            await handler.shutdown()
+            fresh_context.__aexit__.assert_awaited_once_with(None, None, None)
+
 
 # ---------------------------------------------------------------------------
 # Config passing — handle() and handle_stream()
