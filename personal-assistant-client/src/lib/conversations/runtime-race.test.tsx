@@ -52,6 +52,9 @@ function StateProbe() {
       >
         Initialize
       </button>
+      <button type="button" onClick={() => void aui.threads().reload()}>
+        Reload
+      </button>
       <output data-testid="thread-count">{threadCount}</output>
     </>
   );
@@ -102,5 +105,58 @@ describe("Conversation runtime initialization ordering", () => {
 
     await waitFor(() => expect(api.createConversation).toHaveBeenCalledOnce());
     expect(screen.getByTestId("thread-count")).toHaveTextContent("1");
+  });
+
+  it("waits for a retry list before initializing the first thread", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+    let resolveActive!: (value: { items: []; nextCursor: undefined }) => void;
+    let resolveArchived!: (value: { items: []; nextCursor: undefined }) => void;
+    api.listConversations
+      .mockRejectedValueOnce(new Error("initial list unavailable"))
+      .mockRejectedValueOnce(new Error("initial list unavailable"))
+      .mockImplementation((status: string) =>
+        new Promise((resolve) => {
+          if (status === "active") resolveActive = resolve;
+          else resolveArchived = resolve;
+        }),
+      );
+    api.createConversation.mockResolvedValue(conversation);
+    const threadListAdapter = createConversationThreadListAdapter();
+
+    function Harness() {
+      const runtime = useRemoteThreadListRuntime({
+        runtimeHook: useThreadRuntime,
+        adapter: threadListAdapter,
+      });
+      return (
+        <AssistantRuntimeProvider runtime={runtime}>
+          <StateProbe />
+        </AssistantRuntimeProvider>
+      );
+    }
+
+    try {
+      render(<Harness />);
+      await waitFor(() => expect(api.listConversations).toHaveBeenCalledTimes(2));
+
+      fireEvent.click(screen.getByRole("button", { name: "Reload" }));
+      await waitFor(() => expect(api.listConversations).toHaveBeenCalledTimes(4));
+      fireEvent.click(screen.getByRole("button", { name: "Initialize" }));
+
+      expect(api.createConversation).not.toHaveBeenCalled();
+      await act(async () => {
+        resolveActive({ items: [], nextCursor: undefined });
+        resolveArchived({ items: [], nextCursor: undefined });
+      });
+
+      await waitFor(() => expect(api.createConversation).toHaveBeenCalledOnce());
+      expect(screen.getByTestId("thread-count")).toHaveTextContent("1");
+      expect(consoleError).toHaveBeenCalledWith(
+        "[assistant-ui] thread list load failed:",
+        expect.any(Error),
+      );
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

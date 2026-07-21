@@ -23,6 +23,62 @@ interface PageCursor {
   archivedDone?: boolean;
 }
 
+type ConversationThreadListAdapter = Omit<RemoteThreadListAdapter, "list"> & {
+  list(
+    options?: Parameters<RemoteThreadListAdapter["list"]>[0],
+    signal?: AbortSignal,
+  ): ReturnType<RemoteThreadListAdapter["list"]>;
+};
+
+const CONVERSATION_LIST_TIMEOUT_MS = 15_000;
+const CONVERSATION_LIST_ERROR = "Conversations could not be loaded.";
+
+function settle(promise: Promise<unknown>): Promise<void> {
+  return promise.then(
+    () => undefined,
+    () => undefined,
+  );
+}
+
+function afterSettled<T>(
+  preceding: Promise<void> | undefined,
+  run: () => Promise<T>,
+): Promise<T> {
+  return preceding ? preceding.then(run) : run();
+}
+
+function setConversationListError(error: unknown): void {
+  useConversationListStore
+    .getState()
+    .setError(
+      error instanceof Error ? error.message : CONVERSATION_LIST_ERROR,
+    );
+}
+
+function withConversationListTimeout<T>(
+  run: (signal: AbortSignal) => Promise<T>,
+): Promise<T> {
+  const controller = new AbortController();
+  const request = run(controller.signal);
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      controller.abort();
+      reject(new Error(CONVERSATION_LIST_ERROR));
+    }, CONVERSATION_LIST_TIMEOUT_MS);
+
+    void request.then(
+      (value) => {
+        window.clearTimeout(timeout);
+        resolve(value);
+      },
+      (error: unknown) => {
+        window.clearTimeout(timeout);
+        reject(error);
+      },
+    );
+  });
+}
+
 function encodePageCursor(cursor: PageCursor): string {
   return encodeURIComponent(JSON.stringify(cursor));
 }
@@ -74,18 +130,18 @@ function ConversationThreadProvider({ children }: PropsWithChildren) {
   );
 }
 
-const conversationThreadListAdapter: RemoteThreadListAdapter = {
-  async list(options) {
+const conversationThreadListAdapter: ConversationThreadListAdapter = {
+  async list(options, signal) {
     useConversationListStore.getState().setError(null);
     try {
       const cursor = decodePageCursor(options?.after);
       const [active, archived] = await Promise.all([
         cursor.activeDone
           ? Promise.resolve({ items: [], nextCursor: undefined })
-          : listConversations("active", cursor.active),
+          : listConversations("active", cursor.active, 50, signal),
         cursor.archivedDone
           ? Promise.resolve({ items: [], nextCursor: undefined })
-          : listConversations("archived", cursor.archived),
+          : listConversations("archived", cursor.archived, 50, signal),
       ]);
       const next: PageCursor = {
         active: active.nextCursor,
@@ -106,13 +162,6 @@ const conversationThreadListAdapter: RemoteThreadListAdapter = {
         nextCursor: hasMore ? encodePageCursor(next) : undefined,
       };
     } catch (error) {
-      useConversationListStore
-        .getState()
-        .setError(
-          error instanceof Error
-            ? error.message
-            : "Conversations could not be loaded.",
-        );
       throw error;
     }
   },
@@ -160,23 +209,40 @@ const conversationThreadListAdapter: RemoteThreadListAdapter = {
 };
 
 export function createConversationThreadListAdapter(): RemoteThreadListAdapter {
-  let initialListSettled: Promise<void> | undefined;
+  let currentFullListSettled: Promise<void> | undefined;
+  let currentFullListToken: symbol | undefined;
 
   return {
     ...conversationThreadListAdapter,
     list(options) {
-      const request = conversationThreadListAdapter.list(options);
-      if (!options?.after && !initialListSettled) {
-        initialListSettled = request.then(
-          () => undefined,
-          () => undefined,
-        );
+      if (options?.after) {
+        const request = conversationThreadListAdapter.list(options);
+        void request.catch(setConversationListError);
+        return request;
       }
+
+      const token = Symbol("full-list");
+      currentFullListToken = token;
+      const request = withConversationListTimeout((signal) =>
+        conversationThreadListAdapter.list(options, signal),
+      );
+      void request.then(
+        () => undefined,
+        (error: unknown) => {
+          if (currentFullListToken !== token) return;
+          setConversationListError(error);
+        },
+      );
+      currentFullListSettled = settle(request);
       return request;
     },
-    async initialize(threadId) {
-      await initialListSettled;
-      return conversationThreadListAdapter.initialize(threadId);
+    initialize(threadId) {
+      const precedingFullList = currentFullListSettled;
+      const request = afterSettled(precedingFullList, () => {
+        useConversationListStore.getState().setError(null);
+        return conversationThreadListAdapter.initialize(threadId);
+      });
+      return request;
     },
   };
 }

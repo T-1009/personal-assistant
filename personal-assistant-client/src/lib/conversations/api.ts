@@ -147,11 +147,13 @@ export async function listConversations(
   status: ConversationStatus,
   cursor?: string,
   limit = 50,
+  signal?: AbortSignal,
 ): Promise<ConversationPage> {
   const search = new URLSearchParams({ status, limit: String(limit) });
   if (cursor) search.set("cursor", cursor);
   const page = await requestJson<ConversationListWire>(
     `/api/conversations?${search}`,
+    { signal },
   );
   return {
     items: page.items.map(fromWire),
