@@ -22,26 +22,71 @@ type ConversationIdResolver = (
   options: ChatModelRunOptions,
 ) => string | undefined | Promise<string | undefined>;
 type DuplicateMessageHandler = (conversationId: string) => void;
+type CancellationResult =
+  | { ok: true }
+  | { ok: false; error: unknown };
+type PendingCancellation = {
+  clientMessageId: string;
+  result: Promise<CancellationResult>;
+};
 
 const defaultConversationIdResolver: ConversationIdResolver = (options) =>
   options.unstable_threadId;
-const pendingCancellations = new Map<string, Promise<void>>();
+const pendingCancellations = new Map<string, PendingCancellation>();
+
+function startCancellation(
+  conversationId: string,
+  clientMessageId: string,
+): PendingCancellation {
+  return {
+    clientMessageId,
+    result: cancelChat(conversationId, clientMessageId).then(
+      () => ({ ok: true }),
+      (error: unknown) => {
+        console.error("Failed to cancel Invocation", error);
+        return { ok: false, error };
+      },
+    ),
+  };
+}
 
 function trackCancellation(
   conversationId: string,
   clientMessageId: string,
 ): void {
-  let tracked: Promise<void>;
-  tracked = cancelChat(conversationId, clientMessageId)
-    .catch((error) => {
-      console.error("Failed to cancel Invocation", error);
-    })
-    .finally(() => {
-      if (pendingCancellations.get(conversationId) === tracked) {
-        pendingCancellations.delete(conversationId);
-      }
-    });
-  pendingCancellations.set(conversationId, tracked);
+  const pending = startCancellation(conversationId, clientMessageId);
+  pendingCancellations.set(conversationId, pending);
+  void pending.result.then((result) => {
+    if (result.ok && pendingCancellations.get(conversationId) === pending) {
+      pendingCancellations.delete(conversationId);
+    }
+  });
+}
+
+async function waitForPendingCancellation(conversationId: string): Promise<void> {
+  let pending = pendingCancellations.get(conversationId);
+  if (!pending) return;
+
+  let result = await pending.result;
+  if (!result.ok) {
+    const current = pendingCancellations.get(conversationId);
+    if (current === pending) {
+      const retry = startCancellation(conversationId, pending.clientMessageId);
+      pendingCancellations.set(conversationId, retry);
+      pending = retry;
+    } else if (current) {
+      pending = current;
+    }
+    result = await pending.result;
+  }
+
+  if (result.ok) {
+    if (pendingCancellations.get(conversationId) === pending) {
+      pendingCancellations.delete(conversationId);
+    }
+  } else {
+    throw result.error;
+  }
 }
 
 async function* runChat(
@@ -61,7 +106,7 @@ async function* runChat(
     if (!conversationId) {
       throw new Error("Conversation initialization did not return an ID.");
     }
-    await pendingCancellations.get(conversationId);
+    await waitForPendingCancellation(conversationId);
     const clientMessageId = crypto.randomUUID();
     let fullText = "";
     let completed = false;

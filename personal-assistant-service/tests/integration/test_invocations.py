@@ -345,6 +345,42 @@ async def test_cancel_command_stops_stream_before_next_invocation(
 @pytest.mark.integration
 @pytest.mark.postgres
 @pytest.mark.asyncio
+async def test_cancel_command_arriving_first_prevents_late_invocation(
+    invocation_context: InvocationTestContext,
+):
+    context = invocation_context
+    conversation = await context.store.create(user_id="user-1", title="Early cancel")
+    client_message_id = uuid4()
+
+    cancelled = await context.client.post(
+        f"/api/conversations/{conversation.id}/invocations/{client_message_id}/cancel",
+        headers=_headers("user-1"),
+    )
+    assert cancelled.status_code == 204
+
+    late_invocation = await context.client.post(
+        "/invocations",
+        json=_payload(conversation, client_message_id=client_message_id),
+        headers=_headers("user-1"),
+    )
+    assert late_invocation.status_code == 409
+    assert late_invocation.json() == {
+        "code": "invocation_cancelled",
+        "detail": "invocation was cancelled before execution began",
+    }
+    assert context.handler.handle_calls == []
+
+    continued = await context.client.post(
+        "/invocations",
+        json=_payload(conversation),
+        headers=_headers("user-1"),
+    )
+    assert continued.status_code == 200
+
+
+@pytest.mark.integration
+@pytest.mark.postgres
+@pytest.mark.asyncio
 async def test_duplicate_message_and_busy_conversation_return_pre_stream_409(
     invocation_context: InvocationTestContext,
 ):

@@ -143,8 +143,9 @@ Streaming/SSE 是 response transport，不单独决定路径命名。除现有
   `session_uri`、`custom_state`。
 - Error response 默认使用 FastAPI `detail` contract；需要机器分支的冲突使用
   `{"code":"...","detail":"..."}` 并在 OpenAPI 声明。Feature 14 的稳定 code 为
-  `conversation_busy`、`conversation_archived`、`duplicate_message` 和
-  `invocation_failed`。
+  `conversation_busy`、`conversation_archived`、`duplicate_message`、
+  `invocation_cancelled` 和 `invocation_failed`。`invocation_cancelled` 仅用于 cancellation
+  command 抢先到达后，原 `POST /invocations` 迟到的竞态路径。
 
 ### 2.6 新增 API Checklist
 

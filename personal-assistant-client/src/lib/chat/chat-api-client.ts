@@ -3,6 +3,7 @@ import { useAuthStore } from "@/stores/auth-store";
 import { isTokenExpiringSoon } from "./jwt";
 
 const AUTH_REQUIRED_MESSAGE = "Authentication required. Please sign in.";
+const CANCELLATION_TIMEOUT_MS = 15_000;
 
 export class ChatApiError extends Error {
   constructor(
@@ -147,16 +148,26 @@ export async function cancelChat(
   conversationId: string,
   clientMessageId: string,
 ): Promise<void> {
-  const idToken = await getRequestToken();
-  const response = await fetch(
-    `/api/conversations/${encodeURIComponent(conversationId)}/invocations/${encodeURIComponent(clientMessageId)}/cancel`,
-    {
-      method: "POST",
-      headers: buildHeaders(idToken, "application/json"),
-      credentials: "same-origin",
-    },
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    CANCELLATION_TIMEOUT_MS,
   );
-  if (!response.ok) {
-    await throwResponseError(response);
+  try {
+    const idToken = await getRequestToken();
+    const response = await fetch(
+      `/api/conversations/${encodeURIComponent(conversationId)}/invocations/${encodeURIComponent(clientMessageId)}/cancel`,
+      {
+        method: "POST",
+        headers: buildHeaders(idToken, "application/json"),
+        credentials: "same-origin",
+        signal: controller.signal,
+      },
+    );
+    if (!response.ok) {
+      await throwResponseError(response);
+    }
+  } finally {
+    window.clearTimeout(timeout);
   }
 }

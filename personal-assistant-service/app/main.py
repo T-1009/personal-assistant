@@ -38,7 +38,11 @@ from app.conversations.models import ApiError  # noqa: E402
 from app.conversations.routes import router as conversations_router  # noqa: E402
 from app.database import Database  # noqa: E402
 from app.invocations.models import InvocationRequest, InvocationResponse  # noqa: E402
-from app.invocations.registry import InvocationKey, InvocationRegistry  # noqa: E402
+from app.invocations.registry import (  # noqa: E402
+    InvocationKey,
+    InvocationRegistry,
+    ReservationResult,
+)
 from app.invocations.service import (  # noqa: E402
     ArchivedConversationError,
     DuplicateMessageError,
@@ -505,6 +509,27 @@ async def invocations(request: Request):
         raise HTTPException(status_code=503, detail="PostgreSQL is not configured")
     handler: AgentHandler = request.app.state.agent_handler
     invocation_service = InvocationService(database)
+    registry: InvocationRegistry = request.app.state.invocation_registry
+    invocation_key = InvocationKey(
+        user_id=user_id,
+        conversation_id=invocation.conversation_id,
+        client_message_id=invocation.client_message_id,
+    )
+    reservation = registry.reserve(key=invocation_key)
+    if reservation is ReservationResult.CANCELLED:
+        return _api_error_response(
+            status_code=409,
+            code="invocation_cancelled",
+            detail="invocation was cancelled before execution began",
+        )
+    if reservation is ReservationResult.DUPLICATE:
+        return _api_error_response(
+            status_code=409,
+            code="duplicate_message",
+            detail="client_message_id already exists",
+        )
+
+    execution = None
     try:
         execution = await invocation_service.prepare(
             request=invocation,
@@ -531,15 +556,12 @@ async def invocations(request: Request):
             code="duplicate_message",
             detail="client_message_id already exists",
         )
+    finally:
+        if execution is None:
+            registry.discard(key=invocation_key)
 
     started_at = time.perf_counter()
     logger.info("Invocation started mode=%s", mode)
-    registry: InvocationRegistry = request.app.state.invocation_registry
-    invocation_key = InvocationKey(
-        user_id=user_id,
-        conversation_id=invocation.conversation_id,
-        client_message_id=invocation.client_message_id,
-    )
     registry.register(key=invocation_key, execution=execution)
 
     async def finalize_execution() -> None:

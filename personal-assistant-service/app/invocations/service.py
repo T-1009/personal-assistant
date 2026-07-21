@@ -140,11 +140,14 @@ class InvocationExecution:
             self._closed_event.set()
 
     async def cancel(self) -> None:
+        self.request_cancel()
+        await self._closed_event.wait()
+
+    def request_cancel(self) -> None:
         self._cancel_requested = True
         task = self._running_task
         if task is not None and task is not asyncio.current_task() and not task.done():
             task.cancel()
-        await self._closed_event.wait()
 
     def _bind_current_task(self) -> None:
         task = asyncio.current_task()

@@ -403,6 +403,12 @@ active execution registry 以 `user_id + conversation_id + client_message_id` �
 204 前等待 Advisory Lock 释放。同一 Conversation 的下一次 `POST /invocations` 必须等待
 该 cancellation command 完成。
 
+Registry 在 `InvocationService.prepare()` 前 reserve request key。若 cancellation command
+先到，Service 保存 120 秒 tombstone，迟到的原 Invocation 返回
+`409 invocation_cancelled`，且不会写 Message 或取得 Advisory Lock。Client cancellation
+使用 15 秒 timeout；失败结果保留在 Conversation barrier，下一次发送会用原
+`client_message_id` 重试 cancellation，成功前禁止新的 Invocation POST。
+
 ### 5.5 Advisory Lock
 
 实现 `ConversationLock`：
@@ -569,6 +575,7 @@ flowchart LR
 - unique `client_message_id`；
 - no retry on fetch ambiguity；
 - Stop 后发送 Conversation-scoped cancellation，并在下一次 Invocation 前等待 204；
+- cancellation 失败时保留 barrier 并用相同 key 重试；15 秒 timeout 防止无限 pending；
 - loading, empty, error, busy and delete states；
 - 清除旧 localStorage Session；展示环境不迁移旧 Checkpoint。
 
@@ -579,6 +586,7 @@ flowchart LR
 - two browser contexts have different Runtime Cookies but share user business data；
 - same Conversation concurrent send returns one 409；
 - abort SSE、显式取消并立即继续发送不会返回 `conversation_busy`；
+- cancellation 抢先到达时，迟到 Invocation 不进入 Agent；full-stack 204 后无 sleep 重试；
 - Delete removes history and blocks access；
 - OAuth callback keeps authorization-start snapshot after main Cookie rotation；
 - G1 method/path probe；

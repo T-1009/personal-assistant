@@ -76,6 +76,8 @@ flowchart LR
   `conversation_id`、`client_message_id`，通过 `stream` 区分同步或流式模式。
 - Conversation CRUD、Message history 与 Conversation-scoped cancellation command 使用
   `/api/conversations` 显式 suffix routes。
+- Invocation registry 在第一个数据库 await 前 reserve request key；抢先到达的 cancellation
+  以短时 tombstone 阻止迟到 Invocation 进入 persistence 或取得 Conversation lock。
 - `PREFIX_MATCH` 子路径映射规则：`/runtimes/{runtime_name}/invocations/<suffix>` 映射到容器内 `/<suffix>`。
 - Calendar OAuth2 callback 的公网 URL 是 Cloudflare Pages BFF
   `GET /auth/callback/m365-calendar`；BFF server-side 转发 callback query 到 FastAPI

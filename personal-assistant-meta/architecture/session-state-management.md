@@ -178,13 +178,18 @@ sequenceDiagram
 - Invocation 与 Delete 使用同一个 PostgreSQL session-level Advisory Lock key。
 - LLM/SSE 期间持有 lock connection，但不持有数据库 transaction。
 - `409 duplicate_message` 不重跑 Agent；Client 重新读取该 Conversation history。
+- `409 invocation_cancelled` 表示 cancellation command 抢先到达，迟到的原 Invocation
+  在进入 Message persistence 和 Conversation lock 前终止。
 - Client、BFF、Service 都不自动重试 `POST /invocations`。
 - Transport disconnect 只作为 best-effort；Client Stop 必须发送幂等
   `POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel`。
-  Service 的 active
-  execution registry 以 `user_id + conversation_id + client_message_id` 定位任务，取消后
-  等待 lock 释放再返回 204。相同 Runtime Session header 保证取消命令路由到发起任务的
-  Runtime；若任务已结束或不存在，仍幂等返回 204。
+  Service registry 在 `prepare()` 前 reserve
+  `user_id + conversation_id + client_message_id`；抢先到达的 cancellation 保存 120 秒
+  tombstone，迟到 Invocation 命中后直接返回 `409 invocation_cancelled`。已 reserve 或运行的
+  execution 取消后等待 lock 释放再返回 204。Client cancellation 使用 15 秒 timeout；失败
+  状态保留在 per-Conversation barrier，下一次发送使用同一 `client_message_id` 重试，成功前
+  不发送新的 Invocation。相同 Runtime Session header 保证命令路由到发起任务的 Runtime；
+  若任务已结束或不存在，仍幂等返回 204。
 - `AgentHandler` 只产生非 terminal event；Invocation Service 独占 HTTP/SSE terminal。
 - sync JSON 与 SSE 共用同一个 prepare、lock、idempotency 和 Message persistence core。
 

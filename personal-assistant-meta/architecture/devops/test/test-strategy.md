@@ -364,7 +364,10 @@ Manual real auth 不应作为默认 CI 命令。它应由受控环境手动触�
 - 增加 Vite dev proxy + Service subprocess 的 `/invocations` happy path。
 - 增加 Pages Functions local dev + Service subprocess 的 `/invocations` streaming pass-through。
 - 增加 Pages Functions local dev + Service + PostgreSQL 的 Stop、显式 cancellation、下一次
-  Invocation 回归测试，并断言 production/local upstream path 映射一致。
+  Invocation 回归测试，并断言 production/local upstream path 映射一致；204 后立即继续，
+  不使用 sleep 掩盖 unlock race。
+- Service 覆盖 cancellation 抢先到达的 tombstone；Client 覆盖 cancellation 失败、同 key
+  重试、失败期间禁止新 Invocation，以及 bounded timeout。
 - 增加 Pages Functions local dev + Service callback 的 Calendar callback bridge test。
 - 增加 ChatPage browser happy path：mock auth state，发送消息，观察 UI 收到 SSE token。
 

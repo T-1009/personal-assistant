@@ -503,7 +503,6 @@ def test_bug_23_cancelled_stream_allows_next_invocation(pages_stack):
             },
         )
 
-        time.sleep(0.1)
         retried = client.post(
             "/invocations",
             json={

@@ -241,6 +241,81 @@ describe("chatAdapter", () => {
       expect(postCount).toBe(2);
       expect((await firstRun as DOMException).name).toBe("AbortError");
     });
+
+    it("retries a failed cancellation and blocks new Invocations until it succeeds", async () => {
+      let cancellationCount = 0;
+      let resolveCancellation: ((response: Response) => void) | undefined;
+      let postCount = 0;
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+      const mockFetch = vi.fn().mockImplementation(
+        (url: string, init?: RequestInit) => {
+          if (url.endsWith("/cancel")) {
+            cancellationCount += 1;
+            if (cancellationCount <= 2) {
+              return Promise.resolve(
+                Response.json(
+                  { code: "cancellation_failed", detail: "try again" },
+                  { status: 503 },
+                ),
+              );
+            }
+            return new Promise<Response>((resolve) => {
+              resolveCancellation = resolve;
+            });
+          }
+
+          postCount += 1;
+          if (postCount === 1) {
+            return Promise.resolve({
+              ok: true,
+              body: new ReadableStream<Uint8Array>({
+                start(streamController) {
+                  init?.signal?.addEventListener(
+                    "abort",
+                    () => {
+                      streamController.error(
+                        new DOMException("The operation was aborted", "AbortError"),
+                      );
+                    },
+                    { once: true },
+                  );
+                },
+              }),
+            });
+          }
+
+          return Promise.resolve({
+            ok: true,
+            body: createMockStream([]),
+          });
+        },
+      );
+      globalThis.fetch = mockFetch as unknown as typeof fetch;
+      const controller = new AbortController();
+      const firstRun = collectResults("first", controller.signal).catch(
+        (error: unknown) => error,
+      );
+
+      await vi.waitFor(() => expect(postCount).toBe(1));
+      controller.abort();
+      await vi.waitFor(() => expect(cancellationCount).toBe(1));
+
+      await expect(collectResults("blocked")).rejects.toMatchObject({
+        status: 503,
+      });
+      expect(cancellationCount).toBe(2);
+      expect(postCount).toBe(1);
+
+      const continued = collectResults("continued");
+      await vi.waitFor(() => expect(cancellationCount).toBe(3));
+      expect(postCount).toBe(1);
+      resolveCancellation?.(new Response(null, { status: 204 }));
+
+      await continued;
+      expect(postCount).toBe(2);
+      expect((await firstRun as DOMException).name).toBe("AbortError");
+      consoleError.mockRestore();
+    });
   });
 
   describe("SSE token parsing", () => {

@@ -54,10 +54,11 @@ sequenceDiagram
 - 新增幂等
   `POST /api/conversations/{conversation_id}/invocations/{client_message_id}/cancel`
   cancellation command；`/invocations` 继续只表示 AgentArts Runtime 对话入口。
-- Service 使用 active execution registry 定位并取消同 Runtime Session 的任务，在
-  返回 204 前等待 advisory lock 释放。
+- Service 在 `prepare()` 前 reserve Invocation key；active execution 取消时在 204 前等待
+  advisory lock 释放，抢先到达的 cancellation 使用 120 秒 tombstone 阻止迟到 Invocation。
 - Client 在 Stop 时发送 cancellation command，并在同一 Conversation 的下一次 POST
-  前等待 cancellation 完成。
+  前等待 cancellation 完成；请求使用 15 秒 timeout，失败时保留 barrier 并用同一
+  `client_message_id` 重试，成功前不发送新的 Invocation。
 - 增加 BFF route、Client sequencing 与 Service lock release 回归测试。
 - 增加 Wrangler Pages dev、Service 与 PostgreSQL 的 full-stack 回归测试。
 
@@ -66,6 +67,8 @@ sequenceDiagram
 - [x] 用户点击 Stop 后发送带原 `client_message_id` 的显式 cancellation command。
 - [x] Service 的 SSE execution 被取消后立即释放 advisory lock。
 - [x] 同一 Conversation 的下一次 POST 等待 cancellation 204 后再发送。
+- [x] cancellation 抢先到达时，迟到 Invocation 返回 `409 invocation_cancelled`，不调用 Agent。
+- [x] cancellation 失败或 timeout 不放行下一次 Invocation；后续发送重试同一 cancellation。
 - [x] 真正并发且尚未取消的 Invocation 仍返回 `409 conversation_busy`。
 - [x] Client tests、build、Service integration 与 full-stack E2E 通过。
 
@@ -84,8 +87,10 @@ sequenceDiagram
 
 ## Verification（2026-07-20）
 
-- Client：`165 passed`；production build passed。
-- Service：`334 passed, 9 skipped`；Ruff lint passed。
+- Client：`167 passed`；production build passed。
+- Service：`337 passed, 9 skipped`；Ruff lint passed。
 - E2E：Feature 14 Wrangler Pages full-stack `2 passed`；E2E Ruff lint/format passed。
 - Pages Functions：Wrangler Worker compile passed；unit tests 分别断言 production Gateway
   suffix 和 local direct Service 使用相同 FastAPI cancellation path。
+- Race/failure：覆盖 pre-registration cancellation tombstone、失败 cancellation barrier、
+  同 key retry、15 秒 timeout，以及 204 后无 sleep 立即继续发送。
