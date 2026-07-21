@@ -304,8 +304,9 @@ class AgentHandler:
 ```
 
 AgentHandler 不生成 HTTP/SSE terminal、不吞一般异常。对于 persistent Checkpointer
-明确的 PostgreSQL idle/closed connection error，AgentHandler 在产生首个 structured
-event 前最多执行一次 Checkpointer restart + retry；已产生 event 或其他异常直接传播。
+明确的 PostgreSQL idle/closed connection error，AgentHandler 在 Agent execution 启动前
+执行 Checkpointer read preflight；preflight 失败时最多 restart + retry 一次。Agent
+execution 启动后的所有异常直接传播，不重跑整轮 Agent，避免重复执行写工具。
 InvocationService 负责 Advisory Lock、user/assistant Message persistence、commit 后
 done=true 和稳定错误响应。
 Production 的 Conversation/Message 与 Checkpointer 均使用 PostgreSQL；in-memory

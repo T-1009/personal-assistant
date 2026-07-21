@@ -85,9 +85,10 @@ sequenceDiagram
   失效而轮换。
 - Service 首次检测到明确的 PostgreSQL stale/closed connection 错误时，重新打开
   persistent Checkpointer，并使用原 `user_id` 与 `conversation_id` 读取 checkpoint。
-- sync Invocation 可以安全重试一次。
-- Streaming Invocation 仅在尚未输出任何 event 时重试一次；已输出 event 后不重试，
-  避免重复内容。
+- sync 与 Streaming Invocation 在启动 Agent 前执行 Checkpointer read preflight；preflight
+  遇到明确的 stale connection error 时可以安全 restart + retry 一次。
+- Agent execution 启动后不重试整轮 Agent，避免重复执行 `send_email`、
+  `reply_to_email` 等非幂等写工具。
 - 平台回收 Runtime 是额外的 operational recovery，不是 Service 正确性的前提。
 
 ## 修复范围
@@ -95,10 +96,11 @@ sequenceDiagram
 ### In Scope
 
 - 按当前 `conversation_id` + structured Agent event 架构恢复 Bug 19 的
-  Checkpointer restart + retry。
+  Checkpointer preflight restart + retry。
 - 仅识别已知的 PostgreSQL idle timeout / closed connection 类错误。
 - 对 restart 操作复用 `AgentHandler` 现有 lifecycle lock，避免重复初始化。
-- 恢复 sync、stream 输出前 retry、stream 输出后不 retry 的 Service regression tests。
+- 覆盖 sync/stream preflight recovery，以及 Agent execution 启动后不 retry 的 Service
+  regression tests。
 - 同步 persistent Checkpointer 自愈相关 architecture 文档。
 
 ### Out of Scope
@@ -112,11 +114,10 @@ sequenceDiagram
 
 ## 验收标准
 
-- [x] sync Invocation 首次遇到可恢复的 Checkpointer connection 错误后，重启
-      Checkpointer 并重试成功。
-- [x] Streaming Invocation 在输出 event 前遇到 `the connection is closed` 后，重启
-      Checkpointer 并重试成功。
-- [x] Streaming Invocation 已输出 event 后不重试，不产生重复 token 或 custom event。
+- [x] sync 与 Streaming Invocation 在 Agent 启动前遇到可恢复的 Checkpointer connection
+      错误后，重启 Checkpointer 并重试 preflight 成功。
+- [x] Agent execution 启动后的 Checkpointer connection 错误不触发整轮 retry。
+- [x] 即使 Streaming 尚未输出 event，也不会重复执行可能已产生副作用的 Agent。
 - [x] 非 Checkpointer connection 错误仍按原有 error path 返回。
 - [x] recovery 前后保持相同的 AgentArts Runtime Session ID、`user_id` 和
       `conversation_id`。
@@ -136,11 +137,26 @@ sequenceDiagram
 - GitNexus detect changes：8 个 tracked files、37 个 symbols、1 条 affected flow，风险
   `medium`，与 AgentHandler sync/stream recovery 范围一致。
 
+## Follow-up safety correction（2026-07-21）
+
+PR #19 合入后的 review 发现：“尚未输出 event”不能证明 Agent 尚未产生副作用；写工具可能
+已经成功，随后才在 checkpoint persistence 阶段抛出 `OperationalError`。因此 recovery
+边界收紧为 Agent execution 前的 Checkpointer read preflight。Agent 开始执行后即使出现
+相同错误也不重跑整轮 Agent。
+
+Follow-up verification：
+
+- Service focused：`49 passed`。
+- Service full suite：`311 passed, 39 skipped`；Ruff lint 通过。
+- 受影响 Python 文件 Ruff format 通过；全 Service format 仍被两个既有无关文件阻断。
+- Feature 14 Pages + Service + 临时 PostgreSQL 17 full-stack：`2 passed`。
+- E2E Ruff lint/format 通过。
+
 ## Affected Specs / Architecture Docs
 
 | 文档 | 影响 |
 |------|------|
-| `architecture/backend_architecture.md` | 记录 persistent Checkpointer 的一次性 restart + retry |
+| `architecture/backend_architecture.md` | 记录 persistent Checkpointer preflight restart + retry |
 | `architecture/session-state-management.md` | 明确 Runtime Session、Conversation 与数据库 connection 生命周期相互独立 |
 | `architecture/devops/test/test-strategy.md` | 恢复 stale Checkpointer regression coverage |
 
@@ -151,6 +167,6 @@ sequenceDiagram
 | `bac12e3` | Bug 19 原始 restart + retry 实现 |
 | `cec5c5b` | Feature 14 合并后恢复逻辑被覆盖 |
 | `e734768d` | 发生 production incident 的部署版本 |
-| `personal-assistant-service/app/agent_handler.py` | Checkpointer 生命周期及 sync/stream retry boundary |
+| `personal-assistant-service/app/agent_handler.py` | Checkpointer 生命周期及 preflight retry boundary |
 | `personal-assistant-service/tests/test_agent_handler.py` | recovery regression tests |
 | `personal-assistant-client/functions/_shared/runtime-session.js` | Runtime Session Cookie 生成与复用 |
