@@ -1,166 +1,160 @@
-# Feature-17 MCP 调用耗时分析
+# Feature-17 / Feature-18 GitHub MCP 性能与详情完整性分析
 
-> 日期：2026-07-16
-> 范围：`github_mcp_search_activity` 端到端调用链路
-> 方法：静态代码路径分析
+> 初始分析：2026-07-16
+>
+> 最近验证：2026-07-22
+>
+> 范围：Feature-17 `github_mcp_search_activity`、Feature-18 GitHub 搜索与详情补全
+>
+> 方法：静态调用链分析、受控并发 unit tests；尚未执行 production Gateway 基准测试
 
-## 1. 调用链路全景
+## 1. 调用链路
 
-一次 `github_mcp_search_activity` 的完整 MCP 往返链路：
+GitHub 活动数据经过 STS、AgentArts MCP Gateway 和 GitHub MCP Server，不直接从 GitHub 用户事件流读取。
 
-```
-应用代码 → IAM 签名 → HTTP 请求 → AgentArts MCP Gateway → GitHub MCP Server → GitHub API
-                                                                                  ↓
-应用代码 ← JSON 解析 ← HTTP 响应 ← AgentArts MCP Gateway ← GitHub MCP Server ←──┘
-```
+图类型：**Sequence Diagram（时序图）**。用于说明 Search 如何复用父对象页，以及批量 Detail 如何复用 MCP session 并限制并发。
 
-以 **1 个仓库、5 种事件类型全选、命中 5 个 Issue + 3 个 PR** 的典型场景为例，共 **13 次** MCP 往返：
+```mermaid
+sequenceDiagram
+    participant Caller as Feature-17 / Feature-18
+    participant Service as Personal Assistant Service
+    participant Gateway as AgentArts MCP Gateway
+    participant GitHubMCP as GitHub MCP Server
+    participant GitHub as GitHub API
 
-```
-list_tools         █ 1 次
-get_me             █ 1 次
-list_commits       █ 1 次
-list_pull_requests █ 1 次
-list_issues        █ 1 次
-get_issue_comments █████ 5 次（每个 Issue 一次）
-get_pr_reviews     ███ 3 次（每个 PR 一次）
-                   ─────
-                   13 次 MCP 往返
-```
-
----
-
-## 2. 瓶颈分析
-
-### 瓶颈 1：每次调用都新建 Session（✅ 已于 2026-07-17 修复，详见 [session-per-call 修复文档](./feature-17-mcp-session-per-call-performance.md)）
-
-**位置**（修复前旧代码）：[`gateway_client.py`](../../../../personal-assistant-service/app/mcp/gateway_client.py)（旧 `list_tools`/`call_tool` 代码已不存在，当前为 context manager 实现）
-
-`list_tools()` 和 `call_tool()` 各自独立调用 `self._client()` + `client.session()`，每次创建全新的 `MultiServerMCPClient` 实例和 MCP session。
-
-同时 [`_mcp_http_client_factory`](../../../../personal-assistant-service/app/mcp/gateway_client.py#L160-L178) 每次 `new` 一个 `httpx.AsyncClient`（`trust_env=False`），**无连接池复用**。
-
-**影响**：13 次调用 = 13 次 TCP+TLS 握手 + 13 次 IAM 签名计算 + 13 次 MCP Session 创建/销毁。这不是"13 个 HTTP 请求"的代价，而是"13 个全新连接"的代价。
-
-```python
-# 修复前旧代码 — gateway_client.py（已不存在此逻辑）
-async def list_tools(self) -> list[MCPToolInfo]:
-    client = self._client()                              # 新建 MultiServerMCPClient
-    async with client.session(_GITHUB_MCP_SERVER_NAME) as session:  # 新建 session
-        result = await session.list_tools()
-
-# 修复前旧代码 — gateway_client.py（已不存在此逻辑）
-async def call_tool(self, name, arguments) -> Any:
-    client = self._client()                              # 又新建一个
-    async with client.session(_GITHUB_MCP_SERVER_NAME) as session:  # 又新建 session
-        result = await session.call_tool(name, arguments)
+    Caller->>Service: Search 或批量 Detail
+    Service->>Gateway: 使用 STS 建立一个 MCP session
+    Service->>Gateway: list_tools（session 内最多一次）
+    alt Search operation
+        loop 保持原 cursor 顺序逐个处理任务
+            Service->>Service: 查找 request-local PR/Issue parent page cache
+            alt Cache miss
+                Service->>Gateway: call_tool(search page)
+            else Cache hit
+                Service->>Service: 复用基础页并执行 actor filter
+            end
+        end
+    else Batch Detail operation
+        loop 详情任务批次
+            par Detail event pipeline 1
+                Service->>Gateway: call_tool(detail)
+            and Detail event pipeline 2..5
+                Service->>Gateway: call_tool(detail)
+            end
+        end
+    end
+    Gateway->>GitHubMCP: 转发各 MCP 请求
+    GitHubMCP->>GitHub: 调用 GitHub API
+    GitHub-->>Service: 归一化结果或 typed warning
+    Service-->>Caller: Events、Details、Warnings、next_cursor
 ```
 
----
+## 2. 修正后的调用数量基线
 
-### 瓶颈 2：N+1 查询问题（Comment/Review 收集）
+原分析按每仓库 3 个根调用估算，但全选 5 种事件类型时，当前任务队列实际创建 6 个根任务：
 
-**位置**：[`github_activity_source.py:1486-1493`](../../../../personal-assistant-service/app/mcp/github_activity_source.py#L1486-L1493)
+| 根任务 | 每仓库调用数 | 说明 |
+|---|---:|---|
+| Commit 搜索 | 1 | `list_commits` |
+| PR 活动搜索 | 1 | `list_pull_requests` |
+| Issue 活动搜索 | 1 | `list_issues` |
+| Issue comment 的父对象发现 | 1 | 再次调用 `list_issues` |
+| PR comment 的父对象发现 | 1 | 再次调用 `list_pull_requests` |
+| PR review 的父对象发现 | 1 | 第三次调用 `list_pull_requests` |
 
-Comments 和 Reviews 没有批量查询接口，代码为每个 Issue/PR **逐个串行**发起独立的 `get_issue_comments` / `get_pull_request_reviews` 调用。这是**最隐蔽且增长最快的瓶颈**。
+在 1 个仓库、5 个 Issue、3 个 PR、5 种事件类型全选且每类都只有一页时：
 
-```python
-# github_activity_source.py:1486-1493
-if task.discover_parents:
-    child_tasks = _child_tasks_from_parent_page(task, page)
-    ...
-    tasks[0:0] = child_tasks + continuation  # 子任务插入队列头部，逐个串行弹出执行
+| 调用 | Feature-17 facade | internal 默认调用 | Feature-18 | 说明 |
+|---|---:|---:|---:|---|
+| `list_tools` | 1 | 1 | 1 | 每个 MCP session 一次 |
+| `get_me` | 0 | 1 | 0 | facade 使用 `actor=None`；internal 默认使用 `actor="platform"`；Report 显式传 OAuth login |
+| 6 个根任务 | 6 | 6 | 6 | 同上表 |
+| Issue comments | 5 | 5 | 5 | 每个父 Issue 一次 |
+| PR comments | 3 | 3 | 3 | 每个父 PR 一次 |
+| PR reviews | 3 | 3 | 3 | 每个父 PR 一次 |
+| **合计** | **18** | **19** | **18** | 未计 repository discovery 和额外分页 |
+
+静态调用数近似为：
+
+```text
+Search calls = list_tools(1) + identity(0 or 1)
+             + repositories * 6
+             + issue_parents
+             + 2 * pull_request_parents
+             + repository_discovery_pages
+             + remote_continuation_pages
 ```
 
-**影响**：10 个 Issue + 5 个 PR = 额外 15 次串行往返。活动的仓库越活跃，子调用越多，耗时线性增长。
+当前优化直接减少重复 GitHub API 调用，不改变每页活动组成。若 direct PR/Issue 与 comment/review parent discovery 在同一次 source operation 内处理，相同 repository/pagination 的 PR 根调用可由 3 次降为 1 次，Issue 根调用可由 2 次降为 1 次。典型场景的 Search 调用因此约为 Feature-17 facade 15 次、internal 默认调用 16 次、Feature-18 15 次。若 `limit` 导致相关任务分散到不同 cursor 请求，request-local cache 不跨 session 保留，实际调用数会介于优化值与基线值之间。
 
----
+## 3. 已落地的性能优化
 
-### 瓶颈 3：仓库间与事件类型间全部串行
+### 3.1 MCP session 复用
 
-**位置**：[`github_activity_source.py:1458-1494`](../../../../personal-assistant-service/app/mcp/github_activity_source.py#L1458-L1494)
+已于 2026-07-17 将 `MCPGatewayClient` 改为 async context manager。一次 source operation 只建立一个 MCP session，详见 [session-per-call 修复文档](./feature-17-mcp-session-per-call-performance.md)。
 
-三个维度全部顺序执行，但 commits / PRs / issues 三者**相互独立**，多仓库之间也**相互独立**，完全具备并行条件。
+### 3.2 Search parent page request-local cache
 
-```
-Repo 1
-  └→ commits ──→（等）
-  └→ PRs ──────→（等）
-  └→ issues ───→（等）
-  └→ comments ─→（等，逐个串行）
-  └→ reviews ──→（等，逐个串行）
-       ↓ 全部完成后才进入
-Repo 2
-  └→ ...（同上）
-```
+`github_mcp_search_activity` 保持原有串行任务顺序和 cursor contract，同时在一次 source operation 内缓存 PR/Issue 基础页：
 
-**影响**：3 个仓库 = 耗时 ×3。
+- cache key 包含 repository、parent kind、page size、pagination kind/value；
+- PR/Issue 基础页以 `actor=None` 读取，direct activity 再按原规则做 case-insensitive actor filter；
+- comment/review parent discovery 复用同一基础页，不重复读取 PR/Issue 列表；
+- cache hit 不消耗远端 page-call budget；
+- error 不缓存，typed warning 和 retryable cursor 行为保持不变；
+- cache 不跨 session/cursor 请求，避免跨用户数据和配置陈旧问题；
+- 不修改 Feature-17 facade、参数、返回 schema、活动组成或 cursor version。
 
----
+曾评估过通用 `asyncio.gather` Search 调度，但 strict global `limit` 会让已完成的 sibling response 无法安全放入当前结果，只能在下一 cursor 重发；固定 page quota 又会增加 dense repository 的分页调用并改变每页组成。因此本轮不采用该方案。
 
-### 瓶颈 4：每次搜索都重新 `list_tools`
+### 3.3 Feature-18 Detail 批量复用
 
-**位置**：[`github_activity_source.py:1435`](../../../../personal-assistant-service/app/mcp/github_activity_source.py#L1435)
+优化前，Feature-18 对截断后的最多 100 条活动逐条调用 `github_mcp_get_detail`。虽然调用方用 semaphore 限制为 5 路，但每条活动仍重新获取 STS、建立 session 和执行 `list_tools`：
 
-MCP 工具列表在 Target 配置不变的情况下是稳定的，但每次 `github_mcp_search_activity` 调用都重新获取，额外增加 1 次往返。
+| Detail 阶段资源 | 优化前上限 | 优化后上限 |
+|---|---:|---:|
+| STS-backed operation | 100 | 1 |
+| MCP session | 100 | 1 |
+| `list_tools` | 100 | 1 |
+| 并发 event pipeline | 5 | 5 |
 
-```python
-# github_activity_source.py:1434-1435
-async def _operation(client: MCPGatewayClient) -> GitHubActivityResult:
-    tools = await _tool_index(client)  # 每次都重新获取工具列表
-```
+现在 `github_mcp_get_details` 在一个 STS/MCP session 中完成整批详情补全，保持输入顺序，并将每条活动的失败隔离为对应 `GitHubMCPWarning`。原 `github_mcp_get_detail` 保持原签名和单条语义，Feature-17 不需要改调用方式。
 
----
+### 3.4 `list_tools` session-local single-flight cache
 
-## 3. 耗时估算
+`MCPGatewayClient.list_tools` 在当前打开的 session 内缓存成功结果，并用 `asyncio.Lock` 合并并发首请求：
 
-### 往返次数公式
+- 成功和空工具列表会缓存；
+- 失败不会缓存，后续调用仍可重试；
+- 进入和退出 session 时清空；
+- 不做跨 session 全局缓存，避免 Target 配置变化长期不可见。
 
-```
-总往返次数 = 2 + N_repos × (3 + N_issues + N_PRs)
-```
+## 4. 当前验证结果
 
-其中：
-- `2` = `list_tools` + `get_me`
-- `3` = commits + pull_requests + issues（每个仓库）
-- `N_issues` = 命中时间窗口的 Issue 数（每个触发 1 次 `get_issue_comments`）
-- `N_PRs` = 命中时间窗口的 PR 数（每个触发 1 次 `get_pull_request_reviews`）
+2026-07-22 的核心回归结果为 `81 passed`，覆盖：
 
-### 典型场景估算
+- `list_tools` 并发 single-flight，只产生一个底层请求；
+- Search 相同 PR/Issue parent page 分别只产生一个底层请求；
+- 小 `limit` 跨 cursor 无重复活动，也不增加重复 comment page call；
+- retryable task 保留在 cursor，成功 sibling 不会越过它提前暴露；
+- 100 条 Report 候选先全局排序、截断，再走一次批量详情入口；
+- 批量详情只执行一个 source operation、一次 `list_tools`，结果顺序不变；
+- Feature-17 facade 和既有 detail/search 行为保持兼容。
 
-| 场景 | 仓库数 | 往返次数 | 估算耗时（每跳 1s） | 估算耗时（每跳 3s） |
-|------|--------|----------|---------------------|---------------------|
-| 轻型（仅 commits/PRs/issues，不含 comment/review） | 1 | 5 | 5s | 15s |
-| 典型（含 5 issues + 3 PRs 子调用） | 1 | 13 | 13s | 39s |
-| 活跃仓库（含 10 issues + 5 PRs 子调用） | 1 | 20 | 20s | 60s |
-| 多仓库（2 个典型仓库） | 2 | 24 | 24s | 72s |
+上述测试证明调度与资源复用合同，不代表真实 AgentArts Gateway 延迟。部署后仍需记录 Search/Detail 的 p50、p95、MCP call 数、session 数和 429/403/5xx 分布。
 
----
 
-## 4. 优化方向（供参考）
+## 5. 下一步验收标准
 
-| 优先级 | 瓶颈 | 思路 |
-|--------|------|------|
-| **P0（✅ 已修复）** | Session 重复创建 | 已将 `MCPGatewayClient` 改造为 async context manager，详见 [修复文档](./feature-17-mcp-session-per-call-performance.md) |
-| **P0** | N+1 查询 | comments 和 reviews 与对应 issue/PR 收集合并为并行批处理（`asyncio.gather`） |
-| **P1** | 事件类型串行 | commits / PRs / issues 三者无依赖，可用 `asyncio.gather` 并行发起 |
-| **P1** | 仓库串行 | 多仓库场景可用 `asyncio.gather` 并行处理 |
-| **P2** | list_tools 缓存 | 同一次 Agent turn 内缓存工具列表（如缓存到 `MCPGatewayClient` 实例上），避免重复获取 |
+性能优化上线后，先采集真实错误分布，再实施 P0/P1 可靠性改造。建议验收指标：
 
-### P0 优化预期效果（1 个典型仓库）
-
-```
-优化前（13 次串行，每次新建连接）：13 × 3s ≈ 39s
-
-Session 复用 + 并行后：
-  list_tools         █ 1 次（缓存后 0 次）
-  get_me             █ 1 次（session 复用）
-  ┌ commits         █ 1 次 ┐
-  ├ PRs             █ 1 次 ├ asyncio.gather 并行（3 次同时发出）
-  └ issues          █ 1 次 ┘
-  ┌ comments × 5    █████ 5 次 ┐
-  └ reviews × 3     ███ 3 次   ┘ asyncio.gather 并行
-
-优化后总耗时 ≈ max(3 核心调用, 8 子调用) × 1s ≈ 5~8s
-节省约 75%~85%
-```
+| 指标 | 目标 |
+|---|---|
+| Feature-18 Detail session 数 | 每份报告 1 个 |
+| session 内 `list_tools` 次数 | 最多 1 次 |
+| Search 重复父页 | 同一 source operation、相同 key 的 PR/Issue page 各最多 1 次远端读取 |
+| Detail 并发 | 最多 5，可因 rate limit 自适应降低 |
+| retry | 仅瞬态错误，受 `Retry-After`、deadline 和 budget 约束 |
+| partial detail | 保留成功 section 和搜索摘要，不全量回退 |
+| 用户 warning | 包含失败数量与分类，不包含 secret |
+| Feature-17 兼容 | facade/schema/cursor contract 与现有行为保持一致 |

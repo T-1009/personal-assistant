@@ -33,6 +33,14 @@ def mock_deps():
         patch("app.agent_handler.get_model") as mock_get_model,
         patch("app.agent_handler.create_deep_agent") as mock_create_agent,
         patch("app.agent_handler.build_tools") as mock_build_tools,
+        patch(
+            "app.agent_handler.get_settings",
+            return_value=Settings(
+                _env_file=None,
+                postgres_dsn=None,
+                sqlite_db_path=None,
+            ),
+        ),
         patch.object(
             AgentHandler, "_init_checkpointer", return_value=MagicMock()
         ) as mock_init_cp,
@@ -649,6 +657,40 @@ class TestHandleStreamWithCustomEvent:
         assert events[1].type is AgentEventType.TOKEN
         assert events[1].token == "Hello"
 
+    @pytest.mark.asyncio
+    async def test_report_ready_event_stays_structured(self, mock_deps):
+        """Report artifacts pass through without being folded into chat text."""
+        _, _, _, mock_agent, _, _ = mock_deps
+
+        handler = AgentHandler()
+        report_event = {
+            "type": "report_ready",
+            "report_ready": True,
+            "report_format": "markdown",
+            "report_filename": "日报-2024-02-14.md",
+            "report_content": "# 日报\n\n日期：2024-02-14\n",
+        }
+
+        async def mock_astream(_input, stream_mode=None, config=None):
+            yield ("custom", report_event)
+            yield ("messages", (_fake_chunk("报告已生成。"), {}))
+
+        mock_agent.astream = mock_astream
+
+        events = [
+            event
+            async for event in handler.handle_stream(
+                message="生成 2024-02-14 的日报",
+                user_id="user-1",
+                conversation_id="conversation-1",
+            )
+        ]
+
+        assert events[0].type is AgentEventType.CUSTOM
+        assert events[0].data == report_event
+        assert events[1].type is AgentEventType.TOKEN
+        assert events[1].token == "报告已生成。"
+
 
 # ---------------------------------------------------------------------------
 # get_agent_handler() — Singleton behavior (Feature 1.4)
@@ -696,3 +738,26 @@ class TestGetAgentHandlerSingleton:
                 )
         finally:
             app.agent_handler._handler_instance = None
+
+
+def test_feature_18_system_prompt_routes_report_intent_to_root_tool() -> None:
+    assert "generate_report" in SYSTEM_PROMPT
+    for intent in {"日报", "周报", "月报", "工作总结", "研发进展总结"}:
+        assert intent in SYSTEM_PROMPT
+    assert "唯一的数据编排入口" in SYSTEM_PROMPT
+    assert "不要自行串联 list_emails" in SYSTEM_PROMPT
+    assert "GitHub 工程活动、Email 和 Calendar" in SYSTEM_PROMPT
+    assert "OAuth 定主体账号，MCP 定读取通道" in SYSTEM_PROMPT
+    assert "actor=A" in SYSTEM_PROMPT
+    assert "allowlist" in SYSTEM_PROMPT
+    assert "全局最多 100 条" in SYSTEM_PROMPT
+    assert "其中 GitHub 数据来自 platform identity" not in SYSTEM_PROMPT
+    assert "仅查询邮件、日历" in SYSTEM_PROMPT
+
+
+def test_feature_18_system_prompt_preserves_user_supplied_dates() -> None:
+    assert "必须准确规范化为 ISO 8601 日期" in SYSTEM_PROMPT
+    assert "reference_date，日期本身不得改变" in SYSTEM_PROMPT
+    assert "禁止改用今天" in SYSTEM_PROMPT
+    assert "必须同时传入 start_at 和 end_at" in SYSTEM_PROMPT
+    assert "不得省略、扩大、缩小或替换" in SYSTEM_PROMPT

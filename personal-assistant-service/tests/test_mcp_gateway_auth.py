@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
@@ -67,6 +68,7 @@ def _install_gateway_session_harness(
     class FakeSession:
         async def list_tools(self):
             state.requests.append(("list_tools", None))
+            await asyncio.sleep(0)
             return SimpleNamespace(
                 tools=[
                     SimpleNamespace(
@@ -255,6 +257,26 @@ async def test_run_with_github_mcp_sts_reuses_one_session_for_operation(
         "get_issue",
         "get_issue",
     ]
+
+
+async def test_mcp_client_caches_list_tools_with_single_flight(monkeypatch):
+    state = _install_gateway_session_harness(monkeypatch)
+
+    async def operation(client):
+        first, second = await asyncio.gather(
+            client.list_tools(),
+            client.list_tools(),
+        )
+        assert first is not second
+        first.clear()
+        third = await client.list_tools()
+        return second, third
+
+    second, third = await gateway_client.run_with_github_mcp_sts(operation)
+
+    assert second[0].name == "target-github-mcp-get_me"
+    assert third[0].name == "target-github-mcp-get_me"
+    assert state.requests == [("list_tools", None)]
 
 
 async def test_run_with_github_mcp_sts_closes_session_when_operation_raises(

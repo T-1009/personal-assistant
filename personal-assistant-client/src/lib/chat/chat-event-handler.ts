@@ -1,4 +1,5 @@
 import { useAuthCardStore } from "@/stores/auth-card-store";
+import { useReportDownloadStore } from "@/stores/report-download-store";
 import type { SSEEvent } from "@/types/chat";
 
 interface ChatEventContext {
@@ -68,6 +69,23 @@ export function handleChatEvent(
         systemMessage || undefined,
         event.oauth2_state,
       );
+  }
+
+  if (
+    event.report_ready === true &&
+    event.report_format === "markdown" &&
+    typeof event.report_content === "string" &&
+    event.report_content.trim()
+  ) {
+    useReportDownloadStore.getState().setReport(context.assistantMessageId, {
+      content: event.report_content,
+      filename:
+        typeof event.report_filename === "string" &&
+        event.report_filename.trim()
+          ? event.report_filename
+          : "report.md",
+      format: "markdown",
+    });
   }
 
   if (!isAuthEvent && systemMessage.trim()) {

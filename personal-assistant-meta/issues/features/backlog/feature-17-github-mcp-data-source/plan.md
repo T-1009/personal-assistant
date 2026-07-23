@@ -219,7 +219,7 @@ transport、IAM signing 或数据聚合实现。
 
 ## 6. 数据模型
 
-`GitHubActivityQuery` 封装时间窗口、repository、event types、limit / cursor 等查询条件；`GitHubActivityResult` 封装 `events`、`warnings`、`next_cursor` 和固定为 `platform` 的 `identity_scope`。Feature 18 依赖这些 typed models，不解析 Agent tool 的序列化结果。
+`GitHubActivityQuery` 封装时间窗口、repository、event types、limit / cursor 等查询条件；`GitHubActivityResult` 封装 `events`、`warnings`、`next_cursor` 和固定为 `platform` 的 `identity_scope`。这里的 `identity_scope` 表示 MCP 数据访问身份；Agent-facing 查询默认不强制 actor 过滤。Feature 18 依赖这些 typed models，不解析 Agent tool 的序列化结果。
 
 `GitHubActivityEvent`：
 
@@ -246,7 +246,7 @@ transport、IAM signing 或数据聚合实现。
   "timezone": "Asia/Shanghai",
   "provider": "github",
   "repositories": ["git-malu/personal-assistant"],
-  "actor": "platform",
+  "actor": null,
   "event_types": ["commit", "pull_request", "issue", "review", "comment"],
   "limit": 100,
   "cursor": null
@@ -267,7 +267,9 @@ transport、IAM signing 或数据聚合实现。
 `github_mcp_search_activity` 聚合流程：
 
 1. 将 `start_at` / `end_at` 按 `timezone` 归一化为 UTC 时间窗口。
-2. 调用 `github_mcp_resolve_identity` 解析 GitHub MCP Target 平台授权身份；当 `actor = "platform"` 时，用该 login 过滤 commits、PR、issues、reviews 和 comments。
+2. 只有显式传入 `actor = "platform"` 时，才调用 `github_mcp_resolve_identity` 解析
+   GitHub MCP Target 平台授权身份，并用该 login 过滤 commits、PR、issues、reviews 和
+   comments；Agent-facing 默认查询不传 actor，因此保留平台凭据可见仓库中的其他作者活动。
 3. 如果没有指定 `repositories`，先调用 `github_mcp_list_repositories` 获取候选仓库。
 4. 按 `event_types` 分批调用官方 MCP 原子工具；每类数据独立分页。
 5. 对列表结果先做轻量过滤；只有需要展开时，才调用 detail tools。

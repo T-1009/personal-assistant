@@ -79,7 +79,7 @@ sequenceDiagram
 | **优势** | 完全自定义 UI/UX，不受平台限制 |
 | **代价** | 需要自己开发前端页面 |
 | **技术栈** | Vite + React 19 + TypeScript + Tailwind CSS + assistant-ui + Zustand。详见 [ADR-013](ADR/ADR-013-assistant-ui-chat-library.md) |
-| **SSE 事件类型** | `token`、`done`、`error`、`system_message`、`auth_required`、`auth_complete`。详见 §2.1.4 |
+| **SSE 事件类型** | `token`、`done`、`error`、`system_message`、`auth_required`、`auth_complete`、`report_ready`。详见 §2.1.4 |
 
 **Inbound Auth 与 Outbound Auth 分离**：
 
@@ -280,6 +280,10 @@ AgentArts Gateway 返回的 SSE `ReadableStream` 透明传回 Browser。Service 
 | `auth_required` | `boolean` | 标记需要显示 pending Auth Card | `true` |
 | `auth_complete` | `boolean` | 标记 provider 的凭据当前可用；仅更新匹配的 pending Auth Card | `true` |
 | `provider` | `string` | Auth Card 与完成事件的关联键 | `"m365-provider-common"` |
+| `report_ready` | `boolean` | 标记 Feature 18 原始 Markdown artifact 已生成 | `true` |
+| `report_format` | `"markdown"` | 当前唯一支持的报告下载格式 | `"markdown"` |
+| `report_content` | `string` | deterministic renderer 生成的原始 Markdown | `"# 日报\n..."` |
+| `report_filename` | `string` | 由报告类型和 resolved window 组成的安全建议文件名 | `"日报-2024-02-14.md"` |
 
 **Outbound OAuth 事件流**：
 
@@ -313,6 +317,38 @@ assistant message text。普通非 auth `system_message` 仍追加到聊天正�
 可以在每次取得 access token 后发送 `auth_complete`；若 Client 没有相同
 `provider` 的 pending Card，Store 会幂等忽略该事件。
 
+**Report artifact 事件流**：
+
+图类型：**Sequence Diagram（时序图）**。用于说明 Feature 18 报告 artifact 到本机
+Markdown 文件的路径。
+
+```mermaid
+sequenceDiagram
+    actor User as 用户
+    participant Report as generate_report
+    participant Stream as LangGraph custom stream
+    participant Handler as chat-event-handler
+    participant Store as Report Download Store
+    participant Card as ReportDownloadCard
+    participant File as 本机文件系统
+
+    Report->>Stream: report_ready(content, filename, window)
+    Stream->>Handler: custom SSE
+    Handler->>Store: setReport(assistantMessageId, artifact)
+    Store-->>Card: 显示报告下载卡
+    User->>Card: 点击下载报告
+    alt File System Access API 可用
+        Card->>File: showSaveFilePicker + write UTF-8 Markdown
+    else API 不可用
+        Card->>File: Blob + a[download]
+    end
+```
+
+`report_ready` 不进入普通 assistant message token。Store 以 `assistantMessageId` 隔离
+多份报告，卡片位于对应报告正文之后。用户取消原生 picker 时不启动 fallback；其他浏览器
+通过标准下载保存 `.md`。当前 Conversation history 只持久化文本，因此 artifact 和专用
+卡片不跨页面刷新恢复。
+
 #### 2.1.5 Chat Adapter 模块边界
 
 `assistant-ui` 通过 `RuntimeProvider` 注册 `chatAdapter`。Adapter 只负责流程
@@ -333,6 +369,9 @@ flowchart LR
     Parser --> Handler["chat/chat-event-handler.ts<br/>事件归约与分发"]
     Handler --> Result["ChatModelRunResult"]
     Handler --> AuthStore["Auth Card Store"]
+    Handler --> ReportStore["Report Download Store"]
+    ReportStore --> ReportCard["ReportDownloadCard"]
+    ReportCard --> Save["showSaveFilePicker<br/>or anchor download"]
 ```
 
 | 模块 | 稳定职责 |
@@ -343,7 +382,7 @@ flowchart LR
 | `conversations/api.ts` | snake_case wire 与 camelCase domain 转换、CRUD、Message history pagination |
 | `conversations/runtime.tsx` | RemoteThreadListAdapter、`remoteId=conversation_id`、load-only history adapter |
 | `sse-parser.ts` | 处理 stream chunk、CRLF normalization、`data:` line 和 JSON decode |
-| `chat-event-handler.ts` | 累积 token，区分普通 system message 与 auth event，更新 Auth Card Store |
+| `chat-event-handler.ts` | 累积 token，区分普通 system message、auth event 与 report artifact event，更新对应 Zustand store |
 | `jwt.ts` | base64url JWT payload decode、`sub/oid` 和 `exp` 提取 |
 
 Runtime Session 不存在 Browser JavaScript/localStorage 中。desktop sidebar 与 mobile drawer

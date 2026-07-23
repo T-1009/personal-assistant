@@ -106,13 +106,17 @@ flowchart TB
 
 ## 身份与权限边界
 
-GitHub MCP data source 使用 **personal assistant agent 平台身份**，不代表 Web Chat 当前登录用户。
+GitHub MCP data source 使用 **personal assistant agent 平台身份作为数据访问身份**，不代表
+Web Chat 当前登录用户的 OAuth 凭据。
 
 - `target-github-mcp` 中的 GitHub PAT 是平台侧凭证；
 - GitHub MCP Server 看到的 `me` 是 PAT 所属 GitHub 账号 / platform GitHub account；
-- `actor = platform` 表示该平台账号；
-- Agent-facing tool description 和 result 必须明确 `identity_scope = platform`，不得使用“当前用户的 GitHub 活动”等误导表述；
-- 如未来需要“当前用户自己的 GitHub 活动”，应作为单独的 user-delegated GitHub data source 设计。
+- `actor = platform` 是 internal source 的显式过滤选项，表示只保留该平台账号发起的活动；
+- Agent-facing `github_search_activity` 默认不强制 actor 过滤，可能返回平台凭据可见仓库内
+  的其他作者活动；tool description 和 result 必须明确 `identity_scope = platform`，不得
+  使用“当前用户的 GitHub 活动”等误导表述；
+- Feature 18 Report 会另行用当前用户的 GitHub OAuth 确认主体账号 A，再以 `actor=A`
+  调用本 source；这不改变 Feature 17 独立查询的 platform data-access 边界。
 
 Service 调 AgentArts MCP Gateway 的生产认证路径为：
 
