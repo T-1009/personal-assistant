@@ -652,7 +652,7 @@ def _github_evidence(
             )
             or None,
             "metrics": dict(event.metrics),
-            "details": dict(event.details),
+            "detail_available": bool(event.details),
             "subject_login": subject_login,
             "repository_scope": "oauth_accessible",
             "data_access_identity": "platform_mcp",

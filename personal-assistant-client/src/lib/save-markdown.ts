@@ -85,6 +85,7 @@ export async function saveMarkdownFile(
       return "saved";
     } catch (error) {
       if (isAbortError(error)) return "cancelled";
+      throw error;
     }
   }
 

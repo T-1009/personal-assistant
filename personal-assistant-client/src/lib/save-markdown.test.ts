@@ -81,6 +81,36 @@ describe("saveMarkdownFile", () => {
     expect(anchorClick).not.toHaveBeenCalled();
   });
 
+  it.each(["picker", "createWritable", "write", "close"] as const)(
+    "propagates an unexpected %s failure without starting a fallback download",
+    async (failureStage) => {
+      const failure = new Error(`${failureStage} failed`);
+      const write = vi.fn(async () => {
+        if (failureStage === "write") throw failure;
+      });
+      const close = vi.fn(async () => {
+        if (failureStage === "close") throw failure;
+      });
+      const createWritable = vi.fn(async () => {
+        if (failureStage === "createWritable") throw failure;
+        return { write, close };
+      });
+      const showSaveFilePicker = vi.fn(async () => {
+        if (failureStage === "picker") throw failure;
+        return { createWritable };
+      });
+      setSaveFilePicker(showSaveFilePicker);
+      const anchorClick = vi
+        .spyOn(HTMLAnchorElement.prototype, "click")
+        .mockImplementation(() => undefined);
+
+      await expect(saveMarkdownFile("# 日报", "日报.md")).rejects.toBe(
+        failure,
+      );
+      expect(anchorClick).not.toHaveBeenCalled();
+    },
+  );
+
   it("falls back to a standard Markdown download when no picker exists", async () => {
     setSaveFilePicker(undefined);
     const createObjectURL = vi.fn().mockReturnValue("blob:report");

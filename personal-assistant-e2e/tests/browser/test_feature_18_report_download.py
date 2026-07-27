@@ -19,6 +19,32 @@ from conftest import PROJECT_ROOT, terminate_process_tree
 CLIENT_DIR = PROJECT_ROOT / "personal-assistant-client"
 pytestmark = [pytest.mark.browser, pytest.mark.feature, pytest.mark.slow]
 
+REPORT_CONTENT = """# 日报
+
+- 时间范围：2024-02-14T00:00:00+08:00 至 2024-02-14T23:59:59+08:00
+
+## GitHub 工程活动
+
+- 2024-02-14 | commit：Feature 18 download
+
+## 邮件
+
+- 本时间范围内没有可用证据。
+
+## 日历
+
+- 本时间范围内没有可用证据。
+
+## 数据覆盖与提醒
+
+所有已选择数据源均完成本次采集。
+"""
+
+ASSISTANT_DISPLAYED_MARKDOWN = """# 报告已生成
+
+完整报告请使用下方下载按钮保存。
+"""
+
 
 def _find_free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
@@ -99,26 +125,6 @@ class ReportHttpDouble(ConversationHttpDouble):
             self._json(route, 404, {"detail": "conversation not found"})
             return
 
-        report = """# 日报
-
-- 时间范围：2024-02-14T00:00:00+08:00 至 2024-02-14T23:59:59+08:00
-
-## GitHub 工程活动
-
-- 2024-02-14 | commit：Feature 18 download
-
-## 邮件
-
-- 本时间范围内没有可用证据。
-
-## 日历
-
-- 本时间范围内没有可用证据。
-
-## 数据覆盖与提醒
-
-所有已选择数据源均完成本次采集。
-"""
         body = "".join(
             f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
             for event in (
@@ -127,10 +133,10 @@ class ReportHttpDouble(ConversationHttpDouble):
                     "report_ready": True,
                     "report_format": "markdown",
                     "report_filename": "日报-2024-02-14.md",
-                    "report_content": report,
+                    "report_content": REPORT_CONTENT,
                     "report_type": "daily",
                 },
-                {"token": report, "done": False},
+                {"token": ASSISTANT_DISPLAYED_MARKDOWN, "done": False},
                 {"token": "", "done": True},
             )
         )
@@ -210,7 +216,7 @@ def test_feature_18_report_download_card_and_markdown_file(vite_url):
             page.get_by_label("Message input").fill("请生成 2024-02-14 的日报")
             page.get_by_label("Send message").click()
 
-            heading = page.get_by_role("heading", name="日报", exact=True)
+            heading = page.get_by_role("heading", name="报告已生成", exact=True)
             heading.wait_for(timeout=15_000)
             card = page.locator('[data-slot="report-download-card"]')
             card.wait_for(timeout=15_000)
@@ -229,7 +235,9 @@ def test_feature_18_report_download_card_and_markdown_file(vite_url):
             assert download.suggested_filename == "日报-2024-02-14.md"
             download_path = download.path()
             assert download_path is not None
-            assert Path(download_path).read_text(encoding="utf-8").startswith("# 日报")
+            downloaded_content = Path(download_path).read_text(encoding="utf-8")
+            assert REPORT_CONTENT != ASSISTANT_DISPLAYED_MARKDOWN
+            assert downloaded_content == REPORT_CONTENT
         finally:
             page.close()
             browser.close()

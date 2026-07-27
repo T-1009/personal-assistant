@@ -37,7 +37,6 @@ import {
   MessagePrimitive,
   SuggestionPrimitive,
   ThreadPrimitive,
-  type ThreadMessage,
   useAuiState,
 } from "@assistant-ui/react";
 import {
@@ -282,28 +281,8 @@ const MessageError: FC = () => {
   );
 };
 
-type MessageContentPart = ThreadMessage["content"][number];
-
-function isTextMessagePart(
-  part: MessageContentPart,
-): part is Extract<MessageContentPart, { type: "text" }> {
-  return part.type === "text";
-}
-
-function getMessageMarkdownContent(content: ThreadMessage["content"]): string {
-  return content
-    .filter(isTextMessagePart)
-    .filter((part) => part.text.trim())
-    .map((part) => part.text)
-    .join("\n\n")
-    .trim();
-}
-
 const AssistantMessage: FC = () => {
   const messageId = useAuiState((s) => s.message.id);
-  const displayedMarkdown = useAuiState((s) =>
-    getMessageMarkdownContent(s.message.content),
-  );
   const isMessageRunning = useAuiState(
     (s) => s.message.status?.type === "running",
   );
@@ -381,7 +360,6 @@ const AssistantMessage: FC = () => {
         <MessageError />
         <ReportDownloadCard
           messageId={messageId}
-          displayedMarkdown={displayedMarkdown}
           isMessageRunning={isMessageRunning}
         />
       </div>

@@ -11,7 +11,6 @@ import { useState, type FC } from "react";
 
 export interface ReportDownloadCardProps {
   messageId: string;
-  displayedMarkdown?: string;
   isMessageRunning?: boolean;
 }
 
@@ -19,7 +18,6 @@ type SaveStatus = "idle" | "saving" | "saved" | "failed";
 
 export const ReportDownloadCard: FC<ReportDownloadCardProps> = ({
   messageId,
-  displayedMarkdown,
   isMessageRunning = false,
 }) => {
   const report = useReportDownloadStore(
@@ -33,9 +31,6 @@ export const ReportDownloadCard: FC<ReportDownloadCardProps> = ({
   const isFailed = status === "failed";
   const isSaving = status === "saving";
   const isPending = isSaving || isMessageRunning;
-  const contentToSave = displayedMarkdown?.trim()
-    ? displayedMarkdown
-    : report.content;
   const statusText = isMessageRunning
     ? "Markdown 报告正在整理"
     : isSaved
@@ -72,7 +67,7 @@ export const ReportDownloadCard: FC<ReportDownloadCardProps> = ({
     if (isMessageRunning) return;
     setStatus("saving");
     try {
-      const result = await saveMarkdownFile(contentToSave, report.filename);
+      const result = await saveMarkdownFile(report.content, report.filename);
       setStatus(result === "saved" ? "saved" : "idle");
     } catch {
       setStatus("failed");

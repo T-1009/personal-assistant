@@ -393,9 +393,8 @@ async def test_generate_report_combines_default_sources_and_internal_github(
     assert github_evidence["metadata"]["subject_login"] == "oauth-user"
     assert github_evidence["metadata"]["repository_scope"] == "oauth_accessible"
     assert github_evidence["metadata"]["data_access_identity"] == "platform_mcp"
-    assert github_evidence["metadata"]["details"]["files"][0]["filename"] == (
-        "app/report.py"
-    )
+    assert github_evidence["metadata"]["detail_available"] is True
+    assert "details" not in github_evidence["metadata"]
     assert result["source_context"]["github"] == {
         "subject_login": "oauth-user",
         "subject_user_id": 1001,
@@ -413,6 +412,15 @@ async def test_generate_report_follows_all_github_pages_before_truncating(
 ) -> None:
     search_calls: list[str | None] = []
     detail_calls: list[str] = []
+    large_patch = "+" * 4_000
+    large_detail = {
+        "commit": {
+            "files": [
+                {"filename": f"src/generated-{index}.py", "patch": large_patch}
+                for index in range(50)
+            ]
+        }
+    }
 
     async def fake_github_search(**kwargs) -> GitHubActivityResult:
         search_calls.append(kwargs["cursor"])
@@ -480,7 +488,7 @@ async def test_generate_report_follows_all_github_pages_before_truncating(
                         else "2026-07-22T00:00:00+08:00"
                     ),
                     summary=f"{prefix} summary",
-                    details={"commit": {"sha": event.external_id}},
+                    details=large_detail,
                 )
             )
         return details
@@ -509,6 +517,13 @@ async def test_generate_report_follows_all_github_pages_before_truncating(
     assert {warning["warning_type"] for warning in result["warnings"]} == {
         "github_activity_truncated"
     }
+    assert all(
+        item["metadata"]["detail_available"] is True
+        and "details" not in item["metadata"]
+        for item in result["evidence"]
+    )
+    serialized = json.dumps(result, ensure_ascii=False).encode("utf-8")
+    assert len(serialized) <= 256 * 1024
 
 
 @pytest.mark.asyncio

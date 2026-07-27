@@ -37,7 +37,7 @@ describe("ReportDownloadCard", () => {
     expect(screen.getByText("日报-2024-02-14.md")).toBeInTheDocument();
   });
 
-  it("saves the exact Markdown and transitions to the completed state", async () => {
+  it("saves the exact report artifact and transitions to the completed state", async () => {
     saveMarkdownFileMock.mockResolvedValue("saved");
     useReportDownloadStore.getState().setReport("report-message", {
       content: "# 日报\n\n- 时间范围：2024-02-14",
@@ -60,45 +60,13 @@ describe("ReportDownloadCard", () => {
     expect(screen.getByText("再次保存")).toBeInTheDocument();
   });
 
-  it("prefers the visible assistant Markdown over the report event fallback", async () => {
-    saveMarkdownFileMock.mockResolvedValue("saved");
-    useReportDownloadStore.getState().setReport("report-message", {
-      content: "# 后端报告\n\n- 简略版本",
-      filename: "日报-2024-02-14.md",
-      format: "markdown",
-    });
-    render(
-      <ReportDownloadCard
-        messageId="report-message"
-        displayedMarkdown={"# 前端报告\n\n- 更完整的展示版本"}
-      />,
-    );
-
-    fireEvent.click(
-      screen.getByRole("button", { name: "下载 Markdown 报告" }),
-    );
-
-    await waitFor(() => {
-      expect(saveMarkdownFileMock).toHaveBeenCalledWith(
-        "# 前端报告\n\n- 更完整的展示版本",
-        "日报-2024-02-14.md",
-      );
-    });
-  });
-
-  it("waits for the assistant message to finish before saving visible Markdown", () => {
+  it("waits for the assistant message to finish before saving the report", () => {
     useReportDownloadStore.getState().setReport("report-message", {
       content: "# 后端报告",
       filename: "日报-2024-02-14.md",
       format: "markdown",
     });
-    render(
-      <ReportDownloadCard
-        messageId="report-message"
-        displayedMarkdown={"# 前端报告\n\n- 仍在生成中"}
-        isMessageRunning
-      />,
-    );
+    render(<ReportDownloadCard messageId="report-message" isMessageRunning />);
 
     const button = screen.getByRole("button", {
       name: "下载 Markdown 报告",
