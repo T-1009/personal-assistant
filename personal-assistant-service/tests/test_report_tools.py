@@ -695,17 +695,13 @@ async def test_generate_report_marks_disabled_github_source_unavailable(
     async def fail_github(**kwargs):
         pytest.fail("Disabled GitHub source must not be called")
 
-    async def fake_github_context() -> GitHubReportContext:
-        return GitHubReportContext(
-            login="oauth-user",
-            user_id=1001,
-            repositories=("owner/repo",),
-        )
+    async def fail_github_context() -> GitHubReportContext:
+        pytest.fail("Disabled GitHub source must not resolve OAuth context")
 
     monkeypatch.setattr(report_tools, "list_emails", empty_email)
     monkeypatch.setattr(report_tools, "list_calendar_events", empty_calendar)
     monkeypatch.setattr(report_tools, "github_mcp_search_activity", fail_github)
-    monkeypatch.setattr(report_tools, "get_github_report_context", fake_github_context)
+    monkeypatch.setattr(report_tools, "get_github_report_context", fail_github_context)
     monkeypatch.setattr(
         report_tools,
         "get_settings",

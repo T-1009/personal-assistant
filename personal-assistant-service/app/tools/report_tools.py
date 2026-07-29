@@ -756,6 +756,18 @@ async def _github_event_detail(
 async def _collect_github_evidence(
     window: ReportWindow,
 ) -> _SourceResult:
+    if not get_settings().github_mcp_enabled:
+        return _SourceResult(
+            warnings=[
+                _warning(
+                    "github",
+                    "github_source_disabled",
+                    "GitHub MCP 工程活动数据源未启用。",
+                )
+            ],
+            coverage="unavailable",
+        )
+
     try:
         oauth_context = await get_github_report_context()
     except Exception:
@@ -793,16 +805,6 @@ async def _collect_github_evidence(
             "data_access_identity": "platform_mcp",
         }
     )
-    if not get_settings().github_mcp_enabled:
-        result.warnings.append(
-            _warning(
-                "github",
-                "github_source_disabled",
-                "GitHub MCP 工程活动数据源未启用。",
-            )
-        )
-        result.coverage = "unavailable"
-        return result
     if not oauth_context.repositories:
         return result
 
