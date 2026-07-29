@@ -22,6 +22,7 @@ from app.identity import (
 logger = logging.getLogger(__name__)
 
 GITHUB_API_BASE_URL = "https://api.github.com"
+_REPOSITORIES_PER_PAGE = 100
 
 
 # ---------------------------------------------------------------------------
@@ -93,6 +94,15 @@ class GitHubContentItem:
     download_url: str | None = None
     content: str | None = None
     encoding: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class GitHubReportContext:
+    """OAuth subject and the complete repository allowlist for a report."""
+
+    login: str
+    user_id: int | None
+    repositories: tuple[str, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -188,6 +198,74 @@ async def _github_request(
         raise RuntimeError("access_token was not injected by require_access_token")
     _push_auth_complete()
     return await _raw_github_request(access_token, method, path, params=params)
+
+
+def _report_identity(payload: Any) -> tuple[str, int | None]:
+    if not isinstance(payload, dict):
+        raise RuntimeError("GitHub authenticated user response is invalid")
+    login = payload.get("login")
+    if not isinstance(login, str) or not login.strip():
+        raise RuntimeError("GitHub authenticated user login is unavailable")
+    user_id = payload.get("id")
+    return login.strip(), user_id if isinstance(user_id, int) else None
+
+
+def _report_repository_names(payload: Any) -> list[str]:
+    if not isinstance(payload, list):
+        raise RuntimeError("GitHub repository response is invalid")
+    names: list[str] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        full_name = item.get("full_name")
+        if isinstance(full_name, str) and full_name.strip():
+            names.append(full_name.strip())
+    return names
+
+
+@require_access_token(
+    provider_name=get_github_provider_name(),
+    scopes=get_github_scopes_list(),
+    on_auth_url=_handle_auth_url,
+    auth_flow="USER_FEDERATION",
+)
+async def get_github_report_context(
+    *,
+    access_token: str | None = None,
+) -> GitHubReportContext:
+    """Resolve OAuth account A and fully paginate its repository allowlist."""
+    if not access_token:
+        raise RuntimeError("access_token was not injected by require_access_token")
+
+    identity = await _raw_github_request(access_token, "GET", "/user")
+    login, user_id = _report_identity(identity)
+    repositories: set[str] = set()
+    page = 1
+    while True:
+        payload = await _raw_github_request(
+            access_token,
+            "GET",
+            "/user/repos",
+            params={
+                "affiliation": "owner,collaborator,organization_member",
+                "visibility": "all",
+                "sort": "full_name",
+                "direction": "asc",
+                "per_page": _REPOSITORIES_PER_PAGE,
+                "page": page,
+            },
+        )
+        repositories.update(_report_repository_names(payload))
+        if len(payload) < _REPOSITORIES_PER_PAGE:
+            break
+        page += 1
+
+    _push_auth_complete()
+    return GitHubReportContext(
+        login=login,
+        user_id=user_id,
+        repositories=tuple(sorted(repositories, key=str.casefold)),
+    )
 
 
 # ---------------------------------------------------------------------------

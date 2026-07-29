@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -86,6 +87,7 @@ _SENSITIVE_WORDS = frozenset(
 
 _ACTIVITY_CURSOR_VERSION = 2
 _MAX_PAGE_CALLS_PER_SEARCH = 100
+_MAX_CONCURRENT_DETAIL_CALLS = 5
 
 _PaginationKind = Literal["initial", "page", "cursor", "none"]
 
@@ -316,11 +318,17 @@ def _prepare_remote_pagination(
     page_arg = _declared_argument_name(tool, "page", "page_number", "pageNumber")
 
     if pagination.kind == "initial":
-        if cursor_arg is not None:
-            return _RemotePagination("cursor", None)
+        # Prefer page-based pagination over cursor-based when both are
+        # available.  Page-based has a raw_count >= page_size heuristic
+        # that works even when the remote response omits pagination
+        # metadata (e.g. GitHub Copilot MCP returns bare arrays for
+        # list_commits / list_pull_requests).  Cursor-based depends on
+        # endCursor in the response body, which is not always present.
         if page_arg is not None:
             args[page_arg] = 1
             return _RemotePagination("page", 1)
+        if cursor_arg is not None:
+            return _RemotePagination("cursor", None)
         return _RemotePagination("none", None)
 
     if pagination.kind == "cursor":
@@ -393,6 +401,15 @@ def _next_remote_pagination(
             return None, None
         if next_cursor is not None:
             return _RemotePagination("cursor", next_cursor), None
+        # When the remote response lacks endCursor despite having more
+        # data, try falling back to page-based pagination if the tool
+        # declares a page argument.  This covers the edge case where a
+        # tool with both 'after' and 'page' ends up in cursor mode (e.g.
+        # after a cursor was persisted in a previous session) and the
+        # response is a bare array without pageInfo.
+        page_arg = _declared_argument_name(tool, "page", "page_number", "pageNumber")
+        if page_arg is not None and raw_count >= page_size:
+            return _RemotePagination("page", 2), None
         if has_more is True or raw_count > 0:
             return None, _warning(
                 "pagination_unsupported",
@@ -651,7 +668,9 @@ def _timestamp_in_window(
 
 
 def _actor_matches(actor: str | None, expected: str | None) -> bool:
-    return expected is None or actor == expected
+    return expected is None or (
+        actor is not None and actor.casefold() == expected.casefold()
+    )
 
 
 def _event_matches(
@@ -1557,10 +1576,10 @@ async def github_mcp_search_activity(
     async def _operation(client: MCPGatewayClient) -> GitHubActivityResult:
         tools = await _tool_index(client)
         warnings: list[GitHubMCPWarning] = []
-        platform_login: str | None = None
+        activity_actor = actor
         if actor == "platform":
             identity = await _resolve_identity_with_tools(client, tools)
-            platform_login = _login_from_payload(identity)
+            activity_actor = _login_from_payload(identity)
 
         tasks = list(cursor_tasks) if cursor_tasks is not None else None
         repo_names = repositories if tasks is None else None
@@ -1568,7 +1587,7 @@ async def github_mcp_search_activity(
             repo_names, discovery_warnings = await _discover_activity_repositories(
                 client,
                 tools,
-                platform_login=platform_login,
+                platform_login=activity_actor,
             )
             warnings.extend(discovery_warnings)
         if tasks is None:
@@ -1580,29 +1599,70 @@ async def github_mcp_search_activity(
 
         events: list[GitHubActivityEvent] = []
         page_calls = 0
-        while (
-            tasks
-            and len(events) < capped_limit
-            and page_calls < _MAX_PAGE_CALLS_PER_SEARCH
-        ):
+        parent_page_cache: dict[
+            tuple[str, str, int, _PaginationKind, int | str | None],
+            _CollectedPage,
+        ] = {}
+        while tasks and len(events) < capped_limit:
             task = tasks.pop(0)
-            page_calls += 1
-            try:
-                page = await _collect_activity_task(
-                    client,
-                    tools,
-                    task,
-                    start_at=start,
-                    end_at=end,
-                    timezone=timezone,
-                    actor=platform_login,
+            parent_kind: str | None = None
+            if task.parent_external_id is None:
+                if task.discover_parents:
+                    parent_kind = task.parent_type
+                elif task.event_type in {"pull_request", "issue"}:
+                    parent_kind = task.event_type
+            cache_key = (
+                (
+                    task.repository,
+                    parent_kind,
+                    task.page_size,
+                    task.pagination.kind,
+                    task.pagination.value,
                 )
-            except Exception as exc:
-                warnings.append(_warning_from_error(exc))
-                if isinstance(exc, MCPGatewayError) and exc.retryable:
+                if parent_kind is not None
+                else None
+            )
+            base_page = parent_page_cache.get(cache_key) if cache_key else None
+            if base_page is None:
+                if page_calls >= _MAX_PAGE_CALLS_PER_SEARCH:
                     tasks.insert(0, task)
                     break
-                continue
+                page_calls += 1
+                try:
+                    base_page = await _collect_activity_task(
+                        client,
+                        tools,
+                        task,
+                        start_at=start,
+                        end_at=end,
+                        timezone=timezone,
+                        actor=None if cache_key else activity_actor,
+                    )
+                except Exception as exc:
+                    warnings.append(_warning_from_error(exc))
+                    if isinstance(exc, MCPGatewayError) and exc.retryable:
+                        tasks.insert(0, task)
+                        break
+                    continue
+                if cache_key is not None:
+                    parent_page_cache[cache_key] = base_page
+
+            page = base_page
+            if (
+                cache_key is not None
+                and not task.discover_parents
+                and activity_actor is not None
+            ):
+                page = _CollectedPage(
+                    events=[
+                        event
+                        for event in base_page.events
+                        if _actor_matches(event.actor, activity_actor)
+                    ],
+                    current=base_page.current,
+                    next=base_page.next,
+                    warning=base_page.warning,
+                )
             if page.warning is not None:
                 warnings.append(page.warning)
 
@@ -1613,7 +1673,12 @@ async def github_mcp_search_activity(
                     task.pagination = page.next
                     task.offset = 0
                     continuation.append(task)
-                tasks[0:0] = child_tasks + continuation
+                # Append children and continuation to the end of the
+                # queue so other event types get a fair share before we
+                # dive deeper into the same type.  Without this, a
+                # single event type (typically commits) can fill the
+                # capped_limit before other types are ever touched.
+                tasks.extend(child_tasks + continuation)
                 continue
 
             remaining = capped_limit - len(events)
@@ -1624,11 +1689,11 @@ async def github_mcp_search_activity(
             if consumed < len(page.events):
                 task.pagination = page.current
                 task.offset = consumed
-                tasks.insert(0, task)
+                tasks.append(task)
             elif page.next is not None:
                 task.pagination = page.next
                 task.offset = 0
-                tasks.insert(0, task)
+                tasks.append(task)
 
         if tasks and page_calls >= _MAX_PAGE_CALLS_PER_SEARCH:
             warnings.append(
@@ -1716,6 +1781,188 @@ def _detail_item_by_external_id(
     )
 
 
+def _detail_parent_number(
+    event_type: GitHubActivityType,
+    parent_external_id: str | None,
+) -> tuple[int | None, GitHubMCPWarning | None]:
+    parent_number: int | None = None
+    if event_type in {"review", "comment"}:
+        if not parent_external_id:
+            return (
+                None,
+                _warning(
+                    "configuration_error",
+                    f"{event_type} detail requires parent_external_id.",
+                ),
+            )
+        try:
+            parent_number = int(parent_external_id)
+        except ValueError:
+            return (
+                None,
+                _warning(
+                    "configuration_error",
+                    "parent_external_id must be a PR or issue number.",
+                ),
+            )
+        if parent_number < 1:
+            return (
+                None,
+                _warning(
+                    "configuration_error",
+                    "parent_external_id must be a positive PR or issue number.",
+                ),
+            )
+    return parent_number, None
+
+
+async def _github_mcp_get_detail_with_tools(
+    client: MCPGatewayClient,
+    tools: dict[str, MCPToolInfo],
+    *,
+    event_type: GitHubActivityType,
+    repository: str,
+    external_id: str,
+    parent_number: int | None,
+) -> GitHubActivityEvent:
+    owner, repo = _repo_parts(repository)
+    if event_type == "commit":
+        tool = _find_tool(tools, ("get_commit",))
+        args: dict[str, Any] = {}
+        _set_arg(args, tool, owner, "owner", required=True)
+        _set_arg(args, tool, repo, "repo", "repository", required=True)
+        _set_arg(args, tool, external_id, "sha", "ref", required=True)
+        payload = await client.call_tool(tool.name, args)
+        items = _coerce_items(payload)
+        item = items[0] if items else {}
+        event = _commit_to_event(item, repository)
+        event.details = {"commit": item}
+        return event
+
+    if event_type == "pull_request":
+        tool = _find_tool(tools, ("get_pull_request", "pull_request_read"))
+        args = {}
+        if _matches_tool_suffix(tool.name, "pull_request_read"):
+            _set_arg(args, tool, "get", "method", required=True)
+        _set_arg(args, tool, owner, "owner", required=True)
+        _set_arg(args, tool, repo, "repo", "repository", required=True)
+        _set_arg(
+            args,
+            tool,
+            int(external_id),
+            "pull_number",
+            "pullNumber",
+            "number",
+            required=True,
+        )
+        payload = await client.call_tool(tool.name, args)
+        items = _coerce_items(payload)
+        item = items[0] if items else {}
+        event = _pull_request_to_event(item, repository)
+        event.details = {"pull_request": item}
+        return event
+
+    if event_type == "issue":
+        tool = _find_tool(tools, ("issue_read", "get_issue"))
+        if _matches_tool_suffix(tool.name, "issue_read"):
+            payloads: dict[str, Any] = {}
+            for method in _supported_issue_read_methods(tool):
+                args = _issue_read_arguments(
+                    tool,
+                    method=method,
+                    owner=owner,
+                    repo=repo,
+                    issue_number=int(external_id),
+                )
+                payloads[method] = await client.call_tool(tool.name, args)
+
+            payload = payloads["get"]
+            items = _coerce_items(payload)
+            event = _issue_to_event(items[0] if items else {}, repository)
+            event.details = {
+                _ISSUE_DETAIL_KEYS[method]: value for method, value in payloads.items()
+            }
+            return event
+
+        args = {}
+        _set_arg(args, tool, owner, "owner", required=True)
+        _set_arg(args, tool, repo, "repo", "repository", required=True)
+        _set_arg(
+            args,
+            tool,
+            int(external_id),
+            "issue_number",
+            "issueNumber",
+            "number",
+            required=True,
+        )
+        payload = await client.call_tool(tool.name, args)
+        items = _coerce_items(payload)
+        return _issue_to_event(items[0] if items else {}, repository)
+
+    if event_type == "review":
+        tool = _find_tool(
+            tools,
+            ("get_pull_request_reviews", "pull_request_read"),
+        )
+        args = {}
+        if _matches_tool_suffix(tool.name, "pull_request_read"):
+            _set_arg(args, tool, "get_reviews", "method", required=True)
+        _set_arg(args, tool, owner, "owner", required=True)
+        _set_arg(args, tool, repo, "repo", "repository", required=True)
+        _set_arg(
+            args,
+            tool,
+            parent_number,
+            "pull_number",
+            "pullNumber",
+            "number",
+            required=True,
+        )
+        payload = await client.call_tool(tool.name, args)
+        item = _detail_item_by_external_id(payload, external_id, "reviews")
+        event = _review_to_event(
+            item,
+            repository,
+            parent_external_id=str(parent_number),
+        )
+        event.details = {"review": item}
+        return event
+
+    if event_type == "comment":
+        tool = _find_tool(tools, ("get_issue_comments", "issue_read"))
+        args = {}
+        if _matches_tool_suffix(tool.name, "issue_read"):
+            _set_arg(args, tool, "get_comments", "method", required=True)
+        _set_arg(args, tool, owner, "owner", required=True)
+        _set_arg(args, tool, repo, "repo", "repository", required=True)
+        _set_arg(
+            args,
+            tool,
+            parent_number,
+            "issue_number",
+            "issueNumber",
+            "number",
+            required=True,
+        )
+        payload = await client.call_tool(tool.name, args)
+        item = _detail_item_by_external_id(payload, external_id, "comments")
+        event = _comment_to_event(
+            item,
+            repository,
+            parent_external_id=str(parent_number),
+            title_prefix=f"Issue or pull request #{parent_number} comment",
+        )
+        event.details = {"comment": item}
+        return event
+
+    raise MCPGatewayError(
+        "capability_missing",
+        "Detail lookup supports commit, pull_request, and issue events.",
+        retryable=False,
+    )
+
+
 async def github_mcp_get_detail(
     *,
     event_type: GitHubActivityType,
@@ -1724,165 +1971,75 @@ async def github_mcp_get_detail(
     parent_external_id: str | None = None,
 ) -> GitHubActivityEvent | GitHubMCPWarning:
     """Fetch details for one GitHub activity event."""
-
-    parent_number: int | None = None
-    if event_type in {"review", "comment"}:
-        if not parent_external_id:
-            return _warning(
-                "configuration_error",
-                f"{event_type} detail requires parent_external_id.",
-            )
-        try:
-            parent_number = int(parent_external_id)
-        except ValueError:
-            return _warning(
-                "configuration_error",
-                "parent_external_id must be a PR or issue number.",
-            )
-        if parent_number < 1:
-            return _warning(
-                "configuration_error",
-                "parent_external_id must be a positive PR or issue number.",
-            )
+    parent_number, validation_warning = _detail_parent_number(
+        event_type,
+        parent_external_id,
+    )
+    if validation_warning is not None:
+        return validation_warning
 
     async def _operation(client: MCPGatewayClient) -> GitHubActivityEvent:
         tools = await _tool_index(client)
-        owner, repo = _repo_parts(repository)
-        if event_type == "commit":
-            tool = _find_tool(tools, ("get_commit",))
-            args: dict[str, Any] = {}
-            _set_arg(args, tool, owner, "owner", required=True)
-            _set_arg(args, tool, repo, "repo", "repository", required=True)
-            _set_arg(args, tool, external_id, "sha", "ref", required=True)
-            payload = await client.call_tool(tool.name, args)
-            items = _coerce_items(payload)
-            return _commit_to_event(items[0] if items else {}, repository)
-
-        if event_type == "pull_request":
-            tool = _find_tool(tools, ("get_pull_request", "pull_request_read"))
-            args = {}
-            if _matches_tool_suffix(tool.name, "pull_request_read"):
-                _set_arg(args, tool, "get", "method", required=True)
-            _set_arg(args, tool, owner, "owner", required=True)
-            _set_arg(args, tool, repo, "repo", "repository", required=True)
-            _set_arg(
-                args,
-                tool,
-                int(external_id),
-                "pull_number",
-                "pullNumber",
-                "number",
-                required=True,
-            )
-            payload = await client.call_tool(tool.name, args)
-            items = _coerce_items(payload)
-            return _pull_request_to_event(items[0] if items else {}, repository)
-
-        if event_type == "issue":
-            tool = _find_tool(tools, ("issue_read", "get_issue"))
-            if _matches_tool_suffix(tool.name, "issue_read"):
-                payloads: dict[str, Any] = {}
-                for method in _supported_issue_read_methods(tool):
-                    args = _issue_read_arguments(
-                        tool,
-                        method=method,
-                        owner=owner,
-                        repo=repo,
-                        issue_number=int(external_id),
-                    )
-                    payloads[method] = await client.call_tool(tool.name, args)
-
-                payload = payloads["get"]
-                items = _coerce_items(payload)
-                event = _issue_to_event(items[0] if items else {}, repository)
-                event.details = {
-                    _ISSUE_DETAIL_KEYS[method]: value
-                    for method, value in payloads.items()
-                }
-                return event
-
-            args = {}
-            _set_arg(args, tool, owner, "owner", required=True)
-            _set_arg(args, tool, repo, "repo", "repository", required=True)
-            _set_arg(
-                args,
-                tool,
-                int(external_id),
-                "issue_number",
-                "issueNumber",
-                "number",
-                required=True,
-            )
-            payload = await client.call_tool(tool.name, args)
-            items = _coerce_items(payload)
-            return _issue_to_event(items[0] if items else {}, repository)
-
-        if event_type == "review":
-            tool = _find_tool(
-                tools,
-                ("get_pull_request_reviews", "pull_request_read"),
-            )
-            args = {}
-            if _matches_tool_suffix(tool.name, "pull_request_read"):
-                _set_arg(args, tool, "get_reviews", "method", required=True)
-            _set_arg(args, tool, owner, "owner", required=True)
-            _set_arg(args, tool, repo, "repo", "repository", required=True)
-            _set_arg(
-                args,
-                tool,
-                parent_number,
-                "pull_number",
-                "pullNumber",
-                "number",
-                required=True,
-            )
-            payload = await client.call_tool(tool.name, args)
-            item = _detail_item_by_external_id(payload, external_id, "reviews")
-            event = _review_to_event(
-                item,
-                repository,
-                parent_external_id=str(parent_number),
-            )
-            event.details = {"review": item}
-            return event
-
-        if event_type == "comment":
-            tool = _find_tool(tools, ("get_issue_comments", "issue_read"))
-            args = {}
-            if _matches_tool_suffix(tool.name, "issue_read"):
-                _set_arg(args, tool, "get_comments", "method", required=True)
-            _set_arg(args, tool, owner, "owner", required=True)
-            _set_arg(args, tool, repo, "repo", "repository", required=True)
-            _set_arg(
-                args,
-                tool,
-                parent_number,
-                "issue_number",
-                "issueNumber",
-                "number",
-                required=True,
-            )
-            payload = await client.call_tool(tool.name, args)
-            item = _detail_item_by_external_id(payload, external_id, "comments")
-            event = _comment_to_event(
-                item,
-                repository,
-                parent_external_id=str(parent_number),
-                title_prefix=f"Issue or pull request #{parent_number} comment",
-            )
-            event.details = {"comment": item}
-            return event
-
-        raise MCPGatewayError(
-            "capability_missing",
-            "Detail lookup supports commit, pull_request, and issue events.",
-            retryable=False,
+        return await _github_mcp_get_detail_with_tools(
+            client,
+            tools,
+            event_type=event_type,
+            repository=repository,
+            external_id=external_id,
+            parent_number=parent_number,
         )
 
     try:
         return await run_with_github_mcp_sts(_operation)
     except Exception as exc:
         return _warning_from_error(exc)
+
+
+async def github_mcp_get_details(
+    events: list[GitHubActivityEvent],
+    *,
+    max_concurrency: int = _MAX_CONCURRENT_DETAIL_CALLS,
+) -> list[GitHubActivityEvent | GitHubMCPWarning]:
+    """Fetch multiple activity details in one bounded MCP session."""
+    if not events:
+        return []
+
+    concurrency = min(max(max_concurrency, 1), _MAX_CONCURRENT_DETAIL_CALLS)
+
+    async def _operation(
+        client: MCPGatewayClient,
+    ) -> list[GitHubActivityEvent | GitHubMCPWarning]:
+        tools = await _tool_index(client)
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _fetch(
+            event: GitHubActivityEvent,
+        ) -> GitHubActivityEvent | GitHubMCPWarning:
+            parent_number, validation_warning = _detail_parent_number(
+                event.event_type,
+                event.parent_external_id,
+            )
+            if validation_warning is not None:
+                return validation_warning
+            try:
+                async with semaphore:
+                    return await _github_mcp_get_detail_with_tools(
+                        client,
+                        tools,
+                        event_type=event.event_type,
+                        repository=event.repository,
+                        external_id=event.external_id,
+                        parent_number=parent_number,
+                    )
+            except Exception as exc:
+                return _warning_from_error(exc)
+
+        return list(await asyncio.gather(*(_fetch(event) for event in events)))
+
+    try:
+        return await run_with_github_mcp_sts(_operation)
+    except Exception as exc:
+        return [_warning_from_error(exc) for _ in events]
 
 
 def github_mcp_public_schema_is_secret_free() -> bool:
@@ -1894,6 +2051,7 @@ def github_mcp_public_schema_is_secret_free() -> bool:
         github_mcp_list_repositories,
         github_mcp_search_activity,
         github_mcp_get_detail,
+        github_mcp_get_details,
     ):
         names = {name.lower() for name in inspect.signature(func).parameters}
         if any(secret in name for name in names for secret in _SENSITIVE_WORDS):

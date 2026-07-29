@@ -463,17 +463,23 @@ sequenceDiagram
   做 IAM signing。
 - `app/mcp/github_activity_source.py` 只暴露内部 callable source functions：
   `github_mcp_resolve_identity`、`github_mcp_list_repositories`、
-  `github_mcp_search_activity`、`github_mcp_get_detail`。
+  `github_mcp_search_activity`、`github_mcp_get_detail`、`github_mcp_get_details`。
 - `app/tools/github_activity_tools.py` 提供 Agent-facing facade，只导出
   `github_search_activity`、`github_get_activity_detail` 和
   `GITHUB_ACTIVITY_TOOLS`；两个 Tool 的所有返回结果均包含
   `identity_scope="platform"`。
 - `github_mcp_search_activity` 支持 `commit`、`pull_request`、`issue`、`review`、
   `comment`。review 从 Pull Request 聚合，comment 从 Issue/PR 的 issue comments
-  聚合。
+  聚合。Agent-facing 调用的 `identity_scope="platform"` 只表示 MCP 数据访问身份，默认
+  不强制 actor 过滤，因此可返回平台账号可见仓库中的其他作者活动；Report 内部调用会
+  显式传入 OAuth `subject_login=A` 和 A 的 repository allowlist，禁止在 allowlist 为空
+  或不可用时回退到 platform repository discovery。
 - `github_mcp_get_detail` 支持同样五类事件。review/comment 必须同时传入
   `parent_external_id`，分别表示所属 Pull Request number 和 Issue/Pull Request
   number；返回事件会保留父级编号和 raw detail payload。
+- `github_mcp_get_details` 是 Report 专用的 internal batch helper，在一个 STS/MCP
+  session 内以最多 5 路并发补齐多条活动详情；单条 `github_mcp_get_detail` 及
+  Feature 17 Agent-facing facade 的 schema 和行为保持不变。
 - 聚合工具调用会补齐必填 `method`：`pull_request_read` 的 PR 详情使用 `get`、
   review 使用 `get_reviews`；`issue_read` 的 comment 使用 `get_comments`，Issue
   详情则按 Target schema 聚合 `get`、`get_comments`、`get_sub_issues`、
@@ -607,6 +613,106 @@ sequenceDiagram
 
 <!-- updated by issues: refactor-email-auth-normal-control-flow, bug-16-auth-card-system-message-duplicated-in-chat -->
 
+### 5.2.2 Report Root Capability
+
+Feature 18 在 `app/tools/report_tools.py` 提供 Agent-visible `generate_report` root
+tool。该 tool 负责 report window、source selection、evidence normalization、warning
+aggregation 和 deterministic Markdown rendering。报表意图不再由 Agent 临时串联
+多个 low-level tools。
+
+图类型：**Sequence Diagram（时序图）**。用于说明默认三 source 报表与 partial failure
+的后端调用顺序。
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Agent as Personal Assistant Agent
+    participant Report as generate_report
+    participant AuthStream as AgentHandler custom stream
+    participant User as 用户
+    participant GitHubOAuth as github_tools.py<br/>GitHub OAuth
+    participant GitHubMCP as github_activity_source.py
+    participant Email as email_tools.py
+    participant Calendar as calendar_tools.py
+    participant Renderer as Markdown renderer
+
+    Agent->>Report: generate_report(report_type, window args)
+    Report->>Report: resolve window and sources<br/>default github + email + calendar
+
+    Report->>GitHubOAuth: get_github_report_context()
+    alt GitHub 尚未授权
+        GitHubOAuth-->>AuthStream: auth_required + GitHub Auth Card
+        AuthStream-->>User: 展示授权入口
+        User-->>GitHubOAuth: 完成 OAuth
+        GitHubOAuth-->>AuthStream: auth_complete
+    end
+    GitHubOAuth-->>Report: subject_login=A + repo allowlist<br/>或授权失败/超时 warning
+    alt GitHub OAuth context available
+        loop until MCP cursor exhausted
+            Report->>GitHubMCP: github_mcp_search_activity(repositories=allowlist, actor=A, cursor)
+            GitHubMCP-->>Report: events + warnings + next_cursor
+        end
+        Report->>Report: global sort + cap 100
+        Report->>GitHubMCP: github_mcp_get_details(selected events, max concurrency 5)
+        GitHubMCP-->>Report: ordered detail events or per-event typed warnings
+    else GitHub OAuth unavailable
+        Report->>Report: GitHub coverage unavailable<br/>Email/Calendar continue
+    end
+    Report->>Email: list_emails(folder=inbox)
+    Email-->>Report: messages or source error
+    Report->>Email: list_emails(folder=sentitems)
+    Email-->>Report: messages or source error
+    Report->>Calendar: list_calendar_events(start_at, end_at)
+    Calendar-->>Report: events or source error
+
+    Report->>Report: normalize ReportEvidence<br/>aggregate warnings and coverage
+    Report->>Renderer: stable evidence + coverage + warnings
+    Renderer-->>Report: deterministic Markdown
+    Report-->>AuthStream: report_ready<br/>content + filename + window
+    AuthStream-->>User: 报告正文下方显示 Markdown 下载卡
+    Report-->>Agent: ReportResult
+```
+
+**输入与选择规则**：
+
+- `report_type` 支持 `daily`、`weekly`、`monthly`、`custom`。前三者按 timezone
+  解析自然时间窗口；用户给定单日期时以 `reference_date` 锚定对应自然日/周/月，
+  给定起止日期时严格采用 `start_at` 和 `end_at`。显式日期优先于当前时间，
+  `custom` 要求显式提供完整范围。
+- `sources` 未传时固定选择 `github`、`email`、`calendar`；显式传入时只执行
+  指定 source，不根据 report type 隐式增删。
+- Email source 固定覆盖 `inbox` 与 `sentitems`，原始邮件在 Report 层按 window
+  过滤；现有 Email public tool schema 保持不变。
+- Calendar source 直接复用 `list_calendar_events` 的时间窗口查询。
+- GitHub source 先调用 GitHub OAuth auth gate，通过 `/user` 确认报表主体账号 A，
+  再全分页读取 `/user/repos` 作为 `repository_scope=oauth_accessible`。尚未授权时由
+  `@require_access_token` 先发出 `auth_required` Auth Card 并等待用户完成授权；只有授权
+  失败或超时后才将 GitHub source 降级为 warning。
+- GitHub source 随后调用 `github_mcp_search_activity` typed internal contract，传入
+  `repositories=allowlist` 和 `actor=A`；不调用 `github_search_activity`
+  Agent-facing facade，也不回退到 platform actor 或 platform repository discovery。
+- GitHub MCP credential 仅表示 `data_access_identity=platform_mcp` 的读取通道；
+  Report 对外表达的主体身份是 OAuth 账号 A。
+
+**结果与降级规则**：
+
+- 所有 source 结果归一化为 `ReportEvidence`；`ReportResult` 返回
+  `report_type`、`window`、`content`、`evidence`、`warnings`、`source_coverage`
+  和可选 `source_context`。
+- coverage 状态为 `ok`、`partial`、`unavailable`、`skipped`。单个 source
+  出错只更新自身 coverage 并追加 warning，不能阻断其他 source 或最终渲染。
+- GitHub source 会跟随 MCP cursor 直到耗尽或 typed warning，然后按全局最多 100 条
+  活动截断；被选中的活动会通过一次 `github_mcp_get_details` 批量调用获取结构化详情。
+- 首期 `format` 仅支持 `markdown`。renderer 按固定章节、稳定排序和统一空状态生成
+  正文，不在 tool 内调用 LLM；Agent 可在收到完整 `ReportResult` 后进行对话层表达。
+- renderer 完成后，`generate_report` 通过现有 LangGraph custom stream 发送
+  `report_ready`。该 event 的 `report_content` 与 `ReportResult.content` 完全一致，并携带
+  基于 resolved window 的安全 `.md` 文件名；Client 因而无需从 LLM token 猜测报告类型。
+- warning 只保留面向用户的 source/type/message/retryable 信息，必须移除 PAT、WAT、
+  STS、AK/SK、API key、token 和 IAM signed headers。
+- `generate_report` public schema 只包含业务参数，不包含 credential 或 credential
+  provider 的注入参数。
+
 ### 5.3 Sandbox（代码执行隔离）
 
 ```python
@@ -653,10 +759,15 @@ personal-assistant/
 │   ├── llm_config.py                # Settings + Identity → LLM model
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复
 │   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID)
+│   ├── mcp/
+│   │   └── github_activity_source.py # GitHub MCP typed internal source
 │   └── tools/
 │       ├── __init__.py              # 工具目录初始化 + ToolNode 工厂 ✅ Feature 10a
 │       ├── email_tools.py           # Microsoft 365 邮件工具 (OAuth2) ✅ Feature 10a
-│       ├── github_tools.py          # GitHub 工具 (OAuth2) [Planned]
+│       ├── calendar_tools.py        # Microsoft 365 Calendar 工具 ✅ Feature 15
+│       ├── github_activity_tools.py # Agent-facing GitHub activity tools ✅ Feature 17
+│       ├── report_tools.py          # Report root tool + deterministic Markdown ✅ Feature 18
+│       ├── github_tools.py          # GitHub OAuth 工具 + Report OAuth context ✅
 │       ├── internal_tools.py        # 内部 API 工具 (API Key) [Planned]
 │       └── cloud_tools.py           # 云资源工具 (STS) [Planned]
 ```

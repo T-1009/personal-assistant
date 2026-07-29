@@ -18,6 +18,7 @@ import {
 } from "@/components/assistant-ui/tool-group";
 import { ToolFallback } from "@/components/assistant-ui/tool-fallback";
 import { AuthCard } from "@/components/chat/AuthCard";
+import { ReportDownloadCard } from "@/components/chat/ReportDownloadCard";
 import { TooltipIconButton } from "@/components/assistant-ui/tooltip-icon-button";
 import { Button } from "@/components/ui/button";
 import {
@@ -282,6 +283,9 @@ const MessageError: FC = () => {
 
 const AssistantMessage: FC = () => {
   const messageId = useAuiState((s) => s.message.id);
+  const isMessageRunning = useAuiState(
+    (s) => s.message.status?.type === "running",
+  );
   // reserves space for action bar and compensates with `-mb` for consistent msg spacing
   // keeps hovered action bar from shifting layout (autohide doesn't support absolute positioning well)
   // for pt-[n] use -mb-[n + 6] & min-h-[n + 6] to preserve compensation
@@ -354,6 +358,10 @@ const AssistantMessage: FC = () => {
           }}
         </MessagePrimitive.GroupedParts>
         <MessageError />
+        <ReportDownloadCard
+          messageId={messageId}
+          isMessageRunning={isMessageRunning}
+        />
       </div>
 
       <div

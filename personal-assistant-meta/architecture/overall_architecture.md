@@ -203,16 +203,18 @@ Gateway 注入的 `X-HW-AgentGateway-Workload-Access-Token` 用于容器访问 I
 **OAuth2 鉴权 URL 呈现**：当 `@require_access_token` 的 `on_auth_url` callback 触发时，tool 通过 LangGraph `get_stream_writer()` 将 `auth_required` custom event 写入 SSE stream，Web Chat 使用 provider-scoped Auth Card 直接呈现，不依赖 LLM 转述。授权凭据可用后发送 `auth_complete`，仅更新匹配的 pending Card。详见 [backend_architecture.md §5.2.1](backend_architecture.md#521-oauth2-鉴权-url-呈现out-of-band-消息投递) 和 [frontend_architecture.md §2.1.4](frontend_architecture.md#214-sse-事件协议)。
 
 **GitHub MCP activity source**：Feature 17 新增的 GitHub MCP data source
-使用 AgentArts MCP Gateway 和 GitHub remote MCP 读取平台账号可见的工程活动。
+使用 AgentArts MCP Gateway 和 GitHub remote MCP 读取 GitHub 工程活动。
 它通过 `github-mcp-gateway` STS Provider 获取临时 IAM 凭据，Target 出站使用
 平台侧托管的 GitHub PAT。该 source 支持 commit、Pull Request、Issue、review、
-comment，供 Report internal orchestration 和 Agent-facing activity tools 使用；
-review/comment 详情需要所属 PR/Issue number。Service 保留四个 `github_mcp_*`
-internal source functions 且不将其注册为 Agent Tool；Agent 只看到
+comment；review/comment 详情需要所属 PR/Issue number。Service 保留四个
+`github_mcp_*` internal source functions 且不将其注册为 Agent Tool；Agent 只看到
 `github_search_activity` 和 `github_get_activity_detail`，所有返回结果固定包含
-`identity_scope="platform"`。只有 `GITHUB_MCP_ENABLED` 与
-`GITHUB_ACTIVITY_TOOLS_ENABLED` 同时为 `true` 时才注册这两个 Tool。该能力不暴露
-remote MCP 原子工具，也不代表当前用户。详见
+`identity_scope="platform"`。Report 是特殊内部消费者：它先用当前 Web Chat 用户的
+GitHub OAuth `/user` 确认 `subject_login=A`，全分页枚举
+`repository_scope=oauth_accessible`，再把 `actor=A` 和仓库 allowlist 传给 internal
+source；此时 MCP 仅表示 `data_access_identity=platform_mcp`，不作为 Report 主体身份。
+只有 `GITHUB_MCP_ENABLED` 与 `GITHUB_ACTIVITY_TOOLS_ENABLED` 同时为 `true` 时才注册
+两个 Agent-facing Tool。该能力不暴露 remote MCP 原子工具。详见
 [backend_architecture.md §5.2.0](backend_architecture.md#520-github-mcp-activity-data-source)。
 
 ### 4.2 Outbound — Agent 代表用户调用外部服务
@@ -486,6 +488,62 @@ Model 和 compiled Agent 组成 process-scoped Agent Bundle，在
 `LLM_AGENT_BUNDLE_TTL_SECONDS` 内复用。Bundle refresh 不替换共享 Checkpointer，
 因此相同 `user_id + conversation_id` 的 checkpoint 状态连续。
 
+### 5.4 Report Root Capability
+
+Report 以 `generate_report` 作为 Agent-visible root tool，将“生成报表”意图收敛为
+Service 内部的确定性编排。Agent 只选择 root tool 和业务参数，不负责自行串联 Email、
+Calendar 或 GitHub activity tools。
+
+图类型：**Component Diagram（组件图）**。用于说明 Report root tool、三个默认 data source
+与统一结果契约之间的依赖关系。
+
+```mermaid
+flowchart LR
+    Agent["Personal Assistant Agent"] --> Report["generate_report<br/>root tool"]
+
+    subgraph Orchestration["report_tools.py"]
+        Report --> Window["Report window resolver"]
+        Report --> Selection["Source selection<br/>default: github + email + calendar"]
+        Window --> Normalize["Evidence normalization"]
+        Selection --> Normalize
+        Normalize --> Renderer["Deterministic Markdown renderer"]
+        Selection -. "source error" .-> Warnings["Warning aggregation"]
+        Renderer --> Result["ReportResult"]
+        Warnings --> Result
+    end
+
+    Selection --> Email["email_tools.py<br/>inbox + sentitems"]
+    Selection --> Calendar["calendar_tools.py"]
+    Selection --> GitHubOAuth["github_tools.py<br/>OAuth /user + /user/repos"]
+    GitHubOAuth --> GitHubMCP["github_activity_source.py<br/>Feature 17 MCP actor=A"]
+    Email --> Normalize
+    Calendar --> Normalize
+    GitHubMCP --> Normalize
+```
+
+编排契约：
+
+- 用户给出单个日期时，将其规范化为 `reference_date` 并锚定对应自然日/周/月；给出
+  起止日期时严格使用 `start_at` / `end_at`。显式日期始终优先于当前日期或当前周期。
+- `sources` 未传时固定启用 GitHub、Email、Calendar；显式传入时只调用指定 source。
+- Email source 复用现有 async functions，默认读取 `inbox` 和 `sentitems`，并在
+  Report 层按规范化时间窗口过滤。
+- GitHub source 先调用现有 GitHub OAuth auth gate 获取 `subject_login=A`，并全分页枚举
+  A 可访问仓库作为 `repository_scope=oauth_accessible`；随后直接调用 Feature 17 typed
+  internal source contract，传入 `actor=A` 与仓库 allowlist，不经过 Agent-facing
+  `github_search_activity`，也不回退到 platform actor / repository discovery。
+- GitHub MCP credential 只表示 `data_access_identity=platform_mcp` 的读取通道。
+  Report 对外主体始终是 OAuth 账号 A；选中活动全局最多 100 条，并尽量补充 detail。
+- 三个 source 的失败互不传播；失败 source 产生脱敏 warning 和 coverage 状态，其他
+  source 的 evidence 仍进入结果。
+- `ReportEvidence[]` 经过稳定排序和分组后由 deterministic renderer 生成 Markdown；
+  tool 内不发起额外 LLM 调用。
+- `generate_report` 在 renderer 完成后通过 LangGraph custom stream 发送 `report_ready`，
+  Web Chat 将原始 Markdown artifact 按 assistant message 保存到 runtime store，并在报告
+  正文下方显示下载卡；支持原生“另存为”和标准 `.md` fallback。
+- Report artifact 暂不进入 Conversation history；专用卡只随实时 SSE 生命周期存在。
+  Infra 无新增组件，GitHub MCP Gateway / Target 继续复用 Feature 17 的平台配置。
+
 ## 6. LLM Provider 配置
 
 > 详细设计见 [ADR-011](ADR/ADR-011-multi-llm-provider.md)。
@@ -744,10 +802,15 @@ personal-assistant/
 │   ├── memory.py                    # Memory 集成 [Planned — Feature 2]
 │   ├── feishu_adapter.py            # 飞书消息解析 + 回复 [Planned — Feature 5]
 │   ├── oauth.py                     # OAuth 流程 (Microsoft Entra ID) [已废弃 — Feature 4 改由前端 PKCE]
+│   ├── mcp/
+│   │   └── github_activity_source.py # GitHub MCP typed internal source ✅ Feature 17
 │   └── tools/                       # 外部工具集成
 │       ├── __init__.py              # 工具目录初始化 + ToolNode 工厂 ✅ Feature 10a
 │       ├── email_tools.py           # Microsoft 365 邮件工具 (OAuth2 User Federation) ✅ Feature 10a
-│       ├── github_tools.py          # GitHub 工具 (OAuth2 User Federation) [Planned — Feature 6]
+│       ├── calendar_tools.py        # Microsoft 365 Calendar 工具 ✅ Feature 15
+│       ├── github_activity_tools.py # Agent-facing GitHub engineering activity tools ✅ Feature 17
+│       ├── report_tools.py          # Report root capability + deterministic renderer ✅ Feature 18
+│       ├── github_tools.py          # GitHub OAuth 工具 + Report OAuth context ✅ Feature 6/18
 │       ├── internal_tools.py        # 内部 API 工具 (API Key M2M) [Planned — Feature 7]
 │       └── cloud_tools.py           # 云资源工具 (STS M2M) [Planned — Feature 8]
 ├── personal-assistant-client/        # Web Chat 前端 ✅ 已实现（独立目录，Vite + React + assistant-ui）

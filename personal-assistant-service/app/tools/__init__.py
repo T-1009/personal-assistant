@@ -93,6 +93,21 @@ def build_tools() -> list[Any]:
             exc_info=True,
         )
 
+    # Report root tool (Feature 18) -- always register
+    try:
+        from app.tools.report_tools import REPORT_TOOLS
+
+        tools.extend(REPORT_TOOLS)
+        logger.info("Report tools registered (%d tools).", len(REPORT_TOOLS))
+    except ImportError as e:
+        logger.warning(
+            "Report tools not available (import failed): %s. "
+            "Report functionality will be disabled for this session.",
+            e,
+            exc_info=True,
+        )
+
+    # Github MCP tool (Feature 17) -- Choose register
     settings = get_settings()
     if settings.github_mcp_enabled and settings.github_activity_tools_enabled:
         try:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable
@@ -222,6 +223,8 @@ class MCPGatewayClient:
         self._sts_credentials = sts_credentials
         self._session_context: AbstractAsyncContextManager[ClientSession] | None = None
         self._session: ClientSession | None = None
+        self._tools_cache: tuple[MCPToolInfo, ...] | None = None
+        self._tools_lock = asyncio.Lock()
 
     async def __aenter__(self) -> MCPGatewayClient:
         if self._session_context is not None:
@@ -232,6 +235,8 @@ class MCPGatewayClient:
             )
 
         try:
+            self._tools_cache = None
+            self._tools_lock = asyncio.Lock()
             session_context = self._client().session(_GITHUB_MCP_SERVER_NAME)
             self._session_context = session_context
             self._session = await session_context.__aenter__()
@@ -272,6 +277,7 @@ class MCPGatewayClient:
         session_context = self._session_context
         self._session = None
         self._session_context = None
+        self._tools_cache = None
         if session_context is None:
             return None
 
@@ -331,33 +337,41 @@ class MCPGatewayClient:
         )
 
     async def list_tools(self) -> list[MCPToolInfo]:
-        session = self._require_session()
-        try:
-            result = await session.list_tools()
-        except httpx.HTTPStatusError as exc:
-            raise _map_httpx_status_error(exc) from exc
-        except httpx.HTTPError as exc:
-            logger.error(
-                "MCP Gateway HTTP transport error during list_tools | %s: %s",
-                type(exc).__name__,
-                exc,
-            )
-            raise MCPGatewayError(
-                "gateway_unavailable",
-                "GitHub MCP Gateway is unavailable.",
-                retryable=True,
-            ) from exc
-        except Exception as exc:
-            raise _map_generic_mcp_error(exc) from exc
+        self._require_session()
+        if self._tools_cache is not None:
+            return list(self._tools_cache)
 
-        return [
-            MCPToolInfo(
-                name=tool.name,
-                description=tool.description,
-                input_schema=dict(tool.inputSchema or {}),
+        async with self._tools_lock:
+            session = self._require_session()
+            if self._tools_cache is not None:
+                return list(self._tools_cache)
+            try:
+                result = await session.list_tools()
+            except httpx.HTTPStatusError as exc:
+                raise _map_httpx_status_error(exc) from exc
+            except httpx.HTTPError as exc:
+                logger.error(
+                    "MCP Gateway HTTP transport error during list_tools | %s: %s",
+                    type(exc).__name__,
+                    exc,
+                )
+                raise MCPGatewayError(
+                    "gateway_unavailable",
+                    "GitHub MCP Gateway is unavailable.",
+                    retryable=True,
+                ) from exc
+            except Exception as exc:
+                raise _map_generic_mcp_error(exc) from exc
+
+            self._tools_cache = tuple(
+                MCPToolInfo(
+                    name=tool.name,
+                    description=tool.description,
+                    input_schema=dict(tool.inputSchema or {}),
+                )
+                for tool in result.tools
             )
-            for tool in result.tools
-        ]
+            return list(self._tools_cache)
 
     async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
         session = self._require_session()

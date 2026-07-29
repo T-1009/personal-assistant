@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 from typing import Any
@@ -401,6 +402,55 @@ class UnpageableMCPClient:
         ]
 
 
+class MixedActorMCPClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+
+    async def list_tools(self) -> list[MCPToolInfo]:
+        return [
+            MCPToolInfo("target-github-mcp_get_me", "Get me", {}),
+            MCPToolInfo(
+                "target-github-mcp_list_commits",
+                "List commits",
+                {
+                    "properties": {
+                        "owner": {},
+                        "repo": {},
+                        "since": {},
+                        "until": {},
+                        "perPage": {},
+                        "page": {},
+                    }
+                },
+            ),
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        self.calls.append((name, arguments))
+        if name.endswith("get_me"):
+            return {"login": "T-1009"}
+        if name.endswith("list_commits"):
+            return [
+                {
+                    "sha": "platform-authored",
+                    "author": {"login": "T-1009"},
+                    "commit": {
+                        "message": "Platform authored commit",
+                        "author": {"date": "2026-07-10T12:00:00Z"},
+                    },
+                },
+                {
+                    "sha": "other-authored",
+                    "author": {"login": "someone-else"},
+                    "commit": {
+                        "message": "Other visible commit",
+                        "author": {"date": "2026-07-10T13:00:00Z"},
+                    },
+                },
+            ]
+        raise AssertionError(f"Unexpected tool: {name}")
+
+
 class RepositoryDiscoveryMCPClient(PaginatedMCPClient):
     async def list_tools(self) -> list[MCPToolInfo]:
         return [
@@ -462,6 +512,37 @@ class DetailMCPClient:
                         self.number_argument: {},
                     }
                 },
+            )
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+        self.calls.append((name, arguments))
+        return self.payload
+
+
+class CommitDetailMCPClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, Any]]] = []
+        self.payload = {
+            "sha": "abcdef123456",
+            "html_url": (
+                "https://github.com/T-1009/personal-assistant/commit/abcdef123456"
+            ),
+            "author": {"login": "T-1009"},
+            "commit": {
+                "message": "Feature 17 detail",
+                "author": {"date": "2026-07-10T12:00:00Z"},
+            },
+            "stats": {"additions": 5, "deletions": 1},
+            "files": [{"filename": "app/mcp/github_activity_source.py"}],
+        }
+
+    async def list_tools(self) -> list[MCPToolInfo]:
+        return [
+            MCPToolInfo(
+                "target-github-mcp_get_commit",
+                "Get commit",
+                {"properties": {"owner": {}, "repo": {}, "sha": {}}},
             )
         ]
 
@@ -753,6 +834,133 @@ async def test_search_activity_normalizes_events(fake_client):
 
 
 @pytest.mark.asyncio
+async def test_search_activity_uses_explicit_actor_case_insensitively(monkeypatch):
+    client = PaginatedMCPClient()
+    client.commits.append(
+        {
+            "sha": "other-user-commit",
+            "author": {"login": "someone-else"},
+            "commit": {
+                "message": "Not the OAuth subject",
+                "author": {"date": "2026-07-03T12:00:00Z"},
+            },
+        }
+    )
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["org/repo"],
+        actor="t-1009",
+        event_types=["commit"],
+        limit=10,
+    )
+
+    assert {event.actor for event in result.events} == {"T-1009"}
+    assert all(not name.endswith("get_me") for name, _ in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_search_activity_reuses_parent_pages_across_event_types(monkeypatch):
+    client = PaginatedMCPClient()
+    client.pull_requests.append(
+        {
+            "number": 18,
+            "title": "Other author's pull request",
+            "user": {"login": "someone-else"},
+            "state": "open",
+            "created_at": "2026-07-04T12:00:00Z",
+            "updated_at": "2026-07-04T13:00:00Z",
+        }
+    )
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        actor="T-1009",
+        event_types=[
+            "commit",
+            "pull_request",
+            "issue",
+            "comment",
+            "review",
+        ],
+        limit=100,
+    )
+
+    assert len(result.events) == 20
+    assert {event.event_type for event in result.events} == {
+        "commit",
+        "pull_request",
+        "issue",
+        "comment",
+        "review",
+    }
+    assert all(
+        event.external_id != "18"
+        for event in result.events
+        if event.event_type == "pull_request"
+    )
+    assert any(
+        event.event_type == "comment" and event.parent_external_id == "18"
+        for event in result.events
+    )
+    assert any(
+        event.event_type == "review" and event.parent_external_id == "18"
+        for event in result.events
+    )
+    assert sum(name.endswith("list_pull_requests") for name, _ in client.calls) == 1
+    assert sum(name.endswith("list_issues") for name, _ in client.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_search_activity_reuses_each_paginated_parent_page(monkeypatch):
+    client = PaginatedMCPClient()
+    client.pull_requests = [
+        {
+            "number": number,
+            "title": f"Other author's pull request {number}",
+            "user": {"login": "someone-else"},
+            "state": "open",
+            "created_at": "2026-07-04T12:00:00Z",
+            "updated_at": "2026-07-04T13:00:00Z",
+        }
+        for number in range(1, 4)
+    ]
+    client.reviews = []
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    result = await gmt.github_mcp_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        actor="T-1009",
+        event_types=["pull_request", "review"],
+        limit=2,
+    )
+
+    assert result.events == []
+    pull_request_pages = [
+        arguments["page"]
+        for name, arguments in client.calls
+        if name.endswith("list_pull_requests")
+    ]
+    assert pull_request_pages == [1, 2]
+
+
+@pytest.mark.asyncio
 async def test_agent_search_activity_returns_json_safe_result(fake_client):
     result = await gat.github_search_activity(
         start_at="2026-07-01T00:00:00+08:00",
@@ -769,6 +977,57 @@ async def test_agent_search_activity_returns_json_safe_result(fake_client):
     assert result["warnings"] == []
     assert result["next_cursor"] is None
     assert result["identity_scope"] == "platform"
+
+
+@pytest.mark.asyncio
+async def test_agent_search_activity_still_returns_platform_visible_authors(
+    monkeypatch,
+):
+    client = MixedActorMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+
+    result = await gat.github_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=["T-1009/personal-assistant"],
+        event_types=["commit"],
+        limit=10,
+    )
+
+    assert result["identity_scope"] == "platform"
+    assert result["count"] == 2
+    assert {event["actor"] for event in result["events"]} == {
+        "T-1009",
+        "someone-else",
+    }
+    assert all(not name.endswith("get_me") for name, _ in client.calls)
+
+
+@pytest.mark.asyncio
+async def test_agent_search_activity_empty_repository_list_preserves_discovery(
+    monkeypatch,
+):
+    client = RepositoryDiscoveryMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+
+    result = await gat.github_search_activity(
+        start_at="2026-07-01T00:00:00Z",
+        end_at="2026-07-13T23:59:59Z",
+        repositories=[],
+        event_types=["commit"],
+        limit=1,
+    )
+
+    assert result["identity_scope"] == "platform"
+    assert any(name.endswith("search_repositories") for name, _ in client.calls)
 
 
 @pytest.mark.asyncio
@@ -1204,20 +1463,119 @@ async def test_agent_search_activity_passes_continuation_cursor(monkeypatch):
     assert second["identity_scope"] == "platform"
 
 
+@pytest.mark.asyncio
+async def test_get_commit_detail_preserves_raw_commit_payload(monkeypatch):
+    client = CommitDetailMCPClient()
+
+    async def fake_run(operation):
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+
+    result = await gmt.github_mcp_get_detail(
+        event_type="commit",
+        repository="T-1009/personal-assistant",
+        external_id="abcdef123456",
+    )
+
+    assert isinstance(result, gmt.GitHubActivityEvent)
+    assert result.external_id == "abcdef123456"
+    assert result.details == {"commit": client.payload}
+    assert client.calls == [
+        (
+            "target-github-mcp_get_commit",
+            {
+                "owner": "T-1009",
+                "repo": "personal-assistant",
+                "sha": "abcdef123456",
+            },
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_get_details_reuses_one_operation_with_bounded_concurrency(monkeypatch):
+    class ConcurrentDetailClient:
+        def __init__(self) -> None:
+            self.list_tools_calls = 0
+            self.active_calls = 0
+            self.max_active_calls = 0
+
+        async def list_tools(self) -> list[MCPToolInfo]:
+            self.list_tools_calls += 1
+            return [
+                MCPToolInfo(
+                    "target-github-mcp_get_commit",
+                    "Get commit",
+                    {"properties": {"owner": {}, "repo": {}, "sha": {}}},
+                )
+            ]
+
+        async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+            assert name == "target-github-mcp_get_commit"
+            self.active_calls += 1
+            self.max_active_calls = max(self.max_active_calls, self.active_calls)
+            try:
+                await asyncio.sleep(0.01)
+                sha = arguments["sha"]
+                return {
+                    "sha": sha,
+                    "author": {"login": "T-1009"},
+                    "commit": {
+                        "message": f"Commit {sha}",
+                        "author": {"date": "2026-07-10T12:00:00Z"},
+                    },
+                }
+            finally:
+                self.active_calls -= 1
+
+    client = ConcurrentDetailClient()
+    operation_calls = 0
+
+    async def fake_run(operation):
+        nonlocal operation_calls
+        operation_calls += 1
+        return await operation(client)
+
+    monkeypatch.setattr(gmt, "run_with_github_mcp_sts", fake_run)
+    events = [
+        gmt.GitHubActivityEvent(
+            provider="github",
+            event_type="commit",
+            repository="T-1009/personal-assistant",
+            external_id=f"commit-{index}",
+            title=f"Commit {index}",
+        )
+        for index in range(8)
+    ]
+
+    results = await gmt.github_mcp_get_details(events, max_concurrency=3)
+
+    assert operation_calls == 1
+    assert client.list_tools_calls == 1
+    assert client.max_active_calls == 3
+    assert [result.external_id for result in results] == [
+        event.external_id for event in events
+    ]
+    assert all(isinstance(result, gmt.GitHubActivityEvent) for result in results)
+
+
 @pytest.mark.parametrize(
-    ("event_type", "tool_name", "number_argument", "payload"),
+    ("event_type", "tool_name", "number_argument", "payload", "details_key"),
     [
         (
             "pull_request",
             "target-github-mcp_pull_request_read",
             "pullNumber",
             {"number": 17, "title": "Feature 17", "state": "open"},
+            "pull_request",
         ),
         (
             "issue",
             "target-github-mcp_issue_read",
             "issue_number",
             {"number": 17, "title": "Feature 17 issue", "state": "open"},
+            "issue",
         ),
     ],
 )
@@ -1228,6 +1586,7 @@ async def test_get_detail_sets_get_method_for_aggregate_read_tools(
     tool_name,
     number_argument,
     payload,
+    details_key,
 ):
     client = DetailMCPClient(tool_name, number_argument, payload)
 
@@ -1243,6 +1602,7 @@ async def test_get_detail_sets_get_method_for_aggregate_read_tools(
     )
 
     assert isinstance(result, gmt.GitHubActivityEvent)
+    assert result.details == {details_key: payload}
     assert client.calls == [
         (
             tool_name,

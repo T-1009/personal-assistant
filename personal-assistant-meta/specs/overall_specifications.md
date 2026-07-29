@@ -6,7 +6,7 @@
 
 ## 1. 项目概述
 
-Personal Assistant 是一个对话式 AI 助手应用，用户通过自然语言对话管理邮件。系统具备跨 Session 的 Memory 能力，能够记住用户偏好和历史上下文，并在用户授权下以用户身份访问外部服务（如 Microsoft 365 邮件）。
+Personal Assistant 是一个对话式 AI 助手应用，用户通过自然语言对话管理邮件、日历并生成工作报表。系统具备跨 Session 的 Memory 能力，能够记住用户偏好和历史上下文，并在用户授权下以用户身份访问外部服务（如 Microsoft 365 邮件）。
 
 ### 1.1 核心价值
 
@@ -79,6 +79,7 @@ flowchart LR
 | Tool 能力 | GitHub Tools | [`UseCase/github-tools.md`](use-cases/github-tools.md) | 已实现 |
 | Tool 能力 | Gitee Tools | [`UseCase/gitee-tools.md`](use-cases/gitee-tools.md) | 已实现 |
 | Tool 能力 | HuaweiCloud IAM Tools | [`UseCase/huaweicloud-iam-tools.md`](use-cases/huaweicloud-iam-tools.md) | 已实现 |
+| Root capability | Report | [§3.9 Report Root Capability](#39-report-root-capability) | 已实现 |
 
 ### 3.1 Web Chat Inbound Identity
 
@@ -169,18 +170,60 @@ GitHub MCP Activity Data Source 通过 AgentArts MCP Gateway 访问 GitHub remot
   `github_mcp_get_detail` 四个 internal source functions；它们不注册为 Agent Tool。
 - **Agent-facing 契约**：Agent 只看到 `github_search_activity` 和
   `github_get_activity_detail`。两个 Tool 的所有返回结果均明确包含
-  `identity_scope="platform"`。
+  `identity_scope="platform"`；该字段表示 MCP 数据访问身份，默认查询不强制按平台
+  账号过滤 actor，因此结果可包含平台凭据可见仓库中的其他作者活动。
+- **Report 调用约束**：Feature 18 Report 会先通过 GitHub OAuth 确认报表主体
+  `subject_login=A`，再把 A 可访问的仓库 allowlist 和 `actor=A` 传给该 internal
+  source。此时 MCP 仍是 platform data access channel，但不得使用 platform actor
+  或 platform repository discovery 作为 Report 的身份 / 范围回退。
 - **详情查询**：`github_mcp_get_detail` 支持全部五类事件。聚合
   `pull_request_read` 时固定传入 `method="get"`；聚合 `issue_read` 时根据 Target
   schema 依次读取 `get`、`get_comments`、`get_sub_issues`、`get_parent`、
   `get_labels`，并写入事件的 `details`。
-- **安全边界**：不暴露 raw MCP passthrough，不注册 `generate_report`，不把 GitHub
-  MCP 原子工具作为 root capability 暴露给 Agent。
+- **安全边界**：不暴露 raw MCP passthrough；GitHub MCP source 自身不注册
+  `generate_report`，也不把 GitHub MCP 原子工具作为 root capability 暴露给 Agent。
+  Feature 18 的独立 Report root tool 通过 typed internal source contract 消费该数据源。
 - **开关边界**：`GITHUB_MCP_ENABLED` 是 internal data source 的 master switch；
   `GITHUB_ACTIVITY_TOOLS_ENABLED` 控制两个业务 Tool 是否对 Agent 可见。
   `build_tools()` 仅在两者同时为 `true` 时注册 `GITHUB_ACTIVITY_TOOLS`；关闭
   exposure switch 可只保留 internal data source。该入口始终使用 platform GitHub
   account，不代表当前用户授权。
+
+### 3.9 Report Root Capability
+
+Report 是用户可见的高层能力。用户请求日报、周报、月报、工作总结或研发进展总结时，
+Agent 优先调用 `generate_report`，由该 tool 确定性完成时间窗口解析、数据采集、证据
+归一化、warning 聚合和 Markdown 渲染，而不是临时串联多个 low-level tools。
+
+- **Report type**：支持 `daily`、`weekly`、`monthly`、`custom`；前三者按用户或系统
+  timezone 推导自然日、自然周、自然月。用户给出单个日期时通过 `reference_date`
+  锚定该日期对应的自然周期；给出起止日期时严格使用显式 `start_at` / `end_at`，
+  不得替换为当前日期或当前周期。`custom` 必须使用显式范围。
+- **默认 sources**：未传 `sources` 时固定启用 `github`、`email`、`calendar`；用户
+  显式传入时仅采集指定 source。
+- **Email 范围**：默认读取 `inbox` 与 `sentitems`，并在 Report 层按规范化时间窗口
+  过滤邮件证据，不改变 Email public tool schema。
+- **GitHub 身份与范围**：Report 先通过当前 Web Chat 用户的 GitHub OAuth
+  `/user` 确认报表主体账号 A，再全分页枚举 `/user/repos` 得到 A 可访问的全部仓库
+  allowlist。尚未授权时先触发 `auth_required` Auth Card 并等待用户完成授权；只有
+  授权失败或超时才将 GitHub source 降级为 warning。随后 Report 直接调用 Feature 17 internal source，传入
+  `repositories=allowlist` 和 `actor=A`，只保留 A 自己的工程活动；不调用
+  Agent-facing GitHub activity tool，不从 platform actor 或 platform repository
+  discovery 回退扩展范围。MCP credential 只表示 `data_access_identity=platform_mcp`
+  的读取通道。
+- **GitHub 上限与详情**：Report 会跟随 GitHub MCP cursor 直到耗尽或出现 typed
+  warning，再按全局最多 100 条活动截断，并为选中活动尽量调用
+  `github_mcp_get_detail` 补充结构化详情；截断或权限 / 限流问题通过 warning 和
+  coverage 降级呈现。
+- **确定性输出**：首期 `format` 固定为 `markdown`，正文由 deterministic renderer
+  根据规范化 evidence、source coverage 和 warnings 生成；tool 内不发起额外 LLM 调用。
+- **部分失败**：各 source 独立降级。任一 source 不可用时，结果保留其他 source 的
+  内容，同时追加脱敏 warning，并将对应 coverage 标记为 `partial`、`unavailable` 或
+  `skipped`。
+- **结果契约**：`ReportResult` 包含 `report_type`、`window`、`content`、
+  `ReportEvidence[]`、`warnings`、`source_coverage` 和可选 `source_context`。
+- **安全边界**：public tool schema、warning、SSE、日志和 tool result 均不得包含
+  access token、PAT、API key、AK/SK、STS credential 或签名 header。
 
 ---
 
@@ -308,6 +351,7 @@ llm:
 | **Outbound Auth (User Federation)** | Agent 以用户委托身份调用 Microsoft 365、GitHub、Gitee 等外部 API |
 | **Calendar OAuth2 Full Flow** | Calendar 授权 callback 由 Service 完成 `complete_resource_token_auth` |
 | **STS 云凭证** | Agent 使用 `iam-users-readonly` STS Provider 只读查询华为云 IAM 用户 |
+| **Report Root Capability** | 未传 `sources` 时聚合 GitHub、Email、Calendar；单个 source 失败仍返回 deterministic Markdown 与 warning |
 | **Chat Loop** | 多轮对话 + 工具调用 + 流式响应 |
 | **Guard** | 发送邮件、回复邮件、GitHub star 等写操作需用户确认 |
 

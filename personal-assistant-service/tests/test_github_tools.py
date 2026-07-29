@@ -13,6 +13,7 @@ from app.tools.github_tools import (
     GITHUB_API_BASE_URL,
     _raw_github_request,
     get_file_content,
+    get_github_report_context,
     list_repo_contents,
     list_repositories,
     search_code,
@@ -201,3 +202,65 @@ async def test_github_request_without_token_is_programming_error():
 
     with pytest.raises(RuntimeError, match="access_token"):
         await raw_request("GET", "/user/repos", access_token=None)
+
+
+@pytest.mark.asyncio
+async def test_github_report_context_uses_oauth_identity_and_paginates_all_repos(
+    monkeypatch,
+):
+    calls = []
+
+    async def fake_raw_request(access_token, method, path, *, params=None):
+        assert access_token == "oauth-token"
+        calls.append((method, path, params))
+        if path == "/user":
+            return {"login": "OAuth-User", "id": 1001}
+        page = params["page"]
+        if page == 1:
+            return [{"full_name": f"org/repo-{index:03d}"} for index in range(100)]
+        return [
+            {"full_name": "OAuth-User/private-repo"},
+            {"full_name": "org/repo-000"},
+        ]
+
+    auth_complete = []
+    monkeypatch.setattr(gh, "_raw_github_request", fake_raw_request)
+    monkeypatch.setattr(gh, "_push_auth_complete", lambda: auth_complete.append(True))
+    raw_context = get_github_report_context
+    while hasattr(raw_context, "__wrapped__"):
+        raw_context = raw_context.__wrapped__
+
+    result = await raw_context(access_token="oauth-token")
+
+    assert result.login == "OAuth-User"
+    assert result.user_id == 1001
+    assert len(result.repositories) == 101
+    assert "OAuth-User/private-repo" in result.repositories
+    assert calls[0] == ("GET", "/user", None)
+    assert calls[1][2] == {
+        "affiliation": "owner,collaborator,organization_member",
+        "visibility": "all",
+        "sort": "full_name",
+        "direction": "asc",
+        "per_page": 100,
+        "page": 1,
+    }
+    assert calls[2][2] == {
+        "affiliation": "owner,collaborator,organization_member",
+        "visibility": "all",
+        "sort": "full_name",
+        "direction": "asc",
+        "per_page": 100,
+        "page": 2,
+    }
+    assert auth_complete == [True]
+
+
+@pytest.mark.asyncio
+async def test_github_report_context_requires_injected_token():
+    raw_context = get_github_report_context
+    while hasattr(raw_context, "__wrapped__"):
+        raw_context = raw_context.__wrapped__
+
+    with pytest.raises(RuntimeError, match="access_token"):
+        await raw_context(access_token=None)

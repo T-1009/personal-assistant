@@ -1,5 +1,5 @@
 ---
-status: backlog
+status: in_progress
 depends_on:
   - feature-17-github-mcp-data-source
 related:
@@ -48,11 +48,24 @@ flowchart LR
 ## 目标
 
 - 新增 Agent 可见的 `generate_report` high-level tool，作为日/周/月报、工作总结和研发进展总结的 root entry。
+- `sources` 未传时默认同时采集 GitHub、Email 和 Calendar；用户显式指定时仅采集指定 source。
+- 用户给出单个日期时以该日期作为自然日/周/月锚点；给出起止日期时严格使用该范围，
+  不得回退到当前日期或当前周期。
 - `generate_report` 内部复用现有 Email / Calendar functions。
-- `generate_report` 在需要工程活动数据时调用 Feature 17 的 GitHub MCP activity source。
-- `generate_report` 直接依赖 typed internal source contract，不调用 `github_search_activity` Agent tool object。
+- Email 默认读取 `inbox` 和 `sentitems`，并按规范化 report window 过滤证据。
+- `generate_report` 在需要工程活动数据时先通过 GitHub OAuth 确认主体账号 A，再调用
+  Feature 17 的 GitHub MCP activity source。
+- `generate_report` 直接依赖 typed internal source contract，以 `actor=A` 和 OAuth
+  repository allowlist 读取活动，不调用 `github_search_activity` Agent tool object，也不
+  回退到 platform repository discovery。
 - 输出统一的 `ReportEvidence` / `ReportResult`。
+- 首期使用 deterministic Markdown renderer 生成正文，不在 tool 内发起额外 LLM 调用。
+- 报告生成完成后通过 custom SSE 发送原始 Markdown artifact，Web Chat 在报告正文下方
+  展示与 OAuth Auth Card 状态语言一致的下载卡片。
+- 用户点击下载后，支持浏览器原生“另存为”选择文件名与本机目录；不支持 File System
+  Access API 的浏览器回退为标准 `.md` 下载。
 - 支持 source partial failure：单个 source 失败时返回 warning，并继续生成部分报表。
+- GitHub 工程活动全局最多 100 条，且在分页 cursor 翻完后再做截断与 detail 补充。
 - 更新 prompt / tool selection 规则，让 Agent 默认选择 `generate_report`，而不是临时串联多个 low-level tools。
 
 ## 范围
@@ -68,6 +81,8 @@ flowchart LR
 - 复用现有 `email_tools.py` / `calendar_tools.py` 中的 async functions。
 - 接入 Feature 17 的 `github_mcp_search_activity` / `github_mcp_get_detail`。
 - 新增 `ReportEvidence` / `ReportResult` 类型。
+- 新增 `report_ready` SSE event、按 assistant message 隔离的 Report Download Store、
+  Markdown 保存 helper 与 `ReportDownloadCard`。
 - 更新 `SYSTEM_PROMPT` 的报表工具选择规则。
 - 单元测试、集成测试和 E2E 覆盖日/周/月报、partial failure 和 GitHub source 可选接入。
 
@@ -79,6 +94,8 @@ flowchart LR
 - 不提供 raw MCP passthrough。
 - 不实现报表导出为 PDF / DOCX / PPT；后续可由 Sandbox / documents capability 扩展。
 - 不实现报表偏好长期记忆；后续由 Memory skill 扩展。
+- 不把 report artifact 持久化到 Conversation history；本期专用下载卡针对实时生成事件，
+  页面刷新后的 artifact 恢复另行设计。
 
 ## 验收标准
 
@@ -87,11 +104,15 @@ flowchart LR
 - [ ] `build_tools()` 注册 `generate_report`。
 - [ ] 用户请求“生成今天的日报 / 本周周报 / 本月月报”时，Agent 优先调用 `generate_report`。
 - [ ] `generate_report` 能解析 daily / weekly / monthly / custom 时间窗口。
+- [ ] 用户显式给定日期或日期范围时，Report 严格使用该日期，不能替换为今天、本周或本月。
+- [ ] 未传 `sources` 时默认启用 `github`、`email`、`calendar`；显式指定时遵循用户选择。
 - [ ] `generate_report` 输出 `ReportResult`，包含正文、证据、warnings 和 source coverage。
+- [ ] `content` 由 deterministic Markdown renderer 生成，相同输入产生稳定结构。
 
 ### AC2：复用 Email / Calendar
 
 - [ ] Report 直接复用现有 Email / Calendar functions。
+- [ ] Email source 默认读取 `inbox` 和 `sentitems`，并按 report window 过滤邮件证据。
 - [ ] 不新增重复的 Email / Calendar MCP tools。
 - [ ] 邮件或日历 source 单独失败时，返回 warning 并继续使用其他 source。
 
@@ -99,7 +120,11 @@ flowchart LR
 
 - [ ] 当 `GITHUB_MCP_ENABLED=true` 且报表需要工程活动时，Report 调用 Feature 17 的 GitHub MCP activity source。
 - [ ] 当 GitHub source unavailable 时，Report 返回 warning 并继续生成 Email / Calendar 报表。
-- [ ] GitHub source 使用 `actor = platform` 语义，不表达 Web Chat 当前用户的 GitHub 活动。
+- [ ] GitHub 尚未授权时先触发 `auth_required` Auth Card 并等待用户授权；只有授权失败或
+  超时后才将 GitHub source 降级为 warning。
+- [ ] GitHub source 先通过 OAuth `/user` 确认主体账号 A，再枚举 `/user/repos` 形成仓库 allowlist。
+- [ ] GitHub source 以 `actor=A` 读取 A 自己的活动，不回退到 platform actor 或 platform repository discovery。
+- [ ] GitHub source 在分页 cursor 翻完后再按全局最多 100 条截断，并为选中活动补充 detail。
 
 ### AC4：工具选择边界清晰
 
@@ -114,6 +139,18 @@ flowchart LR
 - [ ] `generate_report` schema 不包含 `access_token`、`api_key`、`secret`、PAT、AK/SK 或 STS 字段。
 - [ ] Report warning 不包含 token、PAT、AK/SK、STS 或签名 header。
 - [ ] SSE、日志、tool result 和 LLM-visible error 不包含 credential。
+
+### AC6：Markdown 报告可下载
+
+- [ ] `generate_report` 完成后发送 `report_ready` custom SSE event，携带 deterministic
+  renderer 生成的原始 Markdown、报告类型、时间窗口和安全的 `.md` 建议文件名。
+- [ ] Web Chat 仅在对应 assistant message 的报告正文下方显示专用下载卡，不影响普通
+  assistant message、Feature 17 GitHub activity tools 或 OAuth Auth Card。
+- [ ] 下载卡的 pending / saved / failed 状态与 GitHub、Email、Calendar OAuth Card 的
+  蓝 / 绿 / 红视觉语义一致。
+- [ ] 支持原生“另存为”；用户取消时不产生 fallback 文件，浏览器不支持原生 picker 时
+  回退为标准 `.md` 下载。
+- [ ] 保存内容与 `ReportResult.content` 完全一致，并使用 UTF-8 Markdown MIME type。
 
 ## 依赖
 

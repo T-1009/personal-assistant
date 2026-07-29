@@ -198,3 +198,38 @@ class TestBuildTools:
                 f"{name} exposes credential params: "
                 f"{sorted(params & credential_params)}"
             )
+
+
+@pytest.mark.parametrize(
+    ("source_enabled", "facade_enabled"),
+    [(False, False), (False, True), (True, False), (True, True)],
+)
+def test_feature_18_report_tool_registration_is_independent_of_github_switches(
+    source_enabled: bool,
+    facade_enabled: bool,
+) -> None:
+    settings = Settings(
+        _env_file=None,
+        github_mcp_enabled=source_enabled,
+        github_activity_tools_enabled=facade_enabled,
+    )
+
+    with patch("app.tools.get_settings", return_value=settings):
+        tools = build_tools()
+
+    registered = {_tool_name(tool): tool for tool in tools}
+    assert "generate_report" in registered
+    credential_params = {
+        "access_token",
+        "api_key",
+        "authorization",
+        "secret",
+        "pat",
+        "ak",
+        "sk",
+        "sts",
+        "token",
+        "credential",
+    }
+    params = set(_tool_param_names(registered["generate_report"]))
+    assert params.isdisjoint(credential_params)
