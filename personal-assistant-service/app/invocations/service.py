@@ -3,7 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator
+from contextlib import AbstractAsyncContextManager, aclosing
 from typing import TYPE_CHECKING
 
 from app.conversations.locks import ConversationLock, ConversationLockLease
@@ -16,16 +17,18 @@ from app.conversations.store import ConversationStore, MessageRecord
 from app.database import Database
 from app.invocations.models import (
     AgentEventType,
+    AgentStreamEvent,
     InvocationRequest,
     InvocationResponse,
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
-
     from app.agent_handler import AgentHandler
 
 logger = logging.getLogger(__name__)
+
+_SSE_HEARTBEAT_INTERVAL_SECONDS = 15.0
+_SSE_HEARTBEAT = ": heartbeat\n\n"
 
 
 class InvocationConversationNotFoundError(LookupError):
@@ -93,20 +96,27 @@ class InvocationExecution:
         self._bind_current_task()
         tokens: list[str] = []
         try:
-            async for event in self._handler.handle_stream(
-                message=self._request.message,
-                user_id=self._user_id,
-                conversation_id=str(self._request.conversation_id),
-            ):
-                if event.type is AgentEventType.TOKEN:
-                    token = event.token or ""
-                    if token:
-                        tokens.append(token)
-                        yield _sse_data({"token": token, "done": False})
-                elif event.type is AgentEventType.AUTH_CARD:
-                    yield _sse_data(event.data, event="auth_card")
-                else:
-                    yield _sse_data(event.data)
+            events = _with_heartbeat(
+                self._handler.handle_stream(
+                    message=self._request.message,
+                    user_id=self._user_id,
+                    conversation_id=str(self._request.conversation_id),
+                ),
+                interval_seconds=_SSE_HEARTBEAT_INTERVAL_SECONDS,
+            )
+            async with aclosing(events):
+                async for event in events:
+                    if event is None:
+                        yield _SSE_HEARTBEAT
+                    elif event.type is AgentEventType.TOKEN:
+                        token = event.token or ""
+                        if token:
+                            tokens.append(token)
+                            yield _sse_data({"token": token, "done": False})
+                    elif event.type is AgentEventType.AUTH_CARD:
+                        yield _sse_data(event.data, event="auth_card")
+                    else:
+                        yield _sse_data(event.data)
 
             response = "".join(tokens)
             if not response:
@@ -220,6 +230,36 @@ class InvocationService:
             lock_context=lock_context,
             lock_lease=lock_lease,
         )
+
+
+async def _with_heartbeat(
+    events: AsyncIterator[AgentStreamEvent],
+    *,
+    interval_seconds: float,
+) -> AsyncIterator[AgentStreamEvent | None]:
+    iterator = aiter(events)
+    next_event = asyncio.ensure_future(anext(iterator))
+    try:
+        while True:
+            # Keep the same anext task alive across timeouts. wait_for() would cancel
+            # a slow Agent or Tool call when the heartbeat interval elapsed.
+            done, _ = await asyncio.wait({next_event}, timeout=interval_seconds)
+            if not done:
+                yield None
+                continue
+            try:
+                event = next_event.result()
+            except StopAsyncIteration:
+                return
+            yield event
+            next_event = asyncio.ensure_future(anext(iterator))
+    finally:
+        if not next_event.done():
+            next_event.cancel()
+        await asyncio.gather(next_event, return_exceptions=True)
+        close = getattr(iterator, "aclose", None)
+        if close is not None:
+            await close()
 
 
 def _sse_data(data: object, *, event: str | None = None) -> str:
