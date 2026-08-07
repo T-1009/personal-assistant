@@ -1,12 +1,68 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { useAuthCardStore } from "@/stores/auth-card-store";
 import { useReportDownloadStore } from "@/stores/report-download-store";
+import { useReportProgressStore } from "@/stores/report-progress-store";
 import { handleChatEvent } from "./chat-event-handler";
 
 describe("handleChatEvent report_ready", () => {
   beforeEach(() => {
     useAuthCardStore.getState().clearAuth();
     useReportDownloadStore.getState().clearReport();
+    useReportProgressStore.getState().clearProgress();
+  });
+
+  it("stores structured progress without adding it to assistant text", () => {
+    const context = {
+      assistantMessageId: "assistant-progress",
+      fullText: "报告请求已接收",
+    };
+    const result = handleChatEvent(
+      {
+        type: "report_progress",
+        report_progress: true,
+        sequence: 3,
+        source: "github",
+        stage: "activity_search",
+        status: "running",
+        current: 2,
+        discovered: 37,
+        system_message: "这段进度不应进入正文",
+      },
+      context,
+    );
+
+    expect(result).toEqual({
+      fullText: "报告请求已接收",
+      contentUpdates: [],
+      done: false,
+    });
+    expect(
+      useReportProgressStore.getState().progressByMessageId[
+        "assistant-progress"
+      ].sources.github,
+    ).toMatchObject({
+      sequence: 3,
+      stage: "activity_search",
+      discovered: 37,
+    });
+
+    handleChatEvent(
+      {
+        type: "report_progress",
+        report_progress: true,
+        sequence: 2,
+        source: "github",
+        stage: "activity_search",
+        status: "running",
+        discovered: 0,
+      },
+      context,
+    );
+    expect(
+      useReportProgressStore.getState().progressByMessageId[
+        "assistant-progress"
+      ].sources.github?.discovered,
+    ).toBe(37);
   });
 
   it("stores the original Markdown for the matching assistant message", () => {
@@ -58,7 +114,88 @@ describe("handleChatEvent report_ready", () => {
 
     expect(useReportDownloadStore.getState().reportsByMessageId).toEqual({});
     expect(
-      useAuthCardStore.getState().cardsByMessageId["auth-message"]?.message,
+      useAuthCardStore.getState().cardsByMessageId["auth-message"]?.[0]
+        ?.message,
     ).toBe("请完成 GitHub 授权");
+  });
+
+  it("keeps sequential provider cards when report_ready arrives", () => {
+    const context = {
+      assistantMessageId: "assistant-report-auth",
+      fullText: "",
+    };
+    const authEvents = [
+      {
+        provider: "github-provider",
+        auth_url: "https://auth.example.com/github",
+        system_message: "请完成 GitHub 授权",
+      },
+      {
+        provider: "m365-email-provider",
+        auth_url: "https://auth.example.com/email",
+        system_message: "请完成邮件授权",
+      },
+      {
+        provider: "m365-calendar-provider",
+        auth_url: "https://auth.example.com/calendar",
+        oauth2_state: "calendar-state",
+        system_message: "请完成日历授权",
+      },
+    ];
+
+    for (const event of authEvents) {
+      handleChatEvent({ ...event, auth_required: true }, context);
+      handleChatEvent(
+        {
+          provider: event.provider,
+          oauth2_state: event.oauth2_state,
+          system_message: `${event.provider} 授权已完成`,
+          auth_complete: true,
+        },
+        context,
+      );
+    }
+
+    handleChatEvent(
+      {
+        type: "report_progress",
+        report_progress: true,
+        sequence: 1,
+        source: "github",
+        stage: "activity_detail",
+        status: "running",
+        current: 18,
+        total: 37,
+      },
+      context,
+    );
+
+    handleChatEvent(
+      {
+        type: "report_ready",
+        report_ready: true,
+        report_format: "markdown",
+        report_filename: "日报.md",
+        report_content: "# 日报",
+      },
+      context,
+    );
+
+    expect(
+      useAuthCardStore.getState().cardsByMessageId["assistant-report-auth"],
+    ).toMatchObject([
+      { provider: "github-provider", authComplete: true },
+      { provider: "m365-email-provider", authComplete: true },
+      {
+        provider: "m365-calendar-provider",
+        oauth2State: "calendar-state",
+        authComplete: true,
+      },
+    ]);
+    expect(
+      useReportProgressStore.getState().progressByMessageId[
+        "assistant-report-auth"
+      ],
+    ).toMatchObject({ terminal: true, sequence: 1 });
   });
 });
