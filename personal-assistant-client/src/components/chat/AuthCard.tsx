@@ -37,15 +37,28 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
       // Browser tabs are status observers only. The Service owns OAuth
       // completion, which avoids cross-tab races where another tab completes
       // the same AgentArts session with a different active identity.
+      const authMessageId =
+        messageId ?? useAuthCardStore.getState().messageId;
+      if (!authMessageId) return;
       if (data.status === "complete") {
         useAuthCardStore
           .getState()
-          .setAuthComplete(data.provider, data.message, data.state);
+          .setAuthComplete(
+            authMessageId,
+            data.provider,
+            data.message,
+            data.state,
+          );
       }
       if (data.status === "failed") {
         useAuthCardStore
           .getState()
-          .setAuthFailed(data.provider, data.message, data.state);
+          .setAuthFailed(
+            authMessageId,
+            data.provider,
+            data.message,
+            data.state,
+          );
       }
     }
 
@@ -59,10 +72,14 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
         ) {
           return;
         }
+        const authMessageId =
+          messageId ?? useAuthCardStore.getState().messageId;
+        if (!authMessageId) return;
         // State-scoped status prevents stale callbacks from changing the
         // currently visible AuthCard after a user retries authorization.
         if (event.data.status === "complete") {
           useAuthCardStore.getState().setAuthComplete(
+            authMessageId,
             event.data.provider,
             event.data.message,
             event.data.state,
@@ -70,6 +87,7 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
         }
         if (event.data.status === "failed") {
           useAuthCardStore.getState().setAuthFailed(
+            authMessageId,
             event.data.provider,
             event.data.message,
             event.data.state,
@@ -83,7 +101,7 @@ export const AuthCard: FC<AuthCardProps> = ({ messageId }) => {
       window.removeEventListener("message", handleMessage);
       channel?.close();
     };
-  }, []);
+  }, [messageId]);
 
   const authCards = messageId
     ? (messageCards ?? EMPTY_AUTH_CARDS)

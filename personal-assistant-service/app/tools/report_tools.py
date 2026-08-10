@@ -12,8 +12,10 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from agentarts.sdk.runtime.context import AgentArtsRuntimeContext
 from langgraph.config import get_stream_writer
 
+from app.identity import get_github_provider_name
 from app.mcp.github_activity_source import (
     GitHubActivityEvent,
     GitHubActivityResult,
@@ -24,16 +26,18 @@ from app.mcp.github_activity_source import (
 )
 from app.settings import get_settings
 from app.tools.calendar_tools import (
-    _list_calendar_events_for_report as list_calendar_events,
+    CALENDAR_PROVIDER,
+    authorize_calendar_report_access,
 )
 from app.tools.calendar_tools import (
-    authorize_calendar_report_access,
+    _list_calendar_events_for_report as list_calendar_events,
+)
+from app.tools.email_tools import (
+    EMAIL_PROVIDER,
+    authorize_email_report_access,
 )
 from app.tools.email_tools import (
     _list_emails_authorized as list_emails,
-)
-from app.tools.email_tools import (
-    authorize_email_report_access,
 )
 from app.tools.github_tools import (
     GitHubReportContext,
@@ -307,6 +311,48 @@ def _authorization_failure(source: ReportSource) -> _SourceResult:
     )
 
 
+def _push_report_auth_failed(source: ReportSource) -> None:
+    """Close a pending Report AuthCard without exposing failure details."""
+    messages: dict[ReportSource, str] = {
+        "github": "GitHub 授权未完成，请重试。",
+        "email": "邮件授权未完成，请重试。",
+        "calendar": "日历授权未完成，请重试。",
+    }
+    try:
+        if source == "github":
+            provider = get_github_provider_name()
+        elif source == "email":
+            provider = EMAIL_PROVIDER
+        else:
+            provider = CALENDAR_PROVIDER
+        event: dict[str, Any] = {
+            "type": "system_message",
+            "system_message": messages[source],
+            "auth_failed": True,
+            "provider": provider,
+        }
+    except Exception:
+        logger.warning(
+            "Report auth_failed event could not be prepared source=%s",
+            source,
+        )
+        return
+
+    if source == "calendar":
+        try:
+            oauth2_state = AgentArtsRuntimeContext.get_oauth2_custom_state()
+        except Exception:
+            oauth2_state = None
+            logger.warning("Calendar OAuth state unavailable for report auth_failed")
+        if oauth2_state:
+            event["oauth2_state"] = oauth2_state
+
+    try:
+        get_stream_writer()(event)
+    except Exception:
+        logger.warning("Report auth_failed event not streamed source=%s", source)
+
+
 def _github_disabled_result() -> _SourceResult:
     return _SourceResult(
         warnings=[
@@ -373,6 +419,7 @@ async def _authorize_report_sources(
                 "Report source authorization unavailable source=%s",
                 source,
             )
+            _push_report_auth_failed(source)
             result.failures[source] = _authorization_failure(source)
             continue
 
@@ -381,6 +428,7 @@ async def _authorize_report_sources(
                 "Report source authorization returned no token source=%s",
                 source,
             )
+            _push_report_auth_failed(source)
             result.failures[source] = _authorization_failure(source)
             continue
         result.access_tokens[source] = access_token

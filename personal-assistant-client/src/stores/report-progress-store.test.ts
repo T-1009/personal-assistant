@@ -81,7 +81,9 @@ describe("report progress store", () => {
   it("creates a terminal tombstone when report_ready arrives first", () => {
     const store = useReportProgressStore.getState();
 
-    store.finishProgress("report-message");
+    store.finishProgress("report-message", undefined, {
+      createIfMissing: true,
+    });
     store.setProgress("report-message", {
       sequence: 1,
       source: "github",
@@ -92,6 +94,14 @@ describe("report progress store", () => {
     expect(
       useReportProgressStore.getState().progressByMessageId["report-message"],
     ).toMatchObject({ sequence: 0, terminal: true });
+  });
+
+  it("does not create a terminal entry for a generic completion", () => {
+    useReportProgressStore.getState().finishProgress("ordinary-message");
+
+    expect(
+      useReportProgressStore.getState().progressByMessageId,
+    ).not.toHaveProperty("ordinary-message");
   });
 
   it("normalizes invalid counters without rejecting a valid event", () => {

@@ -123,6 +123,7 @@ export function handleChatEvent(
     useAuthCardStore
       .getState()
       .setAuthComplete(
+        context.assistantMessageId,
         event.provider,
         systemMessage || undefined,
         event.oauth2_state,
@@ -133,6 +134,7 @@ export function handleChatEvent(
     useAuthCardStore
       .getState()
       .setAuthFailed(
+        context.assistantMessageId,
         event.provider,
         systemMessage || undefined,
         event.oauth2_state,
@@ -142,7 +144,9 @@ export function handleChatEvent(
   if (isReportReadyEvent) {
     useReportProgressStore
       .getState()
-      .finishProgress(context.assistantMessageId, event.sequence);
+      .finishProgress(context.assistantMessageId, event.sequence, {
+        createIfMissing: true,
+      });
   }
 
   if (

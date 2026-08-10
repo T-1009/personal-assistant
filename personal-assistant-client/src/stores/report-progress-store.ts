@@ -11,10 +11,18 @@ export interface ReportProgressEntry {
   sources: Partial<Record<ReportProgressSource, ReportProgressPayload>>;
 }
 
+interface FinishProgressOptions {
+  createIfMissing?: boolean;
+}
+
 interface ReportProgressState {
   progressByMessageId: Record<string, ReportProgressEntry>;
   setProgress: (messageId: string, progress: ReportProgressPayload) => void;
-  finishProgress: (messageId: string, sequence?: number) => void;
+  finishProgress: (
+    messageId: string,
+    sequence?: number,
+    options?: FinishProgressOptions,
+  ) => void;
   clearProgress: (messageId?: string) => void;
 }
 
@@ -74,9 +82,12 @@ export const useReportProgressStore = create<ReportProgressState>((set) => ({
         },
       };
     }),
-  finishProgress: (messageId, sequence) =>
+  finishProgress: (messageId, sequence, options) =>
     set((state) => {
       const currentEntry = state.progressByMessageId[messageId];
+      if (!currentEntry && !options?.createIfMissing) {
+        return state;
+      }
       const terminalSequence = Math.max(
         currentEntry?.sequence ?? 0,
         typeof sequence === "number" && Number.isFinite(sequence)

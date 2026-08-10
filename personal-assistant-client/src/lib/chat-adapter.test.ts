@@ -376,7 +376,11 @@ describe("chatAdapter", () => {
         "https://auth.example.com",
         "请完成授权",
       );
-      authStore.setAuthComplete("m365-provider-common", "授权已完成 ✅");
+      authStore.setAuthComplete(
+        "auth-message",
+        "m365-provider-common",
+        "授权已完成 ✅",
+      );
       globalThis.fetch = vi.fn().mockResolvedValue({
         ok: true,
         body: createMockStream([

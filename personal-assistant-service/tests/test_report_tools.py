@@ -1093,6 +1093,122 @@ async def test_generate_report_finishes_later_auth_after_one_source_fails(
 
 
 @pytest.mark.asyncio
+async def test_generate_report_closes_auth_card_after_authorization_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    events: list[dict[str, object]] = []
+    secret_sentinel = "authorization-secret-must-not-leak"
+
+    async def authorize_github() -> str:
+        report_tools.get_stream_writer()(
+            {
+                "type": "system_message",
+                "system_message": "GitHub authorization required",
+                "auth_url": "https://auth.example.com/github",
+                "auth_required": True,
+                "provider": "github-provider",
+            }
+        )
+        raise RuntimeError(secret_sentinel)
+
+    async def fail_collection(*args, **kwargs):
+        del args, kwargs
+        pytest.fail("Authorization failure must prevent GitHub collection")
+
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_github_report_access",
+        authorize_github,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "_collect_github_evidence",
+        fail_collection,
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "get_github_provider_name",
+        lambda: "github-provider",
+    )
+    monkeypatch.setattr(
+        report_tools,
+        "get_settings",
+        lambda: SimpleNamespace(github_mcp_enabled=True),
+    )
+    monkeypatch.setattr(report_tools, "get_stream_writer", lambda: events.append)
+
+    result = await generate_report(
+        report_type="custom",
+        start_at="2026-07-21",
+        end_at="2026-07-21",
+        sources=["github"],
+    )
+
+    lifecycle_events = [
+        event
+        for event in events
+        if event.get("auth_required")
+        or event.get("auth_failed")
+        or event.get("report_ready")
+    ]
+    assert [
+        "auth_required"
+        if event.get("auth_required")
+        else "auth_failed"
+        if event.get("auth_failed")
+        else "report_ready"
+        for event in lifecycle_events
+    ] == ["auth_required", "auth_failed", "report_ready"]
+    assert lifecycle_events[1] == {
+        "type": "system_message",
+        "system_message": "GitHub 授权未完成，请重试。",
+        "auth_failed": True,
+        "provider": "github-provider",
+    }
+    assert result["source_coverage"]["github"] == "unavailable"
+    assert secret_sentinel not in json.dumps(events, ensure_ascii=False)
+    assert secret_sentinel not in json.dumps(result, ensure_ascii=False)
+    assert secret_sentinel not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_empty_calendar_token_emits_auth_failed_with_oauth_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events: list[dict[str, object]] = []
+
+    async def authorize_calendar() -> str:
+        return ""
+
+    monkeypatch.setattr(
+        report_tools,
+        "authorize_calendar_report_access",
+        authorize_calendar,
+    )
+    monkeypatch.setattr(report_tools, "get_stream_writer", lambda: events.append)
+    monkeypatch.setattr(
+        report_tools.AgentArtsRuntimeContext,
+        "get_oauth2_custom_state",
+        lambda: "signed-calendar-state",
+    )
+
+    authorization = await report_tools._authorize_report_sources(("calendar",))
+
+    assert authorization.access_tokens == {}
+    assert authorization.failures["calendar"].coverage == "unavailable"
+    assert events == [
+        {
+            "type": "system_message",
+            "system_message": "日历授权未完成，请重试。",
+            "auth_failed": True,
+            "provider": report_tools.CALENDAR_PROVIDER,
+            "oauth2_state": "signed-calendar-state",
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_generate_report_sanitizes_unexpected_collector_failure(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,

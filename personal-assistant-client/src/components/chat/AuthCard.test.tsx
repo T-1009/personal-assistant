@@ -60,8 +60,16 @@ describe("AuthCard", () => {
       "请完成日历授权",
       "calendar-state",
     );
-    authStore.setAuthComplete("github-provider", "GitHub 授权已完成");
-    authStore.setAuthFailed("m365-email-provider", "邮件授权失败");
+    authStore.setAuthComplete(
+      "report-message",
+      "github-provider",
+      "GitHub 授权已完成",
+    );
+    authStore.setAuthFailed(
+      "report-message",
+      "m365-email-provider",
+      "邮件授权失败",
+    );
 
     const { container } = render(<AuthCard messageId="report-message" />);
     const cards = container.querySelectorAll('[data-slot="auth-card"]');

@@ -92,6 +92,22 @@ describe("handleChatEvent report_ready", () => {
       filename: "日报-2024-02-14.md",
       format: "markdown",
     });
+    expect(
+      useReportProgressStore.getState().progressByMessageId[
+        "assistant-report-1"
+      ],
+    ).toMatchObject({ sequence: 0, terminal: true });
+  });
+
+  it("does not create progress state when an ordinary message finishes", () => {
+    handleChatEvent(
+      { done: true },
+      { assistantMessageId: "ordinary-message", fullText: "完成" },
+    );
+
+    expect(
+      useReportProgressStore.getState().progressByMessageId,
+    ).not.toHaveProperty("ordinary-message");
   });
 
   it("ignores incomplete report events without changing OAuth state", () => {
@@ -197,5 +213,97 @@ describe("handleChatEvent report_ready", () => {
         "assistant-report-auth"
       ],
     ).toMatchObject({ terminal: true, sequence: 1 });
+  });
+
+  it("updates auth statuses only on the originating message", () => {
+    const provider = "github-provider";
+    const olderContext = {
+      assistantMessageId: "assistant-auth-older",
+      fullText: "",
+    };
+    const newerContext = {
+      assistantMessageId: "assistant-auth-newer",
+      fullText: "",
+    };
+
+    handleChatEvent(
+      {
+        auth_required: true,
+        auth_url: "https://auth.example.com/github/older",
+        provider,
+        system_message: "请完成旧消息的 GitHub 授权",
+      },
+      olderContext,
+    );
+    handleChatEvent(
+      {
+        auth_required: true,
+        auth_url: "https://auth.example.com/github/newer",
+        provider,
+        system_message: "请完成新消息的 GitHub 授权",
+      },
+      newerContext,
+    );
+
+    handleChatEvent(
+      {
+        auth_complete: true,
+        provider,
+        system_message: "旧消息的 GitHub 授权已完成",
+      },
+      olderContext,
+    );
+
+    const cards = useAuthCardStore.getState().cardsByMessageId;
+    expect(cards[olderContext.assistantMessageId]?.[0]).toMatchObject({
+      authComplete: true,
+      message: "旧消息的 GitHub 授权已完成",
+    });
+    expect(cards[newerContext.assistantMessageId]?.[0]).toMatchObject({
+      authComplete: false,
+      authFailed: false,
+      message: "请完成新消息的 GitHub 授权",
+    });
+
+    handleChatEvent(
+      {
+        auth_failed: true,
+        provider,
+        system_message: "旧消息的 GitHub 授权已失效",
+      },
+      olderContext,
+    );
+
+    expect(
+      useAuthCardStore.getState().cardsByMessageId[
+        olderContext.assistantMessageId
+      ]?.[0],
+    ).toMatchObject({
+      authComplete: false,
+      authFailed: true,
+      message: "旧消息的 GitHub 授权已失效",
+    });
+    expect(
+      useAuthCardStore.getState().cardsByMessageId[
+        newerContext.assistantMessageId
+      ]?.[0],
+    ).toMatchObject({
+      authComplete: false,
+      authFailed: false,
+      message: "请完成新消息的 GitHub 授权",
+    });
+  });
+
+  it("ignores auth_failed when the message has no matching card", () => {
+    handleChatEvent(
+      {
+        auth_failed: true,
+        provider: "github-provider",
+        system_message: "GitHub 授权失败",
+      },
+      { assistantMessageId: "missing-auth-message", fullText: "" },
+    );
+
+    expect(useAuthCardStore.getState().cardsByMessageId).toEqual({});
   });
 });
