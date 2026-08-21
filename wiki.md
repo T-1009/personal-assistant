@@ -215,9 +215,13 @@ sequenceDiagram
     Tool-->>Agent: identity_scope=platform
 ```
 
-### 4.3 STS 临时凭据与单 session 执行
+### 4.3 STS 临时凭据与一次 operation 内的 session 复用
 
-`run_with_github_mcp_sts` 使用 `require_sts_token` 注入临时凭据，并在一次 source operation 内复用同一个 MCP session。
+这里的 `operation` 是传给 `run_with_github_mcp_sts` 的一个异步业务回调，例如“一次活动搜索”或“一批活动详情查询”。它不是单个 MCP HTTP 请求，也不代表整次报表生成或整个用户会话。
+
+#### 4.3.1 由外层统一管理 session 生命周期
+
+`run_with_github_mcp_sts` 先通过 `require_sts_token` 注入 STS 临时凭据，再使用 `async with` 创建一个 `MCPGatewayClient`。`operation(client)` 完成前始终使用这个 client；回调返回或抛出异常后，再由上下文管理器统一关闭 session。
 
 代码位置：[gateway_client.py:180](personal-assistant-service/app/mcp/gateway_client.py#L180)
 
@@ -237,7 +241,137 @@ async def _run(*, sts_credentials: StsCredentials) -> Any:
 return await _run()
 ```
 
-一次 operation 复用 session，可以避免对一次活动查询中的 identity、repository、activity 和 detail 请求重复执行 TCP/TLS 与 MCP 初始化。
+#### 4.3.2 client 保存并返回同一个 `ClientSession`
+
+进入上下文时，`__aenter__` 只创建一次 MCP session，并将其保存在实例字段 `self._session` 中。后续代码不会重新调用 `session(...)`，而是统一通过 `_require_session()` 取回这个已打开的 session。
+
+代码位置：[gateway_client.py:222](personal-assistant-service/app/mcp/gateway_client.py#L222)
+
+```python
+async def __aenter__(self) -> MCPGatewayClient:
+    session_context = self._client().session(_GITHUB_MCP_SERVER_NAME)
+    self._session_context = session_context
+    self._session = await session_context.__aenter__()
+    return self
+
+def _require_session(self) -> ClientSession:
+    if self._session is None:
+        raise MCPGatewayError(
+            "configuration_error",
+            "GitHub MCP Gateway client session is not open.",
+            retryable=False,
+        )
+    return self._session
+```
+
+`list_tools()` 和 `call_tool()` 都从 `_require_session()` 获取 session，因此一次 operation 中的能力发现和多次工具调用实际落在同一个 `ClientSession` 上。`list_tools()` 还使用 `_tools_cache` 和 `_tools_lock`，避免同一 client 内重复获取远端工具清单。
+
+代码位置：[gateway_client.py:339](personal-assistant-service/app/mcp/gateway_client.py#L339)
+
+```python
+async def list_tools(self) -> list[MCPToolInfo]:
+    if self._tools_cache is not None:
+        return list(self._tools_cache)
+
+    async with self._tools_lock:
+        session = self._require_session()
+        result = await session.list_tools()
+        self._tools_cache = tuple(...)
+        return list(self._tools_cache)
+
+async def call_tool(self, name: str, arguments: dict[str, Any]) -> Any:
+    session = self._require_session()
+    result = await session.call_tool(name, arguments)
+    return extract_mcp_payload(result)
+```
+
+退出上下文时，`__aexit__` 关闭进入时保存的 `session_context`，随后该 session 不再被复用。
+
+#### 4.3.3 在 Activity Source 中的体现
+
+`github_mcp_search_activity` 在 `_operation` 开头接收一次 client。能力发现、按需执行的平台账号解析、仓库发现和后续分页活动查询，都继续向下传递这个 client；函数末尾只调用一次 `run_with_github_mcp_sts(_operation)`。
+
+代码位置：[github_activity_source.py:1517](personal-assistant-service/app/mcp/github_activity_source.py#L1517)
+
+```python
+async def _operation(client: MCPGatewayClient) -> GitHubActivityResult:
+    tools = await _tool_index(client)
+
+    if actor == "platform":
+        identity = await _resolve_identity_with_tools(client, tools)
+
+    if not repo_names:
+        repo_names, discovery_warnings = await _discover_activity_repositories(
+            client,
+            tools,
+            platform_login=activity_actor,
+        )
+
+    page = await _collect_activity_task(
+        client,
+        tools,
+        task,
+        # 省略时间窗口等业务参数
+    )
+    return GitHubActivityResult(...)
+
+return await run_with_github_mcp_sts(_operation)
+```
+
+批量详情查询采用同样的结构：`github_mcp_get_details` 只创建一个 `_operation`，多个受并发限制的 `_fetch` 任务共享传入的 client 和工具索引。
+
+代码位置：[github_activity_source.py:2000](personal-assistant-service/app/mcp/github_activity_source.py#L2000)
+
+```python
+async def _operation(client: MCPGatewayClient):
+    tools = await _tool_index(client)
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def _fetch(event: GitHubActivityEvent):
+        async with semaphore:
+            return await _github_mcp_get_detail_with_tools(
+                client,
+                tools,
+                event_type=event.event_type,
+                repository=event.repository,
+                external_id=event.external_id,
+            )
+
+    return list(await asyncio.gather(*(_fetch(event) for event in events)))
+
+return await run_with_github_mcp_sts(_operation)
+```
+
+```mermaid
+sequenceDiagram
+    participant Wrapper as run_with_github_mcp_sts
+    participant Client as MCPGatewayClient
+    participant Session as ClientSession A
+    participant Operation as source operation
+
+    Wrapper->>Client: __aenter__()
+    Client->>Session: 创建并保存 session A
+    Wrapper->>Operation: operation(client)
+    Operation->>Client: list_tools()
+    Client->>Session: session A.list_tools()
+    loop 本 operation 内的多次工具调用
+        Operation->>Client: call_tool(...)
+        Client->>Session: session A.call_tool(...)
+    end
+    Wrapper->>Client: __aexit__()
+    Client->>Session: 关闭 session A
+```
+
+复用边界需要准确区分：
+
+| 调用范围 | session 行为 |
+|---|---|
+| 一次 `github_mcp_search_activity` operation | 按需发生的账号解析、仓库发现和活动分页查询共享一个 session |
+| 一次 `github_mcp_get_details` operation | 多条详情查询共享另一个 session，并受 semaphore 限制并发数 |
+| 先搜索、再批量补充详情 | 属于两个 operation，因此分别创建和关闭各自的 session |
+| 两次独立的 source 调用 | 不跨调用共享 session |
+
+因此，更准确的表述是：**该实现避免了同一个 source operation 内重复创建和初始化 MCP session，并复用该 client 的工具清单缓存；底层 HTTP 连接池可以进一步复用网络连接，从而减少潜在的 TCP/TLS 建连开销，但不保证所有 HTTP 请求始终使用同一条物理 TCP 连接。**
 
 ### 4.4 AgentArts APIC IAM 签名
 
